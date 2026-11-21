@@ -15,6 +15,17 @@ not itemised here.
   chain. Devnet keeps `wins_required = 1`, and the testnet genesis hash is
   regenerated because the genesis header commits to the initial difficulty.
 
+### Fixed
+
+- **The Play page no longer strands a committed seat before its reveal.** After
+  a successful availability transaction the page checked the *current* epoch's
+  revealed-availability set, which cannot contain a commitment for an epoch two
+  ahead. It therefore offered `Commit availability` again instead of advancing
+  to `wait-for-reveal`, and never enabled `Reveal nonce`; the reveal window
+  closed and the seat never reached a roster. The stage is now driven by the
+  nonce this tab committed, reveals in epoch `E-1`, and only asks for a fresh
+  commitment once that window has passed.
+
 ## [0.36.2] - 2026-11-21
 
 ### Added

@@ -73,6 +73,7 @@ import {
   signDomain,
   type HybridKeypair,
 } from "../lib/keys";
+import { stageOf, type Stage, type StoredCommitment } from "../lib/playStage";
 import { movePayload, resultPayload } from "../lib/protocol";
 import { STARTING_FEN } from "../lib/protocol";
 import { buildWinProof } from "../lib/proof";
@@ -97,9 +98,7 @@ import { type CheckResult, verifyProof } from "../lib/verify";
 import { VariantGame } from "../lib/variantGame";
 import { useNode } from "../node";
 import type {
-  AccountView,
   Color,
-  EpochView,
   GameView,
   NetworkParams,
   RelayMatchView,
@@ -136,51 +135,6 @@ function randomNonce(): string {
 function squareName(column: number, row: number): Square {
   const files = "abcdefgh";
   return `${files[column]}${8 - row}` as Square;
-}
-
-/** What the page is waiting for, derived from chain and relay state. */
-type Stage =
-  | "fund"
-  | "register"
-  | "commit"
-  | "wait-for-reveal"
-  | "reveal"
-  | "wait-for-pairing"
-  | "join"
-  | "play"
-  | "settle";
-
-function stageOf(
-  account: AccountView,
-  params: NetworkParams,
-  epoch: EpochView | undefined,
-  match: RelayMatchView | null,
-  address: string,
-  commitment: StoredCommitment | null,
-): Stage {
-  if (match !== null) {
-    if (match.status === "pending") return "join";
-    if (match.result !== null) return "settle";
-    return "play";
-  }
-  if (account.registered_until_epoch === null) {
-    return account.balance + account.bonded >= params.min_bond + params.min_fee
-      ? "register"
-      : "fund";
-  }
-  if (account.bonded < params.min_bond) return "fund";
-  if (epoch !== undefined && epoch.roster[address] !== undefined) return "wait-for-pairing";
-  if (epoch?.availability[address] === undefined) return "commit";
-  // `_validate_reveal` only accepts a reference to `epoch + 1`, so a commitment
-  // made two epochs ahead cannot be revealed until the chain reaches `E - 1`.
-  const target = commitment === null ? null : commitment.epoch;
-  if (target !== null && epoch !== undefined && epoch.epoch === target - 1) return "reveal";
-  return "wait-for-reveal";
-}
-
-interface StoredCommitment {
-  epoch: number;
-  nonce: string;
 }
 
 /** A transaction the node accepted, and the account nonce it spends. */
