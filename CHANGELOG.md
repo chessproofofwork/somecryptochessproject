@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.36.2] - 2026-11-21
+
 ### Added
 
 - **Wallet History shows pending transactions immediately.** Every action that
