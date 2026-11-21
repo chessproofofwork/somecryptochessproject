@@ -29,6 +29,10 @@ export interface VariantParams {
   min_plies: number;
   max_games_per_block: number;
   opening_book: string;
+  /** Main time each seat starts with, in milliseconds. */
+  time_control_initial_ms: number;
+  /** Time added after every move, in milliseconds. */
+  time_control_increment_ms: number;
 }
 
 export interface MempoolStatus {
@@ -45,8 +49,14 @@ export interface NodeStatus {
   peers: number;
   syncing: boolean;
   mempool: MempoolStatus;
-  /** Native ZQWX minted so far, in base units. */
+  /** Native ZQWX minted so far, including transaction fees, in base units. */
   minted: number;
+  /**
+   * Native ZQWX created by genesis allocations and block subsidies only.
+   *
+   * Older nodes omit this field; the UI falls back to `minted`.
+   */
+  minted_subsidy?: number;
   /** Native ZQWX destroyed by timeout and witness slashes, when the node reports it. */
   burned?: number;
   /** Asset id -> minted base units for every non-native variant token. */
@@ -274,6 +284,10 @@ export interface GameSummary {
 
 export interface GameList {
   network: string;
+  /** Every game this node knows, settled and pending, across all pages. */
+  total: number;
+  /** The subset of `total` still waiting in the mempool. */
+  pending: number;
   games: GameSummary[];
 }
 

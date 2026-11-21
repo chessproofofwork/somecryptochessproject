@@ -8,7 +8,15 @@
 
 import { describe, expect, it } from "vitest";
 
-import { UNITS_PER_COIN, formatAmount, formatCoins, formatTokenAmount, parseAmount, parseTokenAmount } from "./format";
+import {
+  UNITS_PER_COIN,
+  formatAmount,
+  formatCoins,
+  formatTimeControl,
+  formatTokenAmount,
+  parseAmount,
+  parseTokenAmount,
+} from "./format";
 
 describe("parseAmount", () => {
   it("scales whole and fractional coins exactly", () => {
@@ -44,6 +52,13 @@ describe("parseAmount", () => {
     expect(formatCoins(1000)).toBe("1,000 ZQWX");
     expect(formatCoins(1)).toBe("1 ZQWX");
     expect(formatCoins(null)).toBe("-");
+  });
+
+  it("renders a variant clock in minutes plus increment seconds", () => {
+    expect(formatTimeControl(600_000, 0)).toBe("10+0");
+    expect(formatTimeControl(1_800_000, 5_000)).toBe("30+5");
+    expect(formatTimeControl(90_000, 0)).toBe("1.5+0");
+    expect(formatTimeControl(-1, -1)).toBe("0+0");
   });
 });
 

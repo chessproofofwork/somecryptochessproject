@@ -1312,7 +1312,7 @@ an orphan block on `POST /v1/blocks` → 202.
 
 | Method | Path | Response |
 | --- | --- | --- |
-| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals, the native burned total, and the epoch's active clock-witness count (`witnesses`, which the relay gates pairing on) |
+| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals, native issuance excluding transaction fees (`minted_subsidy`), the native burned total, and the epoch's active clock-witness count (`witnesses`, which the relay gates pairing on) |
 | GET | `/v1/params` | the network parameters, including each variant and the asset it mints |
 | GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page), with proof counts per variant |
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |
@@ -1334,7 +1334,7 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |
 | GET | `/v1/ratings` | `RatingsView`: derived Glicko-2 rating per miner, strongest first (`?limit=`, default 100), each row naming the miner's registered variant, plus the fixed-bucket distribution |
 | GET | `/v1/ratings/{address}` | `MinerRatingDetail`: rating, deviation, volatility, record, rank, registered variant and one history point per epoch (the 1500 prior when the seat has no settled game) |
-| GET | `/v1/games` | `GameList`: pooled proofs first, then newest settle (`?limit=`, default 25, max 200; `?before_height=` and `?before_game_hash=` for the next page); every row names its variant |
+| GET | `/v1/games` | `GameList`: pooled proofs first, then newest settle (`?limit=`, default 25, max 200; `?before_height=` and `?before_game_hash=` for the next page); `total` counts every game the node knows (settled plus pooled) and `pending` the pooled subset, both independent of the page; every row names its variant |
 | GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, variant, height, mempool flag |
 | GET | `/v1/games/{game_hash}/pgn` | `GamePgn`: the move text the proof for that game carries (404 when this node holds no block body for it) |
 | GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, variant, certificate, transcript |

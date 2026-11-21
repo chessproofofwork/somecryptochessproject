@@ -1,10 +1,11 @@
 /**
  * Overview: the chain at a glance.
  *
- * Everything here comes from documents the node already serves, with no derived
- * numbers: the epoch shown is the tip block's own `epoch`, not
- * `height / epoch_length`, so a parameter change cannot make the explorer
- * disagree with the chain it is reading.
+ * Everything here comes from documents the node already serves: the epoch shown
+ * is the tip block's own `epoch`, not `height / epoch_length`, so a parameter
+ * change cannot make the explorer disagree with the chain it is reading. The
+ * token table is the one exception: it applies each variant's published subsidy
+ * schedule to the current height to show the reward the next proof can mint.
  */
 
 import type { ReactNode } from "react";
@@ -13,10 +14,11 @@ import { Divider, Text } from "react-native-paper";
 
 import { fetchBlocks, fetchGames } from "../api";
 import { BlockTable, StatCard } from "../components/BlockTable";
-import { FailureNotice, KeyValue, Loading, Section } from "../components/Chrome";
+import { FailureNotice, Loading, Section } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
-import { tokensFor, variantLabel } from "../lib/assets";
-import { formatAge, formatAmount, formatInteger, formatTokenAmount } from "../lib/format";
+import { TokenTable } from "../components/TokenTable";
+import { tokensFor } from "../lib/assets";
+import { formatAge, formatAmount, formatInteger } from "../lib/format";
 import { useNode } from "../node";
 import { useNow, useResource } from "../useResource";
 
@@ -30,7 +32,6 @@ export function Dashboard(): ReactNode {
 
   const tip = blocks.data?.blocks[0];
   const tokens = tokensFor(params.data);
-  const variantTokens = tokens.filter((token) => !token.native);
 
   return (
     <>
@@ -93,26 +94,12 @@ export function Dashboard(): ReactNode {
         />
       </View>
 
-      {variantTokens.length > 0 && status.data !== undefined && (
+      {status.data !== undefined && params.data !== undefined && (
         <Section
-          title="Variant tokens"
-          subtitle="every variant mints its own token; native ZQWX remains the fee currency"
+          title="Tokens"
+          subtitle="one token per variant; totals exclude fees, and native ZQWX remains the fee currency"
         >
-          {/* `minted` starts at the genesis premine and grows by each block's
-              subsidy plus its transaction fees. */}
-          <KeyValue label="ZQWX minted + fees" mono>
-            {formatAmount(status.data.minted)}
-          </KeyValue>
-          {variantTokens.map((token) => (
-            <KeyValue key={token.asset ?? token.symbol} label={`${variantLabel(token.variant)} · ${token.symbol}`} mono>
-              {formatTokenAmount(
-                status.data?.minted_assets?.[token.asset ?? ""] ?? 0,
-                token.symbol,
-                token.decimals,
-              )}{" "}
-              · {formatTokenAmount(token.subsidy, token.symbol, token.decimals)} per settled proof
-            </KeyValue>
-          ))}
+          <TokenTable tokens={tokens} status={status.data} tip={tip} />
         </Section>
       )}
 

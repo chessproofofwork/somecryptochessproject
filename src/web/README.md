@@ -176,7 +176,7 @@ hash routes on `https://app.proofofchess.com`, served by the same bundle.
 | `#/blocks` | blocks newest first, paged by the node's `before_height` cursor |
 | `#/blocks/12`, `#/blocks/<hash>` | one block: header, coinbase, transactions, proofs |
 | `#/transactions/<txid>` | one transaction: whether it is pending or mined, its block and body |
-| `#/games` | proofs in the node's order: pending first, then newest settlement |
+| `#/games` | proofs in the node's order: pending first, then newest settlement; the header counts the whole chain, not the page |
 | `#/games/<game_hash>` | settlement state, the match certificate, the PGN |
 | `#/ratings` | miner Elo: the top ten, their record and deviation, and the distribution |
 | `#/miners/<address>` | one miner: current rating, a line chart per epoch, its games |

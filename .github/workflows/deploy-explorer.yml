@@ -89,9 +89,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # The landing page is already the artifact: plain HTML, CSS and an SVG
-      # icon, with no build step. Keeping it out of the Vite bundle is what lets
-      # it render for a crawler or a browser with JavaScript disabled.
+      # The landing page is already the artifact: plain HTML, CSS, an SVG icon
+      # and a PNG link preview, with no build step. Keeping it out of the Vite
+      # bundle is what lets it render for a crawler or a browser with JavaScript
+      # disabled.
       - uses: actions/upload-artifact@v4
         with:
           name: landing-dist

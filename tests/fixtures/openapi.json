@@ -862,10 +862,20 @@
           "network": {
             "minLength": 1,
             "type": "string"
+          },
+          "pending": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "type": "integer"
           }
         },
         "required": [
-          "network"
+          "network",
+          "total",
+          "pending"
         ],
         "type": "object"
       },
@@ -1854,6 +1864,11 @@
               "type": "integer"
             },
             "type": "object"
+          },
+          "minted_subsidy": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
           },
           "network": {
             "minLength": 1,

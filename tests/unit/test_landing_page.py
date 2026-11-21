@@ -12,6 +12,7 @@ protocol the way 30+0 did when the clock changed to 10+0.
 
 from __future__ import annotations
 
+import struct
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
@@ -21,6 +22,7 @@ from sccp.protocol.clocks import FIXED_TIME_CONTROL
 
 ROOT = Path(__file__).resolve().parents[2]
 LANDING = ROOT / "src" / "landing" / "index.html"
+OG_IMAGE = ROOT / "src" / "landing" / "og-image.png"
 APP = "https://app.proofofchess.com"
 APEX = "https://proofofchess.com"
 
@@ -29,6 +31,7 @@ class _Page(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.links: list[str] = []
+        self.meta: dict[str, str] = {}
         self.canonical: str | None = None
         self.title = ""
         self.scripts = 0
@@ -40,6 +43,11 @@ class _Page(HTMLParser):
             self.links.append(values["href"] or "")
         if tag == "link" and values.get("rel") == "canonical":
             self.canonical = values.get("href")
+        if tag == "meta":
+            key = values.get("property") or values.get("name")
+            content = values.get("content")
+            if key and content is not None:
+                self.meta[key] = content
         if tag == "script":
             self.scripts += 1
         if tag == "title":
@@ -66,6 +74,35 @@ def test_the_apex_page_is_static_and_canonical() -> None:
     assert page.title.startswith("Proof of Chess")
     assert page.canonical == f"{APEX}/"
     assert page.scripts == 0, "the landing page must render without JavaScript"
+
+
+def test_the_link_preview_points_at_the_apex_image() -> None:
+    page = _page()
+    image_url = f"{APEX}/og-image.png"
+
+    assert page.meta.get("og:image") == image_url
+    assert page.meta.get("og:image:secure_url") == image_url
+    assert page.meta.get("og:image:type") == "image/png"
+    assert page.meta.get("og:image:width") == "1200"
+    assert page.meta.get("og:image:height") == "630"
+    assert page.meta.get("twitter:image") == image_url
+    assert page.meta.get("twitter:card") == "summary_large_image"
+    alt = page.meta.get("og:image:alt")
+    assert alt
+    assert alt == page.meta.get("twitter:image:alt")
+
+
+def test_the_link_preview_image_matches_its_declared_dimensions() -> None:
+    payload = OG_IMAGE.read_bytes()
+    assert payload.startswith(b"\x89PNG\r\n\x1a\n")
+    width, height = struct.unpack(">II", payload[16:24])
+    page = _page()
+
+    assert (str(width), str(height)) == (
+        page.meta.get("og:image:width"),
+        page.meta.get("og:image:height"),
+    )
+    assert len(payload) < 5_000_000
 
 
 def test_every_application_entry_point_is_on_the_app_origin() -> None:

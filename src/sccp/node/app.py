@@ -434,7 +434,9 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
 
         ``before_height`` and ``before_game_hash`` page through games at the same
         block tied on height, so an explorer never skips or repeats a game at a
-        boundary. Only games with an on-chain proof appear here.
+        boundary. Settled games carry an on-chain proof and pooled proofs appear
+        first on the first page. ``total`` and ``pending`` describe every game
+        this node knows, not just the rows returned by this call.
         """
         return service.games(
             limit=limit,

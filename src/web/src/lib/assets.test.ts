@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { AccountView, NetworkParams } from "../types";
 import {
+  currentBlockReward,
   tokenBalance,
   tokenForAsset,
   tokenForVariant,
+  tokenMinted,
   tokensFor,
   variantLabel,
   variantShort,
@@ -25,6 +27,8 @@ const params = {
       min_plies: 1,
       max_games_per_block: 1,
       opening_book: "standard",
+      time_control_initial_ms: 600_000,
+      time_control_increment_ms: 0,
     },
     {
       name: "chess960",
@@ -33,12 +37,14 @@ const params = {
       symbol: "C960",
       display_name: "Chess960",
       decimals: 8,
-      subsidy: 1,
-      halving_interval: 1,
-      max_supply: 1,
+      subsidy: 5_000_000_000,
+      halving_interval: 210_000,
+      max_supply: 21_000_000,
       min_plies: 20,
       max_games_per_block: 1,
       opening_book: "none",
+      time_control_initial_ms: 600_000,
+      time_control_increment_ms: 0,
     },
   ],
 } as unknown as NetworkParams;
@@ -70,5 +76,28 @@ describe("tokens", () => {
     expect(variantShort("standard")).toBe("ZQWX");
     expect(variantShort("chess960")).toBe("C960");
     expect(variantLabel(undefined)).toBe("Unknown");
+  });
+
+  it("reads fee-excluded issuance, falling back for older nodes", () => {
+    const [zqwx, c960] = tokensFor(params);
+    const status = {
+      minted: 1_000,
+      minted_subsidy: 700,
+      minted_assets: { ["a".repeat(64)]: 98 },
+    };
+    expect(tokenMinted(status, zqwx as NonNullable<typeof zqwx>)).toBe(700);
+    expect(tokenMinted(status, c960 as NonNullable<typeof c960>)).toBe(98);
+    expect(tokenMinted({ minted: 1_000, minted_assets: {} }, zqwx as NonNullable<typeof zqwx>)).toBe(
+      1_000,
+    );
+  });
+
+  it("halves the block reward from height zero and stops at the supply cap", () => {
+    const c960 = tokensFor(params)[1] as NonNullable<ReturnType<typeof tokensFor>[1]>;
+    const cap = 21_000_000 * 100_000_000;
+    expect(currentBlockReward(c960, 0, 0)).toBe(5_000_000_000);
+    expect(currentBlockReward(c960, 210_000, 0)).toBe(2_500_000_000);
+    expect(currentBlockReward(c960, 840_000, 0)).toBe(312_500_000);
+    expect(currentBlockReward(c960, 0, cap - 1_000)).toBe(1_000);
   });
 });
