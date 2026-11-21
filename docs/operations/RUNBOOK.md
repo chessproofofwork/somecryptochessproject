@@ -310,16 +310,16 @@ A block's timestamp is the wall clock, and the difficulty schedule reads those
 timestamps every `retarget_interval` blocks (heights 10, 20, 30 on testnet),
 comparing their span with `target_block_seconds * (retarget_interval - 1)`. A
 settler that builds a block on every poll makes a 30-second chain look
-one-second fast, and the retarget answers by raising `wins_required` -- a block
-then has to carry one more verified win by the same miner, which the roster may
-not supply in one epoch, so proof blocks give way to heartbeat blocks. `30` is
-testnet's `target_block_seconds`: one block per half minute keeps the retarget
-window in its neutral band and `wins_required` at `2`. `GET /v1/difficulty`
-reports the current values and the retarget history. The bootstrap script paces
-its synthesized timestamps the same way.
+one-second fast, and the retarget answers by raising `wins_required` -- one block
+then has to carry two verified wins by the same miner, which the roster cannot
+supply in one epoch, so the chain stops there. `30` is testnet's
+`target_block_seconds`: one block per half minute keeps the retarget window in its
+neutral band and `wins_required` at `1`. `GET /v1/difficulty` reports the current
+values and the retarget history. The bootstrap script paces its synthesized
+timestamps the same way.
 
-After height 19 a block needs two proofs, or exactly one transaction when it is
-a proofless heartbeat block. The stack's
+After height 19 a block needs a proof, or exactly one transaction when it is a
+proofless heartbeat block. The stack's
 miners commit and reveal availability every epoch, so those transactions carry
 the chain forward even when a round ends in a draw; without them (a miner started
 without `--nonce-secret-file`) the chain can only advance when somebody plays a

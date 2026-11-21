@@ -7,6 +7,19 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.36.5] - 2026-11-21
+
+### Changed
+
+- **Testnet is back to one win per block.** The two-proof floor deployed in
+  0.36.4 made proof settlement unreachable for the four-miner testnet roster:
+  each variant has only one possible opponent, while a block's proofs must name
+  distinct opponents. Every post-bootstrap block therefore fell back to a
+  heartbeat and no game could settle. Testnet now starts at
+  `wins_required = 1` and sets `k_min = 1`, restoring the pre-0.36.3 difficulty
+  and the matching genesis hash. The deploy check no longer enforces a two-win
+  floor. A testnet chain built with `wins_required = 2` has to be rebuilt.
+
 ## [0.36.4] - 2026-11-21
 
 ### Fixed

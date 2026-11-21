@@ -8,7 +8,7 @@ quickly and deterministically (`DEVNET` in `src/sccp/config.py`):
 | Parameter | devnet | testnet |
 | --- | --- | --- |
 | Epoch length | 1 block | 5 blocks |
-| Wins required per block | 1 | 2 |
+| Wins required per block | 1 | 1 |
 | Miner bond | 0 coins | 10 coins |
 | Difficulty retarget | off | every 10 blocks |
 | Genesis timestamp | fixed (`1_700_000_000`) | fixed |
@@ -61,7 +61,7 @@ sccp --version
 ```
 
 ```text
-sccp 0.36.4 (protocol v1)
+sccp 0.36.5 (protocol v1)
 ```
 
 `-e` keeps `src/sccp` in place, so an edit to the checkout is the code you run.
