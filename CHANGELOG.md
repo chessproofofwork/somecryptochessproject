@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.36.3] - 2026-11-21
+
 ### Changed
 
 - **Testnet now requires two wins per block.** Raising the testnet
