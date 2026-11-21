@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.36.6] - 2026-11-21
+
 ### Added
 
 - **Addresses are searchable in the explorer.** The Blocks search box now
