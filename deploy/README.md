@@ -205,7 +205,9 @@ Two further settings make that arithmetic hold even when the games do not:
   answered by raising `wins_required`, which asks one block to carry another win
   by the same miner -- more than a roster may supply in an epoch -- and the
   chain stopped at the first block that demanded it. At one block per target
-  interval the retarget is neutral and `wins_required` stays `2`.
+  interval the retarget is neutral and `wins_required` stays `2`. The first
+  window also spans the pinned 2023 genesis stamp, which would look years slow;
+  testnet's `k_min = 2` keeps that window from lowering the proof count.
 
 Two equal Stockfish builds mostly draw, and a draw is not a proof, so all four
 stack miners run with `--resign-after-plies 60`: on its own turn a miner resigns once
