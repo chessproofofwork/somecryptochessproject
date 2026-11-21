@@ -161,14 +161,6 @@ def test_k_moves_only_within_its_bounds_and_the_grace_period() -> None:
     assert floor.seal_bits == 3
 
 
-def test_a_two_win_floor_survives_a_slow_retarget() -> None:
-    """Testnet keeps two proofs per block even when the first window spans genesis."""
-    params = _params(k_min=2)
-    parent = Difficulty(wins_required=2, seal_bits=0)
-    slow = [1_700_000_000, *_window(params, 1_795_000_000, params.target_block_seconds)[1:]]
-    assert next_difficulty(params, parent, height=10, timestamps=slow) == parent
-
-
 def test_non_monotonic_timestamps_are_rejected() -> None:
     params = _params()
     backwards = _window(params, 1_700_000_000, 1)

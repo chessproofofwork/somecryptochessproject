@@ -148,12 +148,12 @@ def test_devnet_is_deterministic() -> None:
     assert DEVNET.genesis_timestamp == 1_700_000_000
 
 
-def test_testnet_starts_with_two_wins_per_block() -> None:
-    """Two proofs exercise multi-PGN block rendering in the explorer."""
-    assert TESTNET.wins_required == 2
-    assert TESTNET.k_min == 2, "the retarget schedule must not lower testnet below two wins"
-    assert DEVNET.wins_required == 1
-    assert DEVNET.k_min == 1
+def test_testnet_starts_with_one_win_per_block() -> None:
+    """Testnet keeps the one-proof block that a small roster can actually meet."""
+    assert TESTNET.wins_required == 1
+    assert TESTNET.k_min == 1
+    assert TESTNET.k_min <= TESTNET.wins_required <= TESTNET.k_max
+    assert DEVNET.wins_required == DEVNET.k_min == 1
 
 
 def test_testnet_windows_are_scaled_to_its_block_time() -> None:

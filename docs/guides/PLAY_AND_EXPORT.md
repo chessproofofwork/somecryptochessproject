@@ -144,24 +144,23 @@ height 19: the last block of epoch 3, with epochs 3 and 4 able to pair and epoch
 5's commitments already on chain. That is the state
 `deploy/bootstrap_testnet_stack.py` publishes.
 
-Playing is different in two visible ways.
+Playing is different in one visible way.
 [`PROTOCOL.md`](../design/PROTOCOL.md) 12.2 lets a
 proof be mined only once its epoch has ended, allows a block without a proof one
 transaction, and gives a block *with* a proof only the transactions its epoch can
 spare above one per remaining block. On devnet — one block per epoch — that
-means the proof's block carries the whole pool; on testnet the same proof block
-carries no ordinary transactions.
+means the proof's block carries the whole pool. On testnet it carries none, so
+settling a game also mines out the rest of its epoch:
 
-Testnet also needs **two wins by the same miner** in an ordinary block, so one
-game cannot settle alone. The first game's proof is announced at height 19;
-block 20 opens epoch 4 but is a proofless heartbeat with one availability
-transaction, and the proof stays pending for a second win by that miner. The
-deployed stack's four-miner roster accumulates those pairs, and the block that
-settles them carries both PGNs.
+- the first game settles in **block 20**, the block that opens epoch 4;
+- the next one plays epoch 4, mines blocks 21-24 with the availability
+  commitments and reveals the epochs ahead need, and settles in **block 25**;
+- then 30, 35, and so on — one game per five blocks.
 
-This single-seat demo plays one game per run and does not accumulate a second
-win for that miner, so use devnet for the play-and-export walkthrough. The
-testnet command still shows the post-bootstrap shape and the pending-proof path.
+So a testnet game costs five blocks of chain, and every one of them carries a
+transaction or the proof. That is not padding: the four transactions are exactly
+the two seats' availability commitments and reveals for the epochs ahead, which
+is what keeps each miner pair matchable epoch after epoch.
 
 The chain remembers its network in `play.json`, so resuming `--chain-dir` with
 the other `--network` is refused rather than opening a testnet chain with devnet
@@ -295,7 +294,6 @@ curl -s http://127.0.0.1:8645/v1/blocks/5 \
 | `block 0` / `0 games` | The node is serving a different chain, usually testnet in `./data`. Stop it and start `sccp --data-dir data-play node run --network devnet`, or point `--node` at the correct port. |
 | Cannot connect | The node is not running. Start it first. |
 | Game produced no block | Check the `chain    not mined:` line. Draws, time forfeits, games under 20 plies, `quit`, and missing co-signatures produce no block. |
-| `not mined: block 20 carries 0 of 2 proofs; the proof stays pending` | The testnet game was decisive, but an ordinary testnet block needs two wins by the same miner. This single-seat demo supplied one; use devnet to settle and export one game. |
 | Wrong colour after resuming | Use `python scripts/play_miner.py --on-chain --color auto`. |
 | `--pgn-out` rejected with `--games` | `--pgn-out` names one file. Omit it for multi-game runs; the exporter writes the proof PGNs. |
 

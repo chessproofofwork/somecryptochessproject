@@ -180,16 +180,16 @@ are used up. Two things keep the stack alive past that point:
   chain opens instead of matching forever for epoch 3. `docker compose logs -f
   relay` shows `relay moved to epoch N with 2 matchable miner(s)`.
 
-Between decisive games the chain still has to advance, and a block needs either
-two proofs by the miner that builds it or exactly one transaction when it is
-proofless: a draw produces no proof, so the availability and reveal transactions
-double as the heartbeat that carries the chain into the next epoch. The builder
-puts exactly one transaction in a proofless block, so each pending transaction
-buys one block and an epoch of five blocks needs five pieces of ledger work. The
-four-miner roster supplies eight per epoch (availability plus reveal each), so
-the heartbeat is self-sustaining even when both variants draw. A game that ends
-on the clock also files a bonded timeout claim, and that claim is an ordinary
-transaction, so it moves the ledger even before its proof settles.
+Between decisive games the chain still has to advance, and a block needs either a
+proof or at least one transaction: a draw produces no proof, so the availability
+and reveal transactions double as the heartbeat that carries the chain into the
+next epoch. The builder puts exactly one transaction in a proofless block, so
+each pending transaction buys one block and an epoch of five blocks needs five
+pieces of ledger work. The four-miner roster supplies eight per epoch
+(availability plus reveal each), so the heartbeat is self-sustaining even when
+both variants draw. A game that ends on the clock also files a bonded timeout
+claim, and that claim is an ordinary transaction, so it moves the ledger even
+before its proof settles.
 
 Two further settings make that arithmetic hold even when the games do not:
 
@@ -202,12 +202,10 @@ Two further settings make that arithmetic hold even when the games do not:
   `target_block_seconds`. A block's timestamp is the wall clock and the
   difficulty retarget reads those timestamps, so a settler that built a block on
   every one-second poll made the chain look thirty times too fast; the schedule
-  answered by raising `wins_required`, which asks one block to carry another win
-  by the same miner -- more than a roster may supply in an epoch -- and the
+  answered by raising `wins_required` to `2`, which asks one block to carry two
+  wins by the same miner -- more than the roster supplies in an epoch -- and the
   chain stopped at the first block that demanded it. At one block per target
-  interval the retarget is neutral and `wins_required` stays `2`. The first
-  window also spans the pinned 2023 genesis stamp, which would look years slow;
-  testnet's `k_min = 2` keeps that window from lowering the proof count.
+  interval the retarget is neutral and `wins_required` stays `1`.
 
 Two equal Stockfish builds mostly draw, and a draw is not a proof, so all four
 stack miners run with `--resign-after-plies 60`: on its own turn a miner resigns once

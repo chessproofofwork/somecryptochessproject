@@ -91,22 +91,15 @@ python scripts/play_miner.py --on-chain --network testnet --color auto
 This bootstraps the same testnet chain `deploy/bootstrap_testnet_stack.py`
 publishes — a scripted block per height, tip at 19, epochs 3 and 4 able to pair
 — without a node, Docker or a relay process. It then seats you in epoch 3
-against a mock engine and plays the game. Testnet needs two wins by the same
-miner in an ordinary block, so the finished game announces its proof at height
-19 and block 20, the block that opens epoch 4, is a proofless heartbeat carrying
-one availability transaction. The proof stays pending until that miner supplies
-a second win.
+against a mock engine, plays the game, and mines the proof into block 20, the
+block that opens epoch 4. `--games 3` keeps going: each game takes the epoch the
+last proof opened, at blocks 25 and 30.
 
-The deployed stack's four-miner roster accumulates those pairs, which is where
-ordinary testnet blocks get their two PGNs. This single-game demo shows the
-heartbeat and the pending-proof state; use devnet for a game that settles and
-exports.
-
-That is still the closest you can get to the deployed testnet flow without
-deploying it: the same blocks, the same transactions, the same proof, only the
-node's HTTP API and a real engine are missing.
+That is the closest you can get to the deployed flow without deploying it: the
+same blocks, the same transactions, the same proof, only the node's HTTP API and
+a real engine are missing.
 [`PLAY_AND_EXPORT.md`](../guides/PLAY_AND_EXPORT.md#the-same-game-on-testnet-parameters)
-has the exact heights and what the pending proof means.
+has the exact heights and why a game costs five blocks.
 
 ---
 

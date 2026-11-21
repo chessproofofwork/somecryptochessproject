@@ -301,17 +301,6 @@ def test_heartbeat_blocks_carry_a_proofless_epoch_across(tmp_path: Path) -> None
         service.close()
 
 
-def test_the_bootstrap_never_retargets_below_two_wins(tmp_path: Path) -> None:
-    """The fixed genesis stamp must not turn testnet's two-proof blocks into one."""
-    write_stack(tmp_path, passphrase="test-stack-passphrase")
-    miners = bootstrap.load_stack(tmp_path)
-    service, blocks, _relay = bootstrap.build_chain(miners, engine="ab" * 32)
-    try:
-        assert {block.header.wins_required for block in blocks} == {bootstrap.TESTNET.wins_required}
-    finally:
-        service.close()
-
-
 def test_bootstrap_blocks_end_at_the_wall_clock(tmp_path: Path) -> None:
     """The setup window must be dated from the deploy, and must end there.
 

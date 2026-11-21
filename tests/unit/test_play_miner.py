@@ -23,7 +23,7 @@ import pytest
 
 from sccp.chain.block import bootstrap_end_height
 from sccp.chess.engines import MockEngine
-from sccp.config import DEVNET
+from sccp.config import DEVNET, TESTNET
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.devnet import GENESIS_EPOCH
 from sccp.miner.matchmaker import ResignRequest
@@ -591,42 +591,51 @@ def test_on_chain_resumes_the_same_chain_for_another_game(play: ModuleType, tmp_
     assert settlements[0].proof_id != settlements[1].proof_id
 
 
-def test_testnet_single_win_waits_for_a_second_proof(play: ModuleType, tmp_path: Path) -> None:
-    """A testnet block needs two wins, so one finished game mines a heartbeat.
+def test_testnet_on_chain_plays_one_game_per_epoch(play: ModuleType, tmp_path: Path) -> None:
+    """Testnet epochs are five blocks long, so each game closes its own epoch.
 
-    The bootstrap parks the tip on the last block of epoch 3. The first game's
-    proof is settleable in block 20, the block that opens epoch 4, but the block
-    builder cannot fill the required two proofs from one winner. Consensus takes
-    the proofless path instead: block 20 carries exactly one transaction and the
-    proof stays pending until the same miner supplies a second win.
+    The bootstrap parks the tip on the last block of epoch 3, so the first proof
+    settles in block 20 -- the block that opens epoch 4. Each resumed run plays
+    that epoch, mines the four blocks that close it with the availability
+    commitments and reveals the epochs ahead need, and settles in the block that
+    opens the next one: 25, then 30.
     """
     chain_dir = tmp_path / "chain"
     options = play.Options(
         network="testnet", on_chain=True, chain_dir=chain_dir, color="auto", ascii=True
     )
-    table = play._chain(options)
+    settlements: list[Any] = []
+    for tip, expected_height in ((19, 20), (20, 25), (25, 30)):
+        table = play._chain(options)
+        try:
+            assert table.chain is not None
+            assert table.chain.params.network_id == "testnet"
+            assert table.chain.height == tip
+            view = _play_to_minimum(play, table)
+            settlement = table.settle(view)
+            assert settlement.mined, settlement.summary
+            assert settlement.height == expected_height
+            state = table.chain.chain.state
+            assert state.current_epoch() == expected_height // TESTNET.epoch_length
+            stored = table.chain.chain.block_at_height(expected_height)
+            assert stored is not None and stored.block.proofs
+            settlements.append(settlement)
+        finally:
+            table.close()
+
+    assert len({settlement.proof_id for settlement in settlements}) == 3
+    # The blocks between the bootstrap and the last proof are the chain's clock,
+    # so every one of them carries a transaction or a proof, never nothing.
+    service = play.NodeService.open(TESTNET, storage=play.Storage(chain_dir / play.CHAIN_DB_NAME))
     try:
-        assert table.chain is not None
-        assert table.chain.params.network_id == "testnet"
-        assert table.chain.params.wins_required == 2
-        assert table.chain.height == 19
-        view = _play_to_minimum(play, table)
-        settlement = table.settle(view)
-        assert settlement.mined is False
-        assert "carries 0 of 2 proofs" in settlement.summary
-        assert "stays pending" in settlement.summary
-        assert table.chain.height == 20
-        state = table.chain.chain.state
-        assert state.current_epoch() == 4
-        stored = table.chain.chain.block_at_height(20)
-        assert stored is not None
-        assert stored.block.proofs == ()
-        assert len(stored.block.transactions) == 1
-        pending = [proof for proof in table.chain.mempool.proofs.values()]
-        assert len(pending) == 1
-        assert pending[0].winner == table.seat.opponent
+        for height in range(20, 31):
+            block = service.chain.block_at_height(height)
+            assert block is not None
+            assert block.block.transactions or block.block.proofs, f"block {height} is empty"
+        epochs = sorted({match.epoch for match in service.chain.state.matches.values()})
+        assert epochs == [3, 4, 5]
     finally:
-        table.close()
+        service.close()
 
 
 def test_on_chain_fresh_reboots_an_existing_chain(play: ModuleType, tmp_path: Path) -> None:
