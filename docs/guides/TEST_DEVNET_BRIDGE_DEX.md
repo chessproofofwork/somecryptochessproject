@@ -13,7 +13,9 @@ not browser features.
 
 The runbook is written for a fresh checkout and a fresh devnet. It uses four
 terminals plus a browser; the long-lived processes are the node, the relay and
-two (or four) miners.
+two (or four) miners. For the Sepolia testnet version of the bridge — test ETH,
+`EthHtlc` deployment and a two-wallet swap — see
+[`TEST_TESTNET_BRIDGE.md`](TEST_TESTNET_BRIDGE.md).
 
 > **Two facts that explain the shape of this guide.**
 >

@@ -298,7 +298,8 @@ responsibility rather than a construction phase.
 │   │   ├── SEND_COINS.md             # fund a wallet and send a transfer
 │   │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
 │   │   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
-│   │   └── TEST_DEVNET_BRIDGE_DEX.md # bridge, DEX and Chess960/C960 devnet test
+│   │   ├── TEST_DEVNET_BRIDGE_DEX.md # bridge, DEX and Chess960/C960 devnet test
+│   │   └── TEST_TESTNET_BRIDGE.md    # Sepolia ETH, EthHtlc deploy and testnet swap
 │   └── operations/                   # run, deploy and repair the network
 │       ├── RUN_A_DEVNET.md           # a whole devnet from source
 │       ├── RUN_A_TESTNET_MINER.md    # operator guide: relay, miner and registration
@@ -499,6 +500,7 @@ each one needs and where it ends, in [`docs/README.md`](docs/README.md):
 | [`setup/RUN_A_DEVNET.md`](docs/setup/RUN_A_DEVNET.md) | a whole devnet from source, step by step |
 | [`setup/RUN_A_TESTNET_MINER.md`](docs/setup/RUN_A_TESTNET_MINER.md) | relay, engine miner, registration, availability |
 | [`guides/TEST_DEVNET_BRIDGE_DEX.md`](docs/guides/TEST_DEVNET_BRIDGE_DEX.md) | bridge, DEX and Chess960 end to end |
+| [`guides/TEST_TESTNET_BRIDGE.md`](docs/guides/TEST_TESTNET_BRIDGE.md) | Sepolia ETH, `EthHtlc` deployment and a testnet bridge swap |
 
 The browser wallet, native DEX and trustless ETH↔SCCP HTLC bridge are implemented.
 The same user actions are available from the CLI under `sccp dex` and

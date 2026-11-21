@@ -13,6 +13,7 @@ folder table below it.
 | know what healthy looks like, and how to restart it | [`operations/RUNBOOK.md`](operations/RUNBOOK.md) |
 | handle an outage: triage, fix, prove it, write it up | [`operations/README.md`](operations/README.md) |
 | exercise the bridge, the DEX and Chess960 | [`guides/TEST_DEVNET_BRIDGE_DEX.md`](guides/TEST_DEVNET_BRIDGE_DEX.md) |
+| deploy the bridge against Sepolia and run a testnet swap | [`guides/TEST_TESTNET_BRIDGE.md`](guides/TEST_TESTNET_BRIDGE.md) |
 | see what is still unfinished | [`design/IMPLEMENTATION_PLAN.md`](design/IMPLEMENTATION_PLAN.md) |
 
 ## The four folders
@@ -39,6 +40,7 @@ your `PATH` yet.
 | [`PLAY_AND_EXPORT.md`](guides/PLAY_AND_EXPORT.md) | play on-chain, serve the chain, export the block's PGN |
 | [`EXPLORE_THE_CHAIN.md`](guides/EXPLORE_THE_CHAIN.md) | the web app: build it, what the pages show, the playable table |
 | [`TEST_DEVNET_BRIDGE_DEX.md`](guides/TEST_DEVNET_BRIDGE_DEX.md) | ETH↔ZQWX, pools, swaps and Chess960 end to end, CLI and web |
+| [`TEST_TESTNET_BRIDGE.md`](guides/TEST_TESTNET_BRIDGE.md) | deploy `EthHtlc` on Sepolia, configure a testnet node, and swap with two wallets |
 
 ## Setup
 
