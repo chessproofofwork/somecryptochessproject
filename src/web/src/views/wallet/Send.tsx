@@ -17,9 +17,9 @@ import { useMemo, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 import { Button, Divider, HelperText, SegmentedButtons, Text, TextInput } from "react-native-paper";
 
-import { submitTransaction } from "../../api";
 import { KeyValue, Mono, Section } from "../../components/Chrome";
 import { useNotice } from "../../components/Notices";
+import { useWalletSession } from "../../components/WalletSession";
 import {
   tokenBalance,
   tokenForVariant,
@@ -36,14 +36,7 @@ import {
   shortAddress,
 } from "../../lib/format";
 import { type HybridKeypair, hybridPublicKeyHex } from "../../lib/keys";
-import type { PendingTransaction } from "../../lib/pending";
-import {
-  buildTransfer,
-  signTransaction,
-  toWireTransaction,
-  txId,
-  type Transaction,
-} from "../../lib/tx";
+import { buildTransfer, signTransaction, txId, type Transaction } from "../../lib/tx";
 import { monospace } from "../../theme";
 import type { AccountView } from "../../types";
 
@@ -57,7 +50,6 @@ interface SendProps {
   tokens: Token[];
   /** The next unused nonce, or `null` while the chain is authoritative. */
   pendingNonce: number | null;
-  onAccepted: (sent: PendingTransaction) => void;
   onPendingNonce: (nonce: number | null) => void;
 }
 
@@ -73,9 +65,9 @@ export function SendPanel({
   minFee,
   tokens,
   pendingNonce,
-  onAccepted,
   onPendingNonce,
 }: SendProps): ReactNode {
+  const { sendPending } = useWalletSession();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [fee, setFee] = useState(() => feeText(minFee));
@@ -169,22 +161,29 @@ export function SendPanel({
     setError(null);
     try {
       const signed = signTransaction(keypair, review);
-      const accepted = await submitTransaction(toWireTransaction(signed));
+      // `sendPending` writes the History row before the request leaves the tab,
+      // so switching to History while the node is deciding still shows it.
+      await sendPending(signed, {
+        label: `Send ${token?.symbol ?? "ZQWX"}`,
+        symbol: token?.symbol ?? "ZQWX",
+      });
       // A nickname typed for a first transfer is saved with it: the person just
       // named the recipient, and asking again on the next send would be silly.
       if (nickname.trim() !== "") {
         setContacts(saveContact(String(review.payload.to), network, nickname));
       }
-      onAccepted({
-        txid: accepted.txid,
-        to: String(review.payload.to),
-        amount: parsed.amount,
-        asset: token?.asset ?? null,
-        symbol: token?.symbol ?? "ZQWX",
-        fee: parsed.fee,
-        nonce: signed.nonce,
-        submittedAt: Date.now(),
-      });
+      const recipientAddress = String(review.payload.to);
+      const name =
+        reviewName ??
+        labelFor(contacts, recipientAddress) ??
+        shortAddress(recipientAddress);
+      notify(
+        `sent ${formatTokenAmount(
+          parsed.amount,
+          token?.symbol ?? "ZQWX",
+          token?.decimals ?? 8,
+        )} to ${name} · pending at nonce ${formatInteger(signed.nonce)}`,
+      );
       onPendingNonce(signed.nonce + 1);
       setReview(null);
       setTo("");

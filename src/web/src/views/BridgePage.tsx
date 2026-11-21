@@ -55,7 +55,7 @@ export function BridgePage({ view }: { view: BridgeTab }): ReactNode {
 }
 
 function Desk({ view }: { view: BridgeTab }): ReactNode {
-  const { session, pendingNonce, setPendingNonce } = useWalletSession();
+  const { session, pendingNonce, setPendingNonce, sendPending } = useWalletSession();
   const { status: statusResource, params: paramsResource } = useNode();
   const notify = useNotice();
   const [ethAccount, setEthAccount] = useState<string | null>(null);
@@ -141,6 +141,7 @@ function Desk({ view }: { view: BridgeTab }): ReactNode {
     nonce: pendingNonce ?? accountView.nonce,
     reload,
     setPendingNonce,
+    sendPending,
     notify,
     ethAccount,
     connectEth,

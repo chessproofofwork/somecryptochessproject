@@ -42,7 +42,6 @@ import {
   fetchMempool,
   requestFaucet,
   submitProof,
-  submitTransaction,
 } from "../api";
 import {
   CodeBlock,
@@ -54,6 +53,7 @@ import {
   StatusPill,
 } from "../components/Chrome";
 import { useNotice } from "../components/Notices";
+import { useWalletSession } from "../components/WalletSession";
 import { tokenBalance, tokenForVariant, tokensFor, variantLabel } from "../lib/assets";
 import { signCertificate } from "../lib/certificate";
 import { DOMAINS } from "../lib/canonical";
@@ -92,7 +92,6 @@ import {
   buildRegister,
   buildReveal,
   signTransaction,
-  toWireTransaction,
 } from "../lib/tx";
 import { type CheckResult, verifyProof } from "../lib/verify";
 import { VariantGame } from "../lib/variantGame";
@@ -276,6 +275,7 @@ function Table({
 }): ReactNode {
   const { status, params: paramsResource } = useNode();
   const params = paramsResource.data;
+  const { sendPending } = useWalletSession();
   const address = addressFor(keypair.publicKey, network);
   const height = status.data?.height ?? 0;
 
@@ -459,7 +459,7 @@ function Table({
           publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
-      const accepted = await submitTransaction(toWireTransaction(tx));
+      const accepted = await sendPending(tx, { label: "Register miner" });
       setPendingTx({
         label: "register",
         txid: accepted.txid,
@@ -490,7 +490,7 @@ function Table({
           publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
-      const accepted = await submitTransaction(toWireTransaction(tx));
+      const accepted = await sendPending(tx, { label: "Commit availability" });
       saveCommitment(address, stored);
       setCommitment(stored);
       setPendingTx({
@@ -524,7 +524,7 @@ function Table({
           publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
-      const accepted = await submitTransaction(toWireTransaction(tx));
+      const accepted = await sendPending(tx, { label: "Reveal availability" });
       setPendingTx({
         label: "reveal",
         txid: accepted.txid,

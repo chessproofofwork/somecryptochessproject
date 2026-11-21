@@ -13,6 +13,11 @@
  * the other side. A `swap` row is the exception that proves the rule — it spends
  * and receives in one transition, so it names both legs and, having no
  * counterparty address, offers the pool id instead.
+ *
+ * Pending rows come first. They are written by the shared wallet session before
+ * `/v1/tx` is called, so a transfer or DEX action is visible here while the node
+ * is still deciding; the committed nonce or the node's tx-status endpoint
+ * retires it.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -172,6 +177,10 @@ export function HistoryPanel({
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const abort = useRef<AbortController | null>(null);
+  // When a pending row leaves, its block is at or below the tip. The next cache
+  // read should cover it instead of making the user press "Scan newer".
+  const pendingCount = useRef(pending.length);
+  const pendingRetired = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -241,6 +250,26 @@ export function HistoryPanel({
   }, [cache, loaded, run, scan, tip]);
 
   useEffect(() => () => abort.current?.abort(), []);
+
+  useEffect(() => {
+    if (pending.length < pendingCount.current) pendingRetired.current = true;
+    pendingCount.current = pending.length;
+  }, [pending.length]);
+
+  useEffect(() => {
+    if (
+      !pendingRetired.current ||
+      !loaded ||
+      cache === null ||
+      tip === undefined ||
+      scan !== null ||
+      tip <= cache.scannedFrom
+    ) {
+      return;
+    }
+    pendingRetired.current = false;
+    void run(tip, cache.scannedFrom + 1);
+  }, [cache, loaded, pending.length, run, scan, tip]);
 
   const newerAvailable = cache !== null && tip !== undefined && tip > cache.scannedFrom;
   const olderAvailable = cache !== null && cache.scannedTo > 0;
@@ -315,32 +344,51 @@ export function HistoryPanel({
         <View style={styles.pendingBlock}>
           <Text variant="titleSmall">Pending from this browser</Text>
           <Text variant="bodySmall" style={styles.muted}>
-            signed here and accepted by the node; a row leaves this list when a block includes its
-            nonce
+            written before the node was asked, so it appears here immediately; a row leaves when a
+            block includes it
           </Text>
-          {pending.map((entry) => (
-            <View key={entry.txid} style={styles.row}>
-              <StatusPill
-                label={committedNonce > entry.nonce ? "included" : "pending"}
-                tone={committedNonce > entry.nonce ? "info" : "warn"}
-              />
-              <Text variant="bodyMedium" style={styles.amount}>
-                {formatTokenAmount(entry.amount, entry.symbol ?? "ZQWX")}
-              </Text>
-              <Text variant="bodySmall" style={styles.muted}>
-                to {labelFor(contacts, entry.to) ?? shortAddress(entry.to)} · nonce{" "}
-                {formatInteger(entry.nonce)}
-              </Text>
-              <Text variant="bodySmall" style={styles.muted}>
-                {formatAge(Math.floor(entry.submittedAt / 1000), now)}
-              </Text>
-              <Mono copy>{shortHash(entry.txid, 16)}</Mono>
-              <View style={styles.actions}>
-                <CopyButton value={entry.txid} label="Copy txid" />
-                <CopyButton value={entry.to} label="Copy address" />
+          {pending.map((entry) => {
+            const token = tokenForAsset(tokens, entry.asset);
+            const amount =
+              entry.amount === null
+                ? "-"
+                : formatTokenAmount(
+                    entry.amount,
+                    token?.symbol ?? entry.symbol ?? "ZQWX",
+                    token?.decimals ?? 8,
+                  );
+            const to =
+              entry.to === null
+                ? null
+                : labelFor(contacts, entry.to) ?? shortAddress(entry.to);
+            const included = entry.nonce !== null && committedNonce > entry.nonce;
+            return (
+              <View key={entry.txid} style={styles.row}>
+                <StatusPill
+                  label={
+                    entry.status === "submitting" ? "sending" : included ? "included" : "pending"
+                  }
+                  tone={included ? "info" : entry.status === "submitting" ? "info" : "warn"}
+                />
+                <Text variant="bodyMedium" style={styles.amount}>
+                  {amount}
+                </Text>
+                <Text variant="bodySmall" style={styles.muted}>
+                  {entry.label}
+                  {to === null ? "" : ` to ${to}`} · {entry.type}
+                  {entry.nonce === null ? "" : ` · nonce ${formatInteger(entry.nonce)}`}
+                </Text>
+                <Text variant="bodySmall" style={styles.muted}>
+                  {formatAge(Math.floor(entry.submittedAt / 1000), now)}
+                </Text>
+                <Mono copy>{shortHash(entry.txid, 16)}</Mono>
+                <View style={styles.actions}>
+                  <CopyButton value={entry.txid} label="Copy txid" />
+                  {entry.to !== null && <CopyButton value={entry.to} label="Copy address" />}
+                </View>
               </View>
-            </View>
-          ))}
+            );
+          })}
         </View>
       )}
 
@@ -389,7 +437,8 @@ export function HistoryPanel({
         will not appear until a scan reaches it. A swap is one transaction with two legs, so it is
         one row: the input is exact and the received side is the minimum the chain enforced, since
         a block keeps that bound rather than the fill. Pending rows are this browser&apos;s record
-        of what it signed, not the node&apos;s.
+        of what it signed, not the node&apos;s, and cover every action started here: transfers,
+        faucet grants, DEX trades, bridge HTLCs and miner transactions.
       </HelperText>
     </Section>
   );

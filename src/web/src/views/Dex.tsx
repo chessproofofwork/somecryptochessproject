@@ -17,14 +17,14 @@ import { useEffect, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 import { Button, HelperText, Text } from "react-native-paper";
 
-import { fetchAccount, fetchPools, submitTransaction } from "../api";
+import { fetchAccount, fetchPools } from "../api";
 import { FailureNotice, KeyValue, Loading, Section, StatusPill } from "../components/Chrome";
 import { useNotice } from "../components/Notices";
 import { WalletGate } from "../components/WalletGate";
 import { useWalletSession } from "../components/WalletSession";
 import { tokensFor } from "../lib/assets";
 import { formatInteger, shortHash } from "../lib/format";
-import { signTransaction, toWireTransaction, txId } from "../lib/tx";
+import { signTransaction, txId } from "../lib/tx";
 import { useNode } from "../node";
 import { useResource } from "../useResource";
 import { CreatePanel } from "./dex/CreatePanel";
@@ -53,7 +53,7 @@ export function DexPage({ view }: { view: DexTab }): ReactNode {
 }
 
 function Desk({ view }: { view: DexTab }): ReactNode {
-  const { session, pendingNonce, setPendingNonce } = useWalletSession();
+  const { session, pendingNonce, setPendingNonce, sendPending } = useWalletSession();
   const { params: paramsResource } = useNode();
   const notify = useNotice();
   const [review, setReview] = useState<Review | null>(null);
@@ -96,7 +96,7 @@ function Desk({ view }: { view: DexTab }): ReactNode {
     setError(null);
     try {
       const signed = signTransaction(session.keypair, review.tx);
-      await submitTransaction(toWireTransaction(signed));
+      await sendPending(signed, { label: review.title });
       setPendingNonce(signed.nonce + 1);
       notify(`${review.title} accepted · pending at nonce ${formatInteger(signed.nonce)}`);
       setReview(null);
