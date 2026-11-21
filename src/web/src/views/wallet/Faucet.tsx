@@ -14,8 +14,9 @@ import { Button, HelperText, ProgressBar, Text } from "react-native-paper";
 import { requestFaucet } from "../../api";
 import { FailureNotice, KeyValue, Mono, Section } from "../../components/Chrome";
 import { useNotice } from "../../components/Notices";
+import { useWalletSession } from "../../components/WalletSession";
 import { labelFor, readContacts } from "../../lib/contacts";
-import { formatAmount, formatCoins, shortHash } from "../../lib/format";
+import { UNITS_PER_COIN, formatAmount, formatCoins, shortHash } from "../../lib/format";
 import type { AccountView, FaucetView } from "../../types";
 
 export function FaucetPanel({
@@ -31,6 +32,7 @@ export function FaucetPanel({
   onFunded: () => void;
 }): ReactNode {
   const notify = useNotice();
+  const { recordPending } = useWalletSession();
   const [busy, setBusy] = useState(false);
   const [grant, setGrant] = useState<FaucetView | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -43,6 +45,21 @@ export function FaucetPanel({
     try {
       const result = await requestFaucet(address);
       setGrant(result);
+      // The node built and signed this grant itself, so there is no local
+      // transaction to send -- but it is still this wallet's pending history row.
+      recordPending({
+        txid: result.txid,
+        type: "faucet",
+        label: "Faucet grant",
+        to: address,
+        amount: Math.trunc(result.amount) * UNITS_PER_COIN,
+        asset: null,
+        symbol: "ZQWX",
+        fee: 0,
+        nonce: null,
+        submittedAt: Date.now(),
+        status: "pending",
+      });
       notify(`faucet sent ${formatCoins(result.amount)} · ${shortHash(result.txid, 12)}…`);
       onFunded();
     } catch (failure) {

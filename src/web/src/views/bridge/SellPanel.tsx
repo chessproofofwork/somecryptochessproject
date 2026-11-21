@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { Button, HelperText, Text, TextInput } from "react-native-paper";
 
-import { fetchHtlcs, fetchOrder, submitOrder, submitTransaction } from "../../api";
+import { fetchHtlcs, fetchOrder, submitOrder } from "../../api";
 import { EmptyState, KeyValue, Section, StatusPill } from "../../components/Chrome";
 import { useNotice } from "../../components/Notices";
 import {
@@ -25,12 +25,7 @@ import {
   shortHash,
 } from "../../lib/format";
 import { hybridPublicKeyHex } from "../../lib/keys";
-import {
-  buildHtlcLock,
-  buildHtlcRefund,
-  signTransaction,
-  toWireTransaction,
-} from "../../lib/tx";
+import { buildHtlcLock, buildHtlcRefund, signTransaction } from "../../lib/tx";
 import type { OrderView } from "../../types";
 import { useResource } from "../../useResource";
 import { EthLine, bridgeStyles as styles, ConfigNotice } from "./common";
@@ -263,7 +258,7 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
           publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
-      await submitTransaction(toWireTransaction(signed));
+      await context.sendPending(signed, { label: "Lock ZQWX for the bridge" });
       context.setPendingNonce(signed.nonce + 1);
       notify("ZQWX locked for the taker");
       context.reload();
@@ -317,7 +312,7 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
           publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
-      await submitTransaction(toWireTransaction(signed));
+      await context.sendPending(signed, { label: "Refund bridged ZQWX" });
       context.setPendingNonce(signed.nonce + 1);
       notify("ZQWX refunded");
       context.reload();

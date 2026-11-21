@@ -18,9 +18,9 @@
  * unlocked key available there without putting the chessboard in every wallet
  * load. A nickname is a local label -- the wallet's own in the vault, and one per
  * address it sends to -- so every screen can name an account without pretending
- * the name is on chain. Transfers the node accepted but no block has carried yet
- * are remembered here and listed on Overview and History until the committed
- * nonce passes them.
+ * the name is on chain. Ledger actions this browser signed but no block has
+ * carried yet are remembered by the shared session and listed on Overview and
+ * History until the committed nonce passes them.
  *
  * `#/wallet` is this page on `https://app.proofofchess.com`; the hamburger menu and
  * every wallet link point there without leaving the origin.
@@ -41,10 +41,9 @@ import {
   Section,
   StatusPill,
 } from "../components/Chrome";
-import { useNotice } from "../components/Notices";
 import { useWalletSession } from "../components/WalletSession";
 import { labelFor, readContacts } from "../lib/contacts";
-import { tokenImmature, tokensFor, tokenBalance } from "../lib/assets";
+import { tokenForAsset, tokenImmature, tokensFor, tokenBalance } from "../lib/assets";
 import { downloadText, keyfileName } from "../lib/download";
 import {
   formatAmount,
@@ -55,13 +54,6 @@ import {
   shortHash,
 } from "../lib/format";
 import { keyfileText } from "../lib/keystore";
-import {
-  addPending,
-  prunePending,
-  readPending,
-  writePending,
-  type PendingTransaction,
-} from "../lib/pending";
 import { AUTO_LOCK_CHOICES } from "../lib/settings";
 import { useNode } from "../node";
 import { useResource } from "../useResource";
@@ -79,7 +71,6 @@ export function Wallet({
   view: "overview" | "send" | "receive" | "faucet" | "history" | "settings";
 }): ReactNode {
   const { status, params, network } = useNode();
-  const notify = useNotice();
   const {
     session,
     stored,
@@ -93,10 +84,11 @@ export function Wallet({
     lock: lockSession,
     pendingNonce,
     setPendingNonce,
+    pending,
+    prunePendingAtNonce,
     autoLockSeconds,
     setAutoLockSeconds,
   } = useWalletSession();
-  const [pending, setPending] = useState<PendingTransaction[]>([]);
   const [nickname, setNickname] = useState("");
   const [forgetting, setForgetting] = useState<string | null>(null);
 
@@ -114,7 +106,6 @@ export function Wallet({
 
   const lock = useCallback(
     (reason?: string): void => {
-      setPending([]);
       setForgetting(null);
       lockSession(reason);
     },
@@ -124,68 +115,21 @@ export function Wallet({
   const forget = useCallback(
     async (target: string): Promise<void> => {
       await forgetKeyfile(target);
-      setPending([]);
       setForgetting(null);
     },
     [forgetKeyfile],
   );
 
-  // Pending rows belong to one key: read them when a wallet is adopted, and let
-  // the account effect below retire them once the chain has passed their nonce.
-  const sessionAddress = session?.record.address ?? null;
-  const sessionNetwork = session?.record.network ?? null;
-  useEffect(() => {
-    if (sessionAddress === null || sessionNetwork === null) {
-      setPending([]);
-      return;
-    }
-    setPending(readPending(sessionAddress, sessionNetwork));
-  }, [sessionAddress, sessionNetwork]);
-
   // The chain is the truth about the nonce; once it reaches the optimistic one,
   // the local override has nothing left to say. The same comparison retires a
-  // pending row: it is included when the committed nonce has passed its nonce.
+  // pending row, which the session provider also checks against the node's
+  // transaction status endpoint.
   const chainNonce = accountView?.nonce;
   useEffect(() => {
     if (chainNonce === undefined) return;
     if (pendingNonce !== null && chainNonce >= pendingNonce) setPendingNonce(null);
-    if (pending.length === 0) return;
-    const included = pending.filter((entry) => entry.nonce < chainNonce);
-    const next = prunePending(pending, chainNonce);
-    if (included.length === 0 && next.length === pending.length) return;
-    if (session !== null) {
-      writePending(session.record.address, session.record.network, next);
-    }
-    setPending(next);
-    for (const entry of included) {
-      const name = labelFor(readContacts(), entry.to) ?? shortAddress(entry.to);
-      notify(
-        `included: ${formatAmount(entry.amount)} to ${name} (nonce ${formatInteger(entry.nonce)})`,
-      );
-    }
-  }, [chainNonce, notify, pending, pendingNonce, session]);
-
-  /**
-   * A send is accepted by the node before a block includes it. Record it here so
-   * History and Overview can show it as pending, and say so immediately: the
-   * review screen's "Sign and send" is not the end of the story.
-   */
-  const accepted = useCallback(
-    (tx: PendingTransaction): void => {
-      if (session === null) return;
-      // Read the book rather than the rendered state: two acceptances in one
-      // render would otherwise both start from the same list and lose one row.
-      const book = readPending(session.record.address, session.record.network);
-      const next = addPending(book, tx);
-      writePending(session.record.address, session.record.network, next);
-      setPending(next);
-      const name = labelFor(readContacts(), tx.to) ?? shortAddress(tx.to);
-      notify(
-        `sent ${formatTokenAmount(tx.amount, tx.symbol ?? "ZQWX")} to ${name} · pending at nonce ${formatInteger(tx.nonce)}`,
-      );
-    },
-    [notify, session],
-  );
+    prunePendingAtNonce(chainNonce);
+  }, [chainNonce, pendingNonce, prunePendingAtNonce, setPendingNonce]);
 
   const title = ((): ReactNode => {
     if (session === null) return null;
@@ -258,15 +202,13 @@ export function Wallet({
             minFee={params.data.min_fee}
             tokens={tokens}
             pendingNonce={pendingNonce}
-            onAccepted={accepted}
             onPendingNonce={setPendingNonce}
           />
           {pending.length > 0 && (
             <HelperText type="info" visible>
-              {pending.length === 1 ? "One transfer is" : `${pending.length} transfers are`} waiting
-              for a block at nonce {formatInteger(pending[pending.length - 1]?.nonce ?? 0)}; the
-              node&apos;s committed nonce is what retires them, and History lists them while they
-              wait.
+              {pending.length === 1 ? "One transaction is" : `${pending.length} transactions are`}{" "}
+              waiting for a block; the node&apos;s committed nonce retires them, and History lists
+              them while they wait.
             </HelperText>
           )}
         </>
@@ -499,13 +441,29 @@ export function Wallet({
             <KeyValue label="Next nonce" mono>
               {formatInteger(pendingNonce ?? accountView.nonce)}
             </KeyValue>
-            {pending.map((entry) => (
-              <KeyValue key={entry.txid} label="Pending">
-                {formatTokenAmount(entry.amount, entry.symbol ?? "ZQWX")} to{" "}
-                {labelFor(readContacts(), entry.to) ?? shortAddress(entry.to)} · nonce{" "}
-                {formatInteger(entry.nonce)}
-              </KeyValue>
-            ))}
+            {pending.map((entry) => {
+              const token = tokenForAsset(tokens, entry.asset);
+              const amount =
+                entry.amount === null
+                  ? entry.label
+                  : `${formatTokenAmount(
+                      entry.amount,
+                      token?.symbol ?? entry.symbol ?? "ZQWX",
+                      token?.decimals ?? 8,
+                    )} · ${entry.label}`;
+              const to =
+                entry.to === null
+                  ? null
+                  : labelFor(readContacts(), entry.to) ?? shortAddress(entry.to);
+              return (
+                <KeyValue key={entry.txid} label="Pending">
+                  {amount}
+                  {to === null ? "" : ` to ${to}`} ·{" "}
+                  {entry.status === "submitting" ? "sending" : "waiting for a block"}
+                  {entry.nonce === null ? "" : ` · nonce ${formatInteger(entry.nonce)}`}
+                </KeyValue>
+              );
+            })}
             <KeyValue label="Explorer">
               <Link href={`#/accounts/${encodeURIComponent(record.address)}`}>this account</Link>
             </KeyValue>
@@ -513,8 +471,8 @@ export function Wallet({
         )}
         <HelperText type="info" visible>
           The node has no transaction-history endpoint yet, so this page shows committed balances
-          and the transfers this browser is still waiting on; the History tab scans blocks for the
-          rest.
+          and the ledger actions this browser is still waiting on; the History tab scans blocks for
+          the rest.
         </HelperText>
       </>
     );

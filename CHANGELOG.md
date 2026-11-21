@@ -7,6 +7,15 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **Wallet History shows pending transactions immediately.** Every action that
+  signs a ledger transaction — a wallet transfer, a faucet grant, a DEX swap or
+  liquidity change, a bridge HTLC and the miner register/availability/reveal
+  flow — writes a local pending row before the node is asked. The row says
+  `sending`, then `pending`, and is retired by the node's transaction-status
+  endpoint or the committed nonce, at which point History scans the new block.
+
 ## [0.36.1] - 2026-11-21
 
 ### Added

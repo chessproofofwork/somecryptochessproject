@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 import { Button, HelperText, SegmentedButtons, Text } from "react-native-paper";
 
-import { fetchHtlcs, fetchOrder, submitTake, submitTransaction } from "../../api";
+import { fetchHtlcs, fetchOrder, submitTake } from "../../api";
 import { EmptyState, KeyValue, Section, StatusPill } from "../../components/Chrome";
 import { useNotice } from "../../components/Notices";
 import {
@@ -22,7 +22,7 @@ import {
 } from "../../lib/eth";
 import { formatInteger, formatTokenAmount, shortAddress, shortHash } from "../../lib/format";
 import { hybridPublicKeyHex } from "../../lib/keys";
-import { buildHtlcClaim, signTransaction, toWireTransaction } from "../../lib/tx";
+import { buildHtlcClaim, signTransaction } from "../../lib/tx";
 import { useNow, useResource } from "../../useResource";
 import { EthLine, bridgeStyles as styles, ConfigNotice } from "./common";
 import type { BridgeContext } from "./types";
@@ -249,7 +249,7 @@ export function BuyPanel(context: BridgeContext): ReactNode {
           publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
-      await submitTransaction(toWireTransaction(signed));
+      await context.sendPending(signed, { label: "Claim bridged ZQWX" });
       context.setPendingNonce(signed.nonce + 1);
       setClaimSent(true);
       notify("ZQWX claim submitted. The maker can claim the ETH once it is mined.");
