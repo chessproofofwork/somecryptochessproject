@@ -124,6 +124,19 @@ def test_an_unreadable_report_is_not_a_crash(tmp_path: Path) -> None:
         checker.wait_for_fleet(path, wait_seconds=0, expect_seats=1)
 
 
+def test_the_check_requires_testnets_two_win_floor() -> None:
+    """Starting at two is not enough: the difficulty endpoint must still say two."""
+    assert checker.check_difficulty({"wins_required": 2}) == 2
+    assert checker.check_difficulty({"wins_required": 3}) == 3
+
+    with pytest.raises(SystemExit, match="floor is 2"):
+        checker.check_difficulty({"wins_required": 1})
+    with pytest.raises(SystemExit, match="invalid wins_required"):
+        checker.check_difficulty({"wins_required": True})
+    with pytest.raises(SystemExit, match="/v1/difficulty"):
+        checker.check_difficulty(None)
+
+
 def test_fleet_only_checks_the_seats_and_opens_no_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

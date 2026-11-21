@@ -7,6 +7,20 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.36.4] - 2026-11-21
+
+### Fixed
+
+- **Testnet keeps two proofs per block after retargeting.** The first difficulty
+  window includes the pinned 2023 genesis timestamp, so the 0.36.3 chain read
+  the 2026 bootstrap as years slow and lowered `wins_required` from 2 to 1 at
+  height 10. Testnet now sets `k_min = 2`: retargeting can still raise the win
+  count and adjust the seal, but it cannot undo the two-proof requirement. An
+  existing testnet chain has to be rebuilt, because its height-10 header
+  declares the old value. The deploy smoke check now also fails when
+  `/v1/difficulty` reports fewer than two wins, so this cannot ship silently
+  again.
+
 ## [0.36.3] - 2026-11-21
 
 ### Changed

@@ -1,9 +1,10 @@
 """Smoke-check a running testnet stack.
 
 The deploy workflow calls this inside the node container after ``docker compose
-up``: it waits for the bootstrap height, then for the relay to expose the epoch
-the bootstrap wrote, and finally that the relay is attesting (it has a clock
-witness key). A second invocation, inside the traffic container, checks the two
+up``: it waits for the bootstrap height, checks that the chain still requires
+testnet's two wins per block, then waits for the relay to expose the epoch the
+bootstrap wrote, and finally that the relay is attesting (it has a clock witness
+key). A second invocation, inside the traffic container, checks the two
 extra seats with ``--fleet`` and ``--fleet-only``: those miners are children of
 that container, so nothing else can see them. It is also useful locally::
 
@@ -89,6 +90,27 @@ def check_witness(relay_status: Mapping[str, object], *, required: bool = True) 
             "timeout claim can settle (pass --allow-unattested to deploy anyway)"
         )
     return None
+
+
+def check_difficulty(difficulty: Mapping[str, object] | None) -> int:
+    """Require the node to keep testnet's proof floor, and return the current k.
+
+    A fresh testnet genesis starts at ``wins_required = 2``. The first retarget
+    window spans the pinned 2023 genesis timestamp, so a chain on 0.36.3 looked
+    years slow and dropped to one proof at height 10 without failing any other
+    deploy check. ``k_min = 2`` fixes the schedule; this check catches a
+    deployment that still serves a lower value.
+    """
+    if difficulty is None:
+        raise SystemExit("the node did not answer /v1/difficulty")
+    wins = difficulty.get("wins_required")
+    if not isinstance(wins, int) or isinstance(wins, bool):
+        raise SystemExit(f"/v1/difficulty returned an invalid wins_required: {wins!r}")
+    if wins < TESTNET.k_min:
+        raise SystemExit(
+            f"node requires {wins} win(s) per block; testnet's floor is {TESTNET.k_min}"
+        )
+    return wins
 
 
 def read_fleet(path: Path) -> Mapping[str, object] | None:
@@ -346,6 +368,8 @@ def main() -> None:
         return
     with httpx.Client(base_url=arguments.node, timeout=10) as node:
         status = wait_for_node(node, wait_seconds=arguments.wait_seconds)
+        difficulty = _get_object(node, "/v1/difficulty")
+    wins = check_difficulty(difficulty)
     with httpx.Client(base_url=arguments.relay, timeout=10) as relay:
         relay_status = wait_for_relay(relay, wait_seconds=30)
     matches = relay_status.get("matches")
@@ -355,7 +379,7 @@ def main() -> None:
     witness = check_witness(relay_status, required=not arguments.allow_unattested)
     attested = f", witness {witness}" if witness else ", unattested"
     print(
-        f"testnet ready: node height {status['height']}, "
+        f"testnet ready: node height {status['height']}, {wins} win(s) per block, "
         f"relay epoch {relay_status.get('epoch')} with {matches} match(es){attested}"
     )
     if arguments.fleet is not None:

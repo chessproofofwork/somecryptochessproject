@@ -353,9 +353,12 @@ TESTNET: Final = NetworkParams(
     rounds_per_epoch=3,
     availability_lead=2,
     # Two proofs per block makes testnet exercise multi-PGN block rendering in
-    # the explorer. Devnet overrides this back to one for deterministic fixtures.
+    # the explorer. The floor is two as well: the first retarget window includes
+    # the pinned 2023 genesis timestamp, so a fresh 2026 chain looks years slow
+    # and would otherwise lower k to one before the first proof block. Devnet
+    # overrides both values back to one for deterministic fixtures.
     wins_required=2,
-    k_min=1,
+    k_min=2,
     k_max=5,
     claim_window=128,
     # Testnet blocks are 30 s. Every block- or epoch-denominated window that
@@ -445,6 +448,7 @@ DEVNET: Final = NetworkParams.model_validate(
         "target_block_seconds": 1,
         "retarget_enabled": False,
         "wins_required": 1,
+        "k_min": 1,
         "min_bond": 0,
         # Devnet is its own deterministic network; pin the windows so changing
         # testnet's block cadence cannot rewrite a devnet fixture's history.

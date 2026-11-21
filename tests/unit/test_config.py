@@ -151,7 +151,9 @@ def test_devnet_is_deterministic() -> None:
 def test_testnet_starts_with_two_wins_per_block() -> None:
     """Two proofs exercise multi-PGN block rendering in the explorer."""
     assert TESTNET.wins_required == 2
+    assert TESTNET.k_min == 2, "the retarget schedule must not lower testnet below two wins"
     assert DEVNET.wins_required == 1
+    assert DEVNET.k_min == 1
 
 
 def test_testnet_windows_are_scaled_to_its_block_time() -> None:
