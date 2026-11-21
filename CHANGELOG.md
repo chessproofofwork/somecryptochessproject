@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-11-21
+
 ### Added
 
 - **Landing-page links unfurl with a branded card.** `proofofchess.com` now
