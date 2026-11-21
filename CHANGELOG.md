@@ -7,6 +7,15 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **Addresses are searchable in the explorer.** The Blocks search box now
+  accepts a bech32 account address as well as a height, block hash or
+  transaction id, and opens `#/accounts/<address>`. The address is decoded
+  locally first — checksum, program length and the node's current `address_hrp`
+  — so a typo or an address for another network is a search miss rather than a
+  request the node answers with a 400.
+
 ## [0.36.5] - 2026-11-21
 
 ### Changed

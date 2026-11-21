@@ -13,8 +13,10 @@ import { Button, HelperText, Text, TextInput } from "react-native-paper";
 import { fetchBlocks } from "../api";
 import { BlockTable } from "../components/BlockTable";
 import { EmptyState, FailureNotice, Loading, Section } from "../components/Chrome";
+import { addressHrp } from "../lib/bech32";
 import { formatInteger } from "../lib/format";
 import { resolveSearchTarget } from "../lib/search";
+import { useNode } from "../node";
 import { navigate, routeHash } from "../router";
 import { useResource } from "../useResource";
 
@@ -25,6 +27,9 @@ export function Blocks(): ReactNode {
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<Error | undefined>(undefined);
+  const { params, network } = useNode();
+  const expectedHrp =
+    params.data?.address_hrp ?? (network === null ? undefined : addressHrp(network));
   const before = cursors[cursors.length - 1];
   const page = useResource(
     (signal) => fetchBlocks({ limit: PAGE_SIZE, beforeHeight: before, signal }),
@@ -37,15 +42,15 @@ export function Blocks(): ReactNode {
   const newest = blocks[0];
   const trimmed = query.trim();
 
-  /** Resolve a height, block hash or transaction id, then open its page. */
+  /** Resolve a height, block hash, transaction id or address, then open its page. */
   const openReference = async (): Promise<void> => {
     if (trimmed === "" || searching) return;
     setSearching(true);
     setSearchError(undefined);
     try {
-      const target = await resolveSearchTarget(trimmed);
+      const target = await resolveSearchTarget(trimmed, undefined, expectedHrp);
       if (target === null) {
-        setSearchError(new Error(`no block or transaction matches ${trimmed}`));
+        setSearchError(new Error(`no block, transaction or account matches ${trimmed}`));
         return;
       }
       navigate(routeHash(target));
@@ -92,7 +97,7 @@ export function Blocks(): ReactNode {
         <TextInput
           mode="outlined"
           dense
-          label="Search height, block hash or transaction id"
+          label="Search height, block hash, transaction id or address"
           value={query}
           onChangeText={(value) => {
             setQuery(value);
@@ -113,7 +118,8 @@ export function Blocks(): ReactNode {
         </Button>
       </View>
       <HelperText type="info" visible>
-        A height or block hash opens a block; a transaction id opens the transaction it identifies.
+        A height or block hash opens a block; a transaction id opens the transaction it identifies; an
+        address opens its balances and registration.
       </HelperText>
       {searchError !== undefined && (
         <HelperText type="error" visible>

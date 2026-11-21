@@ -56,9 +56,11 @@ deploy that does exactly this is
   burned by slashing, and the newest blocks and games.
 - **Blocks** — newest first, paged with the node's `before_height` cursor rather
   than an offset, so a reorg cannot make a page skip a block. The search box
-  accepts a height, a block hash or a transaction id: a hash and a txid have the
-  same shape, so it asks the node for a block first and falls back to the
-  transaction index.
+  accepts a height, a block hash, a transaction id or a bech32 account address.
+  A hash and a txid have the same shape, so it asks the node for a block first
+  and falls back to the transaction index. An address is checked locally (its
+  bech32 checksum and network prefix) and opens `#/accounts/<address>` without
+  the block and transaction round trips.
 - **A transaction** — the node's index entry for one txid: pending in the
   mempool or mined at a height, its type and block link, and the sender, nonce,
   fee and payload when the node still holds that block's body.
