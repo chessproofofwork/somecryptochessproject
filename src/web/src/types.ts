@@ -274,6 +274,10 @@ export interface GameSummary {
 
 export interface GameList {
   network: string;
+  /** Every game this node knows, settled and pending, across all pages. */
+  total: number;
+  /** The subset of `total` still waiting in the mempool. */
+  pending: number;
   games: GameSummary[];
 }
 

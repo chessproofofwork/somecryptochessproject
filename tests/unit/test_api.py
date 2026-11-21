@@ -301,8 +301,11 @@ def test_game_list_shows_pending_then_settled_results(
     )
     service.mempool.add_proof(match.proof)
     with _client(service) as client:
-        pending = client.get("/v1/games").json()["games"]
+        pending_page = client.get("/v1/games").json()
         pending_view = client.get(f"/v1/games/{match.proof.game_hash}").json()
+    pending = pending_page["games"]
+    assert pending_page["total"] == 1
+    assert pending_page["pending"] == 1
     assert [row["game_hash"] for row in pending] == [match.proof.game_hash]
     assert pending_view["variant"] == match.proof.variant
     assert pending[0]["in_mempool"] is True
@@ -313,8 +316,14 @@ def test_game_list_shows_pending_then_settled_results(
     mine_block(chain, miner_keys[match.proof.winner], proofs=(match.proof,))
     service.mempool = Mempool(params=chain.params, tip_state=chain.state, book=chain.book)
     with _client(service) as client:
-        settled = client.get("/v1/games").json()["games"]
-        older = client.get(f"/v1/games?before_height={chain.height}").json()["games"]
+        settled_page = client.get("/v1/games").json()
+        older_page = client.get(f"/v1/games?before_height={chain.height}").json()
+    settled = settled_page["games"]
+    older = older_page["games"]
+    assert settled_page["total"] == 1
+    assert settled_page["pending"] == 0
+    assert older_page["total"] == 1
+    assert older_page["pending"] == 0
     assert [row["game_hash"] for row in settled] == [match.proof.game_hash]
     row = settled[0]
     assert row["height"] == chain.height
@@ -328,6 +337,38 @@ def test_game_list_shows_pending_then_settled_results(
     assert row["match_id"] == match.proof.match_id
     assert row["variant"] == match.proof.variant
     assert older == []
+    service.close()
+
+
+def test_game_list_totals_cover_the_whole_chain_not_one_page(
+    live_chain: Any, chain_match: Any
+) -> None:
+    """``total``/``pending`` do not shrink to a page or follow its cursor."""
+    chain = live_chain.chain
+    match = chain_match(chain, epoch=3)
+    service = NodeService(
+        params=chain.params,
+        chain=chain,
+        mempool=Mempool(params=chain.params, tip_state=chain.state, book=chain.book),
+    )
+    for suffix, height in (("11", 1), ("22", 2), ("33", 3)):
+        game_hash = suffix * 32
+        service.chain.state.proofs[game_hash] = ProofRecord(
+            proof_id=f"proof-{suffix}",
+            game_hash=game_hash,
+            height=height,
+            winner=MINER_ADDRESS,
+        )
+    service.mempool.add_proof(match.proof)
+    with _client(service) as client:
+        first = client.get("/v1/games?limit=1").json()
+        older = client.get("/v1/games?limit=1&before_height=3").json()
+    assert first["total"] == 4
+    assert first["pending"] == 1
+    assert [row["in_mempool"] for row in first["games"]] == [True, False]
+    assert [row["height"] for row in older["games"]] == [2]
+    assert older["total"] == 4
+    assert older["pending"] == 1
     service.close()
 
 

@@ -67,8 +67,10 @@ deploy that does exactly this is
   with their payloads, and one card per win proof: game hash, opening and PGN.
 - **Games** — proofs in the node's own order: pending first, then newest
   settlement, paged by settle height with the game hash as the tie-break so a
-  block carrying several proofs yields exact pages. A row says whether the proof
-  is in a block or still in the mempool and how the chain currently judges it.
+  block carrying several proofs yields exact pages. The header counts every
+  game the node knows and the pending subset, not just the current page. A row
+  says whether the proof is in a block or still in the mempool and how the chain
+  currently judges it.
   A match the relay is still running has no proof yet, so it is not listed: the
   explorer shows a game from the moment a seat's transcript reaches the mempool.
 - **A game** — settlement state, the match certificate (both seats, opening,

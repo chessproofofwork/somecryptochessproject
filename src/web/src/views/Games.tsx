@@ -42,7 +42,6 @@ export function Games(): ReactNode {
     before === undefined ? { pollMs: 8000 } : {},
   );
   const all = games.data?.games ?? [];
-  const pending = all.filter((game) => game.in_mempool).length;
   const oldest = all[all.length - 1];
 
   return (
@@ -51,7 +50,7 @@ export function Games(): ReactNode {
       subtitle={
         games.data === undefined
           ? "settled proofs and the ones waiting for a block"
-          : `${formatInteger(all.length)} games · ${pending} pending`
+          : `${formatInteger(games.data.total)} games · ${formatInteger(games.data.pending)} pending`
       }
       action={
         <View style={styles.controls}>

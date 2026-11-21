@@ -862,10 +862,20 @@
           "network": {
             "minLength": 1,
             "type": "string"
+          },
+          "pending": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "type": "integer"
           }
         },
         "required": [
-          "network"
+          "network",
+          "total",
+          "pending"
         ],
         "type": "object"
       },

@@ -7,6 +7,18 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **`/v1/games` reports whole-chain totals.** `GameList` now carries `total`
+  (settled proofs plus proofs still in the pool) and `pending` (the pooled
+  subset), so a paged client can label the list without walking every page.
+
+### Fixed
+
+- **The Games header no longer calls the page size the game count.** The
+  explorer labels the list with the node's `total` and `pending` counts, so a
+  105-game chain reads "105 games" instead of "25 games" on every page.
+
 ## [0.36.0] - 2026-11-20
 
 ### Changed

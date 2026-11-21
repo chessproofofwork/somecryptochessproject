@@ -887,11 +887,14 @@ class NodeService:
         which is what keeps older clients and links valid.
 
         Pending proofs only appear on the first page because they have no
-        height to page by. Each row is described from the proof itself when
-        this node still holds the block, which is what lets an explorer show
-        result, termination and ply count without a second request.
+        height to page by, but ``total`` and ``pending`` count them on every
+        page: they describe the whole chain, not the rows returned by this
+        call. Each row is described from the proof itself when this node still
+        holds the block, which is what lets an explorer show result,
+        termination and ply count without a second request.
         """
         by_height = {stored.height: stored for stored in self.chain.main_chain()}
+        pending_count = len(self.mempool.proofs)
         pending: list[GameSummary] = []
         if before_height is None:
             for proof in self.mempool.proofs.values():
@@ -912,7 +915,12 @@ class NodeService:
                     _proof_in(by_height.get(record.height), record.game_hash),
                 )
             )
-        return GameList(network=self.params.network_id, games=(*pending, *settled))
+        return GameList(
+            network=self.params.network_id,
+            total=len(self.chain.state.proofs) + pending_count,
+            pending=pending_count,
+            games=(*pending, *settled),
+        )
 
     def _proof_for_record(self, height: int, game_hash: str) -> WinProof | None:
         """Find the full proof in its block, if this node still has that block."""
