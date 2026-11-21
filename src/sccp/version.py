@@ -14,7 +14,7 @@ from typing import Final
 
 from sccp.errors import ConfigError
 
-__version__: Final = "0.36.5"
+__version__: Final = "0.36.6"
 """Package version (kept in sync with ``pyproject.toml``)."""
 
 PROTOCOL_VERSION: Final = 1

@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   ADDRESS_VERSION,
   Bech32Error,
+  MAX_ADDRESS_LENGTH,
   PROGRAM_SIZE,
   addressHrp,
   convertBits,
+  decodeAddress,
   encodeProgram,
 } from "./bech32";
 import { fromHex } from "./canonical";
@@ -23,6 +25,28 @@ describe("bech32", () => {
     expect(encodeProgram("sccp", addressProgram(hybridPublicKey, "mainnet"))).toBe(
       keys.address_mainnet,
     );
+  });
+
+  it("decodes the golden addresses and accepts the uppercase spelling", () => {
+    const testnet = decodeAddress(keys.address_testnet);
+    expect(testnet).not.toBeNull();
+    expect(testnet?.hrp).toBe("sccpt");
+    expect(testnet?.version).toBe(ADDRESS_VERSION);
+    expect(testnet?.program).toHaveLength(PROGRAM_SIZE);
+    expect(testnet?.program[0]).toBe(ADDRESS_VERSION);
+    expect(testnet?.program).toStrictEqual(addressProgram(hybridPublicKey, "testnet"));
+
+    const upper = decodeAddress(keys.address_testnet.toUpperCase());
+    expect(upper?.program).toStrictEqual(testnet?.program);
+  });
+
+  it("rejects malformed addresses before they reach the node", () => {
+    const address = keys.address_testnet;
+    expect(address.length).toBeLessThanOrEqual(MAX_ADDRESS_LENGTH);
+    expect(decodeAddress("")).toBeNull();
+    expect(decodeAddress(address.slice(0, -1) + (address.endsWith("q") ? "p" : "q"))).toBeNull();
+    expect(decodeAddress(address.toUpperCase().slice(0, 10) + address.slice(10))).toBeNull();
+    expect(decodeAddress(address.slice(0, 20))).toBeNull();
   });
 
   it("refuses programs it cannot represent", () => {

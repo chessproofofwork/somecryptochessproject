@@ -25,6 +25,9 @@ export const HASH_SIZE = 32;
 /** `version || hash`, the exact 33 bytes the bech32 string commits to. */
 export const PROGRAM_SIZE = 1 + HASH_SIZE;
 
+/** BIP-173's limit for the whole string, HRP and checksum included. */
+export const MAX_ADDRESS_LENGTH = 90;
+
 export class Bech32Error extends Error {
   override name = "Bech32Error";
 }
@@ -113,8 +116,58 @@ export function encodeProgram(hrp: string, program: Uint8Array): string {
   const words = convertBits(program, 8, 5, true);
   if (words === null) throw new Bech32Error("cannot convert address program to 5-bit words");
   const address = bech32Encode(hrp, words);
-  if (address.length > 90) throw new Bech32Error("address exceeds the 90-character limit");
+  if (address.length > MAX_ADDRESS_LENGTH) {
+    throw new Bech32Error(`address exceeds the ${MAX_ADDRESS_LENGTH}-character limit`);
+  }
   return address;
+}
+
+/** A parsed address: its network prefix and the 33-byte program it commits to. */
+export interface DecodedAddress {
+  hrp: string;
+  version: number;
+  program: Uint8Array;
+}
+
+/**
+ * Decode a bech32 address into the program it commits to.
+ *
+ * The checksum and the program layout are both checked, so an explorer search
+ * can tell a real address from a lookalike before it asks the node. Returns
+ * `null` for anything this module's encoder would not have produced; callers
+ * decide whether a network prefix mismatch is a miss or an error.
+ *
+ * An all-uppercase address is valid bech32 and decodes to the same bytes as its
+ * lowercase spelling. The chain stores addresses lowercase, so callers that are
+ * going to use the address as a key should lower it after decoding.
+ */
+export function decodeAddress(value: string): DecodedAddress | null {
+  if (value.length === 0 || value.length > MAX_ADDRESS_LENGTH) return null;
+  if (value !== value.toLowerCase() && value !== value.toUpperCase()) return null;
+
+  const lower = value.toLowerCase();
+  const separator = lower.lastIndexOf("1");
+  if (separator < 1 || separator + 7 > lower.length) return null;
+
+  const hrp = lower.slice(0, separator);
+  const words: number[] = [];
+  for (const char of lower.slice(separator + 1)) {
+    const word = CHARSET.indexOf(char);
+    if (word < 0) return null;
+    words.push(word);
+  }
+  if (polymod([...hrpExpand(hrp), ...words]) !== 1) return null;
+
+  // The last six words are the checksum; the rest is the address program.
+  const program = convertBits(words.slice(0, -6), 5, 8, false);
+  if (
+    program === null ||
+    program.length !== PROGRAM_SIZE ||
+    program[0] !== ADDRESS_VERSION
+  ) {
+    return null;
+  }
+  return { hrp, version: ADDRESS_VERSION, program: Uint8Array.from(program) };
 }
 
 /** The human-readable prefix each network uses (`NetworkParams.address_hrp`). */
