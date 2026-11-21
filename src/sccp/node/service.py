@@ -289,6 +289,8 @@ class NodeService:
     syncing: bool = False
     _ratings: tuple[str, RatingLedger] | None = field(default=None, repr=False, compare=False)
     """Cached derived ratings, keyed by the tip hash they were replayed at."""
+    _minted_subsidy_cache: tuple[str, int] | None = field(default=None, repr=False, compare=False)
+    """Cached fee-excluded native issuance, keyed by the tip hash it was summed at."""
 
     def __post_init__(self) -> None:
         if self.chain.params.network_id != self.params.network_id:
@@ -394,6 +396,28 @@ class NodeService:
         """The hash of the genesis block."""
         return self.chain.genesis_hash
 
+    def _minted_subsidy(self) -> int:
+        """Native ZQWX issued by genesis and subsidies, with fees removed.
+
+        ``State.minted`` counts every native coinbase output, including the
+        transaction fees folded into it. The dashboard needs actual issuance:
+        the genesis premine plus each block's subsidy. A block's fee total is
+        present in its body, so subtract it from the state delta. The walk is
+        cached by tip hash; a reorg changes the key and forces a recount.
+        """
+        tip_hash = self.chain.tip_hash
+        cached = self._minted_subsidy_cache
+        if cached is not None and cached[0] == tip_hash:
+            return cached[1]
+        total = self.chain.genesis_state.minted
+        previous = self.chain.genesis_state
+        for stored in self.chain.main_chain()[1:]:
+            fees = sum(tx.fee for tx in stored.block.transactions)
+            total += stored.state.minted - previous.minted - fees
+            previous = stored.state
+        self._minted_subsidy_cache = (tip_hash, total)
+        return total
+
     def status(self) -> NodeStatus:
         """Height, tip, peers and pool sizes."""
         return NodeStatus(
@@ -409,6 +433,7 @@ class NodeService:
                 proofs=len(self.mempool.proofs),
             ),
             minted=self.chain.state.minted,
+            minted_subsidy=self._minted_subsidy(),
             burned=self.chain.state.burned,
             minted_assets=dict(sorted(self.chain.state.minted_assets.items())),
             witnesses=len(self.chain.state.active_witnesses(self.chain.state.current_epoch())),

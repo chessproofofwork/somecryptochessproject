@@ -58,6 +58,7 @@ def test_status_describes_the_chain() -> None:
     assert payload["peers"] == 0
     assert payload["mempool"] == {"transactions": 0, "proofs": 0}
     assert payload["minted"] >= 0
+    assert payload["minted_subsidy"] == service.chain.genesis_state.minted
     assert payload["burned"] == 0
     assert isinstance(payload["minted_assets"], dict)
     # The relay's pairing gate reads this: a fresh devnet has no witnesses yet.
@@ -72,6 +73,27 @@ def test_status_reports_the_native_burn_counter() -> None:
         payload = client.get("/v1/status").json()
     assert payload["burned"] == 123
     service.close()
+
+
+def test_status_separates_subsidy_issuance_from_transaction_fees(live_chain: Any) -> None:
+    """`minted_subsidy` is supply creation, so fees folded into coinbases stay out."""
+    chain = live_chain.chain
+    fees = sum(tx.fee for stored in chain.main_chain()[1:] for tx in stored.block.transactions)
+    service = NodeService(
+        params=DEVNET,
+        chain=chain,
+        mempool=Mempool(params=DEVNET, tip_state=chain.state, book=chain.book),
+    )
+    payload = service.status()
+    service.close()
+
+    assert fees > 0
+    assert payload.minted - payload.minted_subsidy == fees
+    assert payload.minted_subsidy == chain.genesis_state.minted + sum(
+        stored.block.coinbase.payload["amount"] - sum(tx.fee for tx in stored.block.transactions)
+        for stored in chain.main_chain()[1:]
+        if stored.block.coinbase is not None
+    )
 
 
 def test_params_and_difficulty_routes() -> None:

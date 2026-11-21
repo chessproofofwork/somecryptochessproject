@@ -1312,7 +1312,7 @@ an orphan block on `POST /v1/blocks` → 202.
 
 | Method | Path | Response |
 | --- | --- | --- |
-| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals, the native burned total, and the epoch's active clock-witness count (`witnesses`, which the relay gates pairing on) |
+| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals, native issuance excluding transaction fees (`minted_subsidy`), the native burned total, and the epoch's active clock-witness count (`witnesses`, which the relay gates pairing on) |
 | GET | `/v1/params` | the network parameters, including each variant and the asset it mints |
 | GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page), with proof counts per variant |
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |

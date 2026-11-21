@@ -12,12 +12,20 @@ not itemised here.
 - **`/v1/games` reports whole-chain totals.** `GameList` now carries `total`
   (settled proofs plus proofs still in the pool) and `pending` (the pooled
   subset), so a paged client can label the list without walking every page.
+- **`/v1/status` separates issuance from fees.** `NodeStatus.minted_subsidy`
+  counts the genesis premine and block subsidies only; `minted` still counts
+  every native coinbase output, so the difference is the fee total paid to
+  miners. The counter is cached by tip hash and recomputed after a reorg.
 
 ### Fixed
 
 - **The Games header no longer calls the page size the game count.** The
   explorer labels the list with the node's `total` and `pending` counts, so a
   105-game chain reads "105 games" instead of "25 games" on every page.
+- **The Overview token section shows one row per token.** It is titled
+  **Tokens**, lists standard and Chess960 separately, and reports each token's
+  variant, PGN time control, ticker, fee-excluded total minted, current block
+  reward and current difficulty.
 
 ## [0.36.0] - 2026-11-20
 

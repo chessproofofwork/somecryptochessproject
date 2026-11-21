@@ -11,9 +11,14 @@
 import type {
   AccountView,
   NetworkParams,
+  NodeStatus,
   VariantName,
   VariantParams,
 } from "../types";
+
+/** The node's fallback clock for networks defined before token time controls. */
+const DEFAULT_TIME_CONTROL_INITIAL_MS = 600_000;
+const DEFAULT_TIME_CONTROL_INCREMENT_MS = 0;
 
 /** One tradeable token, native ZQWX included. */
 export interface Token {
@@ -26,7 +31,11 @@ export interface Token {
   decimals: number;
   native: boolean;
   subsidy: number;
+  halvingInterval: number | null;
+  maxSupply: number | null;
   minPlies: number;
+  timeControlInitialMs: number;
+  timeControlIncrementMs: number;
 }
 
 const ZQWX: Token = {
@@ -37,7 +46,11 @@ const ZQWX: Token = {
   decimals: 8,
   native: true,
   subsidy: 0,
+  halvingInterval: null,
+  maxSupply: null,
   minPlies: 0,
+  timeControlInitialMs: DEFAULT_TIME_CONTROL_INITIAL_MS,
+  timeControlIncrementMs: DEFAULT_TIME_CONTROL_INCREMENT_MS,
 };
 
 /** Project one network variant onto the token the UI spends and displays. */
@@ -50,7 +63,13 @@ export function tokenForVariantParams(variant: VariantParams): Token {
     decimals: variant.decimals,
     native: variant.asset === null,
     subsidy: variant.subsidy,
+    halvingInterval: variant.halving_interval,
+    maxSupply: variant.max_supply,
     minPlies: variant.min_plies,
+    timeControlInitialMs:
+      variant.time_control_initial_ms ?? DEFAULT_TIME_CONTROL_INITIAL_MS,
+    timeControlIncrementMs:
+      variant.time_control_increment_ms ?? DEFAULT_TIME_CONTROL_INCREMENT_MS,
   };
 }
 
@@ -60,6 +79,40 @@ export function tokensFor(params: NetworkParams | undefined): Token[] {
   const tokens = (params.variants ?? []).map(tokenForVariantParams);
   if (!tokens.some((token) => token.native)) tokens.unshift(ZQWX);
   return tokens.sort((left, right) => Number(right.native) - Number(left.native));
+}
+
+/**
+ * Total issuance of `token` so far, in its base units, excluding fees.
+ *
+ * Native ZQWX reads the node's subsidy-only counter when it is present; older
+ * nodes only report `minted`, which folds transaction fees into the total.
+ * Variant totals have never included fees, so they are read directly.
+ */
+export function tokenMinted(
+  status: Pick<NodeStatus, "minted" | "minted_subsidy" | "minted_assets">,
+  token: Token,
+): number {
+  if (token.native) return status.minted_subsidy ?? status.minted;
+  return status.minted_assets?.[token.asset ?? ""] ?? 0;
+}
+
+/**
+ * The subsidy a block can still mint for `token`, in base units.
+ *
+ * Halvings are counted from height 0, matching the node's issuance schedule,
+ * and a capped token never rewards more than its remaining supply. `minted` is
+ * the total counted against that cap: for native ZQWX that is the fee-inclusive
+ * `NodeStatus.minted`, because the node's own cap check sees fees too.
+ */
+export function currentBlockReward(token: Token, height: number, minted: number): number {
+  const halvings =
+    token.halvingInterval === null || token.halvingInterval <= 0
+      ? 0
+      : Math.floor(Math.max(0, height) / token.halvingInterval);
+  const scheduled = Math.floor(token.subsidy / 2 ** halvings);
+  if (token.maxSupply === null) return Math.max(0, scheduled);
+  const cap = token.maxSupply * 10 ** token.decimals;
+  return Math.max(0, Math.min(scheduled, cap - minted));
 }
 
 /** The token a variant mints, or `undefined` if this network does not settle it. */

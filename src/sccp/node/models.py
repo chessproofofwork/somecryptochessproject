@@ -48,6 +48,13 @@ class NodeStatus(ProtocolModel):
     syncing: bool
     mempool: MempoolStatus
     minted: int = Field(default=0, ge=0)
+    minted_subsidy: int = Field(default=0, ge=0)
+    """Native ZQWX created by genesis allocations and block subsidies.
+
+    Transaction fees move value between accounts; they do not create supply, so
+    they are excluded here. ``minted - minted_subsidy`` is the fee total the
+    adopted chain has paid to miners.
+    """
     burned: int = Field(default=0, ge=0)
     """Native ZQWX destroyed by timeout and witness slashes.
 
