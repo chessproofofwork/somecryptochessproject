@@ -49,9 +49,11 @@ Three modes:
     ``--games N`` is N blocks. Testnet's are five blocks long with
     :data:`TESTNET_OPPONENTS` opponent, exactly the stack
     ``deploy/bootstrap_testnet_stack.py`` publishes. A proof may only be mined
-    once its epoch has ended (PROTOCOL.md 12.2), so a testnet game also mines out
-    the rest of its own epoch, one commitment or reveal per block, and settles in
-    the block that opens the next one: 20, 25, 30. One game per five blocks.
+    once its epoch has ended (PROTOCOL.md 12.2), and an ordinary testnet block
+    needs two wins by the miner that builds it, so one game cannot settle alone:
+    it leaves a proofless heartbeat block and a pending proof. The deployed
+    four-miner roster supplies the pairs; use devnet to play and export a single
+    game.
 
 ``python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key``
     **Attached.** The same human seat, pointed at a relay that is already
@@ -508,10 +510,17 @@ class SoloTable:
                 )
                 return self.settlement
             stored = self.chain.chain.block_at_height(self.chain.height)
-            if stored is None or not any(
-                item.proof_id == proof.proof_id for item in stored.block.proofs
-            ):
-                self.settlement = ChainSettlement(False, "the new block does not contain the proof")
+            if stored is None:
+                self.settlement = ChainSettlement(False, "no block was built for the proof")
+                return self.settlement
+            if not any(item.proof_id == proof.proof_id for item in stored.block.proofs):
+                needed = stored.block.header.wins_required
+                carried = len(stored.block.proofs)
+                self.settlement = ChainSettlement(
+                    False,
+                    f"block {stored.height} carries {carried} of {needed} proofs; "
+                    "the proof stays pending",
+                )
                 return self.settlement
             self.settlement = ChainSettlement(
                 True,
@@ -1854,10 +1863,7 @@ class Game:
                     )
                 else:
                     self.out(f"chain    not mined: {settlement.summary}")
-                    self.out(
-                        f"         chain stays at height {self.stack.chain.height}; "
-                        "a decisive game is required for a proof"
-                    )
+                    self.out(f"         chain is at height {self.stack.chain.height}")
             if self.stack.errors:
                 self.out(f"relay    {len(self.stack.errors)} service error(s), last: ")
                 self.out(f"         {self.stack.errors[-1]}")

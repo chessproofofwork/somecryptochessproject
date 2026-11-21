@@ -7,6 +7,14 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Testnet now requires two wins per block.** Raising the testnet
+  `wins_required` from 1 to 2 makes ordinary testnet blocks carry two PGNs, so
+  the block explorer's multi-game rendering is exercised without a synthetic
+  chain. Devnet keeps `wins_required = 1`, and the testnet genesis hash is
+  regenerated because the genesis header commits to the initial difficulty.
+
 ## [0.36.2] - 2026-11-21
 
 ### Added

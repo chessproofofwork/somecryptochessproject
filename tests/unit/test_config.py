@@ -148,6 +148,12 @@ def test_devnet_is_deterministic() -> None:
     assert DEVNET.genesis_timestamp == 1_700_000_000
 
 
+def test_testnet_starts_with_two_wins_per_block() -> None:
+    """Two proofs exercise multi-PGN block rendering in the explorer."""
+    assert TESTNET.wins_required == 2
+    assert DEVNET.wins_required == 1
+
+
 def test_testnet_windows_are_scaled_to_its_block_time() -> None:
     """Halving the block interval must not halve a proof's or a tx's lifetime."""
     assert TESTNET.target_block_seconds == 30
