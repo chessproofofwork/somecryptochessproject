@@ -348,6 +348,7 @@ responsibility rather than a construction phase.
 ├── src/landing/                  # static, no-JS overview served at the apex
 │   ├── index.html
 │   ├── styles.css
+│   ├── og-image.png              # 1200x630 social-link preview
 │   └── favicon.svg
 ├── src/web/                      # explorer: React Native for Web + Material
 │   ├── README.md                 # build it, serve it, run the relay, play a seat

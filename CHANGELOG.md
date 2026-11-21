@@ -9,6 +9,11 @@ not itemised here.
 
 ### Added
 
+- **Landing-page links unfurl with a branded card.** `proofofchess.com` now
+  advertises a 1200×630 `og-image.png` through Open Graph and Twitter image
+  metadata, so chat clients and social sites show the chess-board preview
+  instead of a bare link. The image uses the same headline, palette and board
+  illustration as the page.
 - **`/v1/games` reports whole-chain totals.** `GameList` now carries `total`
   (settled proofs plus proofs still in the pool) and `pending` (the pooled
   subset), so a paged client can label the list without walking every page.
