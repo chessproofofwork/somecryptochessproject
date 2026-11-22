@@ -404,6 +404,96 @@ def test_register_token_adds_a_variant_and_credits_its_initial_supply(
     assert _reason(again, ledger) is TxFailure.TYPE
 
 
+def test_a_token_registration_can_certify_a_middle_game_prefix(
+    ledger: State,
+    protocol_accounts: Mapping[str, Any],
+    middle_game_opening: tuple[str, ...],
+) -> None:
+    """The registration path accepts a 40-ply start and rejects a 41st ply."""
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    tx = wallet.build_register_token(
+        alice.keypair,
+        ticket="0043",
+        display_name="Middle Game",
+        symbol="MID",
+        ruleset="standard",
+        subsidy=COINS,
+        openings=[middle_game_opening],
+    )
+    _check(tx, ledger)
+    too_long = _resigned(
+        tx.model_copy(
+            update={
+                "payload": {
+                    **tx.payload,
+                    "openings": [[*middle_game_opening, "Bxb8"]],
+                }
+            }
+        ),
+        alice,
+    )
+    assert _reason(too_long, ledger) is TxFailure.TYPE
+    apply_transaction(ledger, tx, height=HEIGHT)
+    assert ledger.tokens["token-0043"].variant.openings == (middle_game_opening,)
+
+
+def test_a_token_registration_can_pin_a_start_fen(
+    ledger: State,
+    protocol_accounts: Mapping[str, Any],
+) -> None:
+    """A token may start every game from its own legal position."""
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    start_fen = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3"
+    canonical = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"
+    tx = wallet.build_register_token(
+        alice.keypair,
+        ticket="0045",
+        display_name="Pinned Start",
+        symbol="PIN",
+        ruleset="standard",
+        subsidy=COINS,
+        start_fen=start_fen,
+        openings=["Nf3 Nf6"],
+    )
+    assert tx.payload["start_fen"] == canonical
+    assert tx.payload["opening_book"] == "token-0045"
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+
+    variant = ledger.tokens["token-0045"].variant
+    assert variant.start_fen == canonical
+    assert variant.openings == (("Nf3", "Nf6"),)
+    assert variant.opening_book == "token-0045"
+
+    fixed = wallet.build_register_token(
+        alice.keypair,
+        ticket="0046",
+        display_name="Fixed Start",
+        symbol="FIX",
+        ruleset="standard",
+        subsidy=COINS,
+        start_fen=start_fen,
+    )
+    assert fixed.payload["opening_book"] == "none"
+    _check(fixed, ledger, height=HEIGHT + 1)
+    apply_transaction(ledger, fixed, height=HEIGHT + 1)
+    assert ledger.tokens["token-0046"].variant.start_fen == canonical
+    assert ledger.tokens["token-0046"].variant.openings == ()
+
+    invalid = _resigned(
+        fixed.model_copy(
+            update={
+                "nonce": 2,
+                "payload": {**fixed.payload, "ticket": "0047", "start_fen": "not a fen"},
+            }
+        ),
+        alice,
+    )
+    assert _reason(invalid, ledger, height=HEIGHT + 2) is TxFailure.TYPE
+
+
 def test_a_ticketed_registration_keeps_its_name_and_ticker_as_metadata(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:

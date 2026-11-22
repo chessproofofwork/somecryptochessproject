@@ -38,6 +38,7 @@ from sccp.config import (
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     MAX_CLOCK_MS,
     MAX_PLIES_LIMIT,
+    MAX_TOKEN_OPENING_PLIES,
     STANDARD_VARIANT,
     TimeControlPeriod,
 )
@@ -241,13 +242,15 @@ class OpeningRef(ProtocolModel):
 
     Standard chess carries a book line and the ordinary FEN. Chess960 carries
     the position selected from the beacon, its Shredder-FEN, and no opening
-    moves, because the certified start is the whole shared prefix.
+    moves, because the certified start is the whole shared prefix. A token with
+    a pinned start carries that canonical FEN and has no network-book moves
+    unless the token also declares its own lines.
     """
 
     book_version: str = Field(min_length=1, max_length=64)
     line_id: int = Field(ge=0)
     hash: DigestHex
-    moves: tuple[str, ...] = Field(default=(), max_length=12)
+    moves: tuple[str, ...] = Field(default=(), max_length=MAX_TOKEN_OPENING_PLIES)
     start_fen: str = Field(default=STANDARD_START_FEN, min_length=1, max_length=128)
     variant: VariantName = STANDARD_VARIANT
 

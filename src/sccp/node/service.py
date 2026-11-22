@@ -696,6 +696,7 @@ class NodeService:
             display_name=variant.display_name,
             rules=variant.rules,
             ruleset=variant.ruleset,
+            start_fen=variant.start_fen,
             decimals=variant.decimals,
             subsidy=variant.subsidy,
             initial_supply=record.initial_supply,

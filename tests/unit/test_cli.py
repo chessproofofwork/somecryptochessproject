@@ -2418,6 +2418,8 @@ def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
             "GOLD",
             "--ruleset",
             "standard",
+            "--start-fen",
+            "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3",
             "--subsidy",
             "50",
             "--initial-supply",
@@ -2454,6 +2456,10 @@ def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
     assert tx.payload["time_control_initial_ms"] == 600_000
     assert tx.payload["time_control_increment_ms"] == 0
     assert tx.payload["time_control_delay_ms"] == 0
+    canonical_start = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"
+    assert tx.payload["start_fen"] == canonical_start
+    assert tx.payload["opening_book"] == "none"
+    assert payload["start_fen"] == canonical_start
     assert payload["time_control"] == {"initial_ms": 600_000, "increment_ms": 0}
 
 

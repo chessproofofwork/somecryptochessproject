@@ -416,6 +416,7 @@ class VariantParams:
     ticket: str | None        # 16-hex or four-digit serial; None for standard
     rules: str                # PGN Rules tag; validated against the ruleset
     ruleset: str | None       # registered ruleset; None means the variant's own
+    start_fen: str | None     # pinned canonical token start; None uses the ruleset
     asset: str | None         # asset id hex; None for standard, which mints ZQWX
     symbol: str               # user-chosen ticker; display only, may repeat
     display_name: str         # user-chosen name; display only, may repeat

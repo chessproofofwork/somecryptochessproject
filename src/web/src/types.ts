@@ -29,6 +29,8 @@ export interface VariantParams {
   name: VariantName;
   rules: string;
   ruleset?: string | null;
+  /** Pinned token start position; absent when the ruleset owns the start. */
+  start_fen?: string | null;
   /** `null` for standard chess: its proofs mint native ZQWX. */
   asset: string | null;
   /** Registration serial a chain-registered token claimed (16-hex or short). */
@@ -72,6 +74,8 @@ export interface TokenView {
   display_name: string;
   rules: string;
   ruleset: string | null;
+  /** Pinned token start position; `null` when the ruleset owns the start. */
+  start_fen: string | null;
   decimals: number;
   subsidy: number;
   initial_supply: number;

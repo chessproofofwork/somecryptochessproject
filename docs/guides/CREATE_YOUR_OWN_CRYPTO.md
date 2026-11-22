@@ -134,7 +134,7 @@ token with a limited supply:
 | `--halving-interval` | `210000` | Blocks between subsidy halvings, counted from chain height. |
 | `--min-plies` | `20` | Shorter games do not earn the token. |
 | `--max-games-per-block` | `1` | Games of this token a block may settle, as served by the node. |
-| `--opening` | *(omit)* | Adds a token-specific opening line. Repeat for several lines. |
+| `--opening` | *(omit)* | Adds a token-specific opening line (up to 40 plies). Repeat for several lines. |
 | `--opening-book` | *(omit)* | Advanced book-version override; see below. |
 | `--time-control` | *(omit)* | Whole-second PGN clock; omit for sudden-death 10+0. |
 
@@ -188,12 +188,15 @@ token's ruleset, the match starts from that ruleset's fixed initial position
 with book version `none` instead of certifying a prefix the token cannot play.
 
 `--opening "e4 e5 Nf3"` declares one token-specific line; repeat the flag to add
-more. The chain replays each line from the named ruleset's start and
-canonicalises it to SAN, so every move must be legal there. The epoch beacon
-selects one line per match. When any custom line is present, the default book
-version becomes `token-<ticket>`, which is the internal variant recorded with
-those lines. A token whose ruleset is Chess960 cannot take custom lines: the
-beacon selects its start position and the ruleset allows no book moves.
+more. Each line may carry up to 40 plies (20 full moves), enough to certify a
+middle-game prefix: the line is replayed before the clocks start, then the
+engines play on from the resulting position. The chain replays each line from the
+named ruleset's start and canonicalises it to SAN, so every move must be legal
+there. The epoch beacon selects one line per match. When any custom line is
+present, the default book version becomes `token-<ticket>`, which is the internal
+variant recorded with those lines. A token whose ruleset is Chess960 cannot take
+custom lines: the beacon selects its start position and the ruleset allows no
+book moves.
 
 `--opening-book` is an advanced override for the version name recorded with the
 registration. The relay must be able to load the version you name; do not set it
@@ -269,6 +272,31 @@ registered token 0042 as Gold Coin (GOLD), variant token-0042, asset <64-hex-ass
 time control: 600+0
 txid: <txid>
 ```
+
+To start every game of the token from a chosen position, pass `--start-fen` with
+a legal FEN. The halfmove and fullmove counters are canonicalised away, so the
+registration and every certificate agree on the same spelling:
+
+```bash
+sccp dex register-token \
+    --network testnet \
+    --key "$KEY" \
+    --ticket 0051 \
+    --name "Italian Middlegame" \
+    --ticker ITA \
+    --ruleset standard \
+    --start-fen "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3" \
+    --opening "Nf3 Nf6" \
+    --subsidy 50 \
+    --node "$NODE"
+```
+
+A FEN-only token defaults to `--opening-book none` and starts from that
+position with no book moves. If you also pass one or more `--opening` lines,
+they are validated from the pinned FEN and the default book becomes
+`token-<ticket>`. A Chess960 token may also pin one legal layout, expressed in
+Shredder-FEN; the pinned position overrides the epoch beacon's choice. The PGN
+for a pinned-start token carries `FEN` and `SetUp` just like any Chess960 game.
 
 Registration is **one transaction**. The human output gives you the two values
 you need later:

@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from sccp.chess.rulesets import ruleset_for
+from sccp.chess.rulesets import chess960_start_fen, ruleset_for
+from sccp.config import MAX_TOKEN_OPENING_PLIES, VariantParams
 from sccp.errors import TranscriptError
-from sccp.protocol.models import TimeControl, Transcript
+from sccp.protocol.models import OpeningRef, TimeControl, Transcript
 from sccp.protocol.transcript import (
     book_opening_ref,
     build_win_proof,
@@ -26,6 +27,7 @@ from sccp.protocol.transcript import (
     save_transcript,
     sign_certificate,
     start_opening_ref,
+    token_opening_ref,
     validate_opening_ref,
     verify_certificate_signatures,
     verify_result_signatures,
@@ -40,6 +42,62 @@ def test_opening_ref_matches_the_loaded_line(protocol_book) -> None:
     assert ref.moves == line.moves
     assert ref.hash == opening_hash(line.book_version, line.line_id, line.moves)
     validate_opening_ref(ref)
+
+
+def test_a_token_certificate_can_carry_a_middle_game_prefix(
+    middle_game_opening: tuple[str, ...],
+) -> None:
+    """The wire model and replay accept the full 40-ply token-opening cap."""
+    line = middle_game_opening
+    assert len(line) == MAX_TOKEN_OPENING_PLIES
+    ref = OpeningRef(
+        book_version="token-0042",
+        line_id=0,
+        hash=opening_hash("token-0042", 0, line, variant="token-0042"),
+        moves=line,
+        variant="token-0042",
+    )
+    validate_opening_ref(ref, rules=ruleset_for("standard"))
+
+    with pytest.raises(ValueError):
+        OpeningRef(
+            book_version="token-0042",
+            line_id=0,
+            hash=ref.hash,
+            moves=(*line, "Bxb8"),
+            variant="token-0042",
+        )
+
+
+def test_a_pinned_chess960_token_overrides_the_beacon_start() -> None:
+    start = chess960_start_fen(5)
+    token = VariantParams(
+        name="token-0049",
+        ticket="0049",
+        rules="chess960",
+        ruleset="chess960",
+        asset="b" * 64,
+        symbol="FISCHER",
+        display_name="Pinned Fischer Random",
+        subsidy=1,
+        min_plies=1,
+        start_fen=start,
+        opening_book="none",
+    )
+    ref = token_opening_ref(
+        token,
+        bytes(32),
+        "ab" * 32,
+        rules=ruleset_for("chess960"),
+    )
+    assert ref is not None
+    assert ref.start_fen == start
+    assert ref.moves == ()
+    validate_opening_ref(
+        ref,
+        rules=ruleset_for("chess960"),
+        variants={token.name: token},
+    )
 
 
 def test_validate_opening_ref_rejects_tampering(protocol_book) -> None:

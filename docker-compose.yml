@@ -498,7 +498,7 @@ services:
       - --key
       - /stack/keys/miner-3.key
       - --variant
-      - chess960
+      - token-0960
       - --nonce-secret-file
       - /stack/keys/miner-3.nonce
       - --engine-profile
@@ -556,7 +556,7 @@ services:
       - --key
       - /stack/keys/miner-4.key
       - --variant
-      - chess960
+      - token-0960
       - --nonce-secret-file
       - /stack/keys/miner-4.nonce
       - --engine-profile

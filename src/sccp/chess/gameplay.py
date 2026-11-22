@@ -21,7 +21,7 @@ import chess.pgn
 from sccp.chess.engines import Engine
 from sccp.chess.openings import OpeningLine
 from sccp.chess.pgn import GameResult, Termination, outcome_result
-from sccp.chess.rulesets import CHESS960_VARIANT, ruleset_for
+from sccp.chess.rulesets import CHESS960_VARIANT, normalise_token_start_fen, ruleset_for
 from sccp.chess.variants import board_for_variant, normalise_start_fen
 from sccp.config import STANDARD_VARIANT, NetworkParams, VariantParams
 from sccp.errors import ConfigError, GameError
@@ -91,14 +91,16 @@ def render_pgn(
     headers: Mapping[str, str] | None = None,
     start_fen: str | None = None,
     variant: str | None = None,
+    token_start_fen: str | None = None,
     time_control: str = TIME_CONTROL_TAG,
 ) -> str:
     """Render a finished board as PGN, with the sccp tags filled in.
 
     ``variant`` defaults to the board's own flavour for backwards compatibility.
-    A variant whose rules need a start position carries ``SetUp``, ``FEN`` and
-    the ruleset's canonical ``Variant`` header. ``time_control`` is the token's
-    declared ``TimeControl`` tag, not a protocol-wide constant.
+    A variant whose rules need a start position, or a token with a pinned
+    ``token_start_fen``, carries ``SetUp``, ``FEN`` and the ruleset's canonical
+    ``Variant`` header. ``time_control`` is the token's declared ``TimeControl``
+    tag, not a protocol-wide constant.
     """
     game = chess.pgn.Game.from_board(board)
     if variant is None:
@@ -120,8 +122,12 @@ def render_pgn(
     if headers is not None:
         merged.update(headers)
     merged["Result"] = result.value
-    if rules.requires_start_fen:
-        canonical = normalise_start_fen(start_fen, variant)
+    if rules.requires_start_fen or token_start_fen is not None:
+        canonical = (
+            normalise_token_start_fen(rules, token_start_fen)
+            if token_start_fen is not None
+            else normalise_start_fen(start_fen, variant)
+        )
         merged["FEN"] = canonical
         merged["SetUp"] = "1"
         if rules.pgn_variant_header is not None:
@@ -164,8 +170,24 @@ def play_game(
     except ConfigError as exc:
         raise GameError(str(exc)) from None
     ruleset_name = variant_params.ruleset or variant_params.name
-    canonical_start = normalise_start_fen(start_fen, ruleset_name)
-    board = board_for_variant(ruleset_name, canonical_start)
+    if variant_params.start_fen is not None:
+        canonical_start = normalise_token_start_fen(
+            ruleset_for(ruleset_name), variant_params.start_fen
+        )
+        if start_fen is not None:
+            requested = normalise_token_start_fen(ruleset_for(ruleset_name), start_fen)
+            if requested != canonical_start:
+                raise GameError(
+                    f"start FEN {requested!r} does not match the token's pinned "
+                    f"position {canonical_start!r}"
+                )
+    else:
+        canonical_start = normalise_start_fen(start_fen, ruleset_name)
+    board = board_for_variant(
+        ruleset_name,
+        canonical_start,
+        token_start_fen=variant_params.start_fen,
+    )
     time_control = time_control_tag(time_control_for(variant_params))
     san_moves: list[str] = []
     opening_moves = opening.moves if isinstance(opening, OpeningLine) else tuple(opening or ())
@@ -229,6 +251,7 @@ def play_game(
             headers=headers,
             start_fen=canonical_start,
             variant=ruleset_name,
+            token_start_fen=variant_params.start_fen,
             time_control=time_control,
         ),
         result=result,

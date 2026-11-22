@@ -60,6 +60,53 @@ def chess_vectors() -> dict[str, Any]:
     return data
 
 
+@pytest.fixture(scope="session")
+def middle_game_opening() -> tuple[str, ...]:
+    """A legal 40-ply (20 full-move) prefix with no automatic game end."""
+    return (
+        "h4",
+        "g5",
+        "Rh2",
+        "f6",
+        "f4",
+        "g4",
+        "c3",
+        "c6",
+        "b3",
+        "b6",
+        "d4",
+        "Ba6",
+        "f5",
+        "Qc8",
+        "Bh6",
+        "Kf7",
+        "e3",
+        "Qe8",
+        "Qxg4",
+        "d5",
+        "Qe4",
+        "Bb5",
+        "Qxd5+",
+        "cxd5",
+        "b4",
+        "Bd7",
+        "Ke2",
+        "a5",
+        "Bf4",
+        "Be6",
+        "Ke1",
+        "Nc6",
+        "Bb5",
+        "Nb8",
+        "h5",
+        "Bc8",
+        "g3",
+        "Bb7",
+        "Ba6",
+        "Bxa6",
+    )
+
+
 @pytest.fixture()
 def fast_kdf() -> KdfParams:
     """Cheap scrypt parameters; production keyfiles use n=2**15."""

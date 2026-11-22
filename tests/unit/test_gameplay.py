@@ -254,6 +254,36 @@ def test_play_game_uses_the_token_time_control() -> None:
     assert '[TimeControl "180+3d"]' in game.pgn
 
 
+def test_play_game_starts_from_a_token_pinned_fen() -> None:
+    token = VariantParams(
+        name="token-0048",
+        ticket="0048",
+        rules="chess",
+        ruleset="standard",
+        asset="b" * 64,
+        symbol="PIN",
+        display_name="Pinned Start",
+        subsidy=DEVNET.subsidy,
+        min_plies=1,
+        start_fen="rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3",
+        opening_book="none",
+    )
+    canonical = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"
+    game = play_game(
+        ScriptedEngine(["Qh5", "Qxf7#"]),
+        ScriptedEngine(["Nf6"]),
+        params=DEVNET,
+        variant=token.name,
+        variants={token.name: token},
+        limit=LIMIT,
+    )
+    assert game.start_fen == canonical
+    assert game.san_moves == ("Qh5", "Nf6", "Qxf7#")
+    assert game.termination is Termination.CHECKMATE
+    assert f'[FEN "{canonical}"]' in game.pgn
+    assert '[SetUp "1"]' in game.pgn
+
+
 def test_resigned_game_pgn_validates() -> None:
     line = OpeningLine("v1", 0, "single move", ("e4",))
     game = play_game(

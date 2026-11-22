@@ -34,11 +34,16 @@ from sccp.chain.state import (
     epoch_of,
     first_matchable_epoch,
 )
-from sccp.chess.rulesets import canonical_opening_line, ruleset_for
+from sccp.chess.rulesets import (
+    canonical_opening_line,
+    normalise_token_start_fen,
+    ruleset_for,
+)
 from sccp.config import (
     DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
+    MAX_TOKEN_OPENING_PLIES,
     TOKEN_TICKET_PATTERN,
     NetworkParams,
     TimeControlPeriod,
@@ -422,6 +427,7 @@ ALLOWED: dict[TxType, frozenset[str]] = {
             "ruleset",
             "symbol",
             "display_name",
+            "start_fen",
             "openings",
             "decimals",
             "initial_supply",
@@ -515,7 +521,10 @@ def _field_ticket(payload: Mapping[str, object]) -> str:
 
 
 def _field_openings(
-    payload: Mapping[str, object], ruleset_name: str
+    payload: Mapping[str, object],
+    ruleset_name: str,
+    *,
+    start_fen: str | None = None,
 ) -> tuple[tuple[str, ...], ...]:
     """Token opening lines, canonicalised from SAN or UCI by the ruleset."""
     raw = payload.get("openings")
@@ -535,11 +544,14 @@ def _field_openings(
                 f"opening {index} must be a SAN string or an array of SAN moves",
             )
         try:
-            canonical = canonical_opening_line(ruleset_name, tokens)
+            canonical = canonical_opening_line(ruleset_name, tokens, start_fen=start_fen)
         except ConfigError as exc:
             _fail(TxFailure.TYPE, f"opening {index}: {exc}")
-        if len(canonical) > 12:
-            _fail(TxFailure.TYPE, f"opening {index} has more than 12 plies")
+        if len(canonical) > MAX_TOKEN_OPENING_PLIES:
+            _fail(
+                TxFailure.TYPE,
+                f"opening {index} has more than {MAX_TOKEN_OPENING_PLIES} plies",
+            )
         lines.append(canonical)
     return tuple(lines)
 
@@ -610,7 +622,13 @@ def _parse_token_registration(
         ruleset = ruleset_for(ruleset_name)
     except ConfigError as exc:
         _fail(TxFailure.TYPE, str(exc))
-    openings = _field_openings(payload, ruleset.name)
+    start_fen = _field_text(payload, "start_fen", required=False)
+    if start_fen is not None:
+        try:
+            start_fen = normalise_token_start_fen(ruleset, start_fen)
+        except ConfigError as exc:
+            _fail(TxFailure.TYPE, f"start_fen: {exc}")
+    openings = _field_openings(payload, ruleset.name, start_fen=start_fen)
     first_period_moves, periods = _field_time_control_periods(payload)
 
     initial_supply = (
@@ -628,11 +646,14 @@ def _parse_token_registration(
         if "max_games_per_block" in payload
         else 1
     )
-    opening_book = (
-        _field_text(payload, "opening_book")
-        if "opening_book" in payload
-        else (f"token-{ticket}" if ticket is not None and openings else params.book_version)
-    )
+    if "opening_book" in payload:
+        opening_book = _field_text(payload, "opening_book")
+    elif ticket is not None and openings:
+        opening_book = f"token-{ticket}"
+    elif start_fen is not None:
+        opening_book = "none"
+    else:
+        opening_book = params.book_version
     initial_ms = (
         _field_int(payload, "time_control_initial_ms", minimum=1)
         if "time_control_initial_ms" in payload
@@ -677,6 +698,7 @@ def _parse_token_registration(
             ticket=ticket,
             rules=ruleset.pgn_rules,
             ruleset=ruleset_name,
+            start_fen=start_fen,
             asset=asset,
             symbol=symbol,
             display_name=display_name,

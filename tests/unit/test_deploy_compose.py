@@ -22,7 +22,7 @@ from deploy import seed_testnet_demo as seed
 from deploy import synthetic_testnet_traffic as traffic
 from deploy.init_testnet_stack import DEFAULT_PASSPHRASE, write_stack
 
-from sccp.config import TESTNET
+from sccp.config import C960_VARIANT, TESTNET
 from sccp.crypto.address import validate_address
 
 COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.yml"
@@ -66,12 +66,18 @@ def test_the_node_mines_to_the_address_the_stack_writes(tmp_path: Path) -> None:
 
 
 def test_the_stack_runs_two_miners_per_variant() -> None:
-    """Four fixed miners: one standard pair and one Chess960 pair."""
+    """Four fixed miners: one standard pair and one chain-registered C960 pair.
+
+    ``chess960`` is a ruleset, not a variant name on testnet. The bootstrap
+    registers the shipped token as ``token-0960``, and a miner that names the
+    ruleset instead exits before it polls the relay.
+    """
     text = COMPOSE.read_text(encoding="utf-8")
     for index in range(1, 5):
         assert f"miner-{index}:" in text, f"miner-{index} service is missing"
     variants = sorted(_option_arguments(text, "--variant"))
-    assert variants == ["chess960", "chess960", "standard", "standard"]
+    assert variants == ["standard", "standard", C960_VARIANT, C960_VARIANT]
+    assert C960_VARIANT not in TESTNET.variant_names()
 
 
 def test_every_address_literal_in_the_compose_file_is_a_testnet_address() -> None:

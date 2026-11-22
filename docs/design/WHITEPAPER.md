@@ -605,8 +605,9 @@ protocol never makes consensus depend on those.
 
 ### 8.1 The board is the source of truth
 
-All game logic delegates to `python-chess`. A game starts from the standard
-initial position (protocol v1 rejects a custom `FEN`/`SetUp`). Moves are
+All game logic delegates to `python-chess`. A standard game starts from the
+ordinary initial position, while a chain-registered token may pin a legal start
+`FEN` at registration and every game of that token starts there. Moves are
 replayed one at a time; every move must be legal on the live board, and SAN is
 regenerated from that board rather than trusted from the submitted PGN. The
 final board must agree with both the `Result` and `Termination` headers.
@@ -637,7 +638,8 @@ TimeControl, Rules
 
 `Rules` must match the variant the proof names: `chess` for a standard game, or
 `chess960` for a Chess960 game, whose PGN also carries `SetUp "1"`, a
-Shredder-FEN `FEN` and `Variant "Chess960"`. `TimeControl` is
+Shredder-FEN `FEN` and `Variant "Chess960"`. A token with a pinned start carries
+`SetUp "1"` and its canonical `FEN` too. `TimeControl` is
 `<initial>+<increment>` in seconds for a Fischer clock, `<initial>+<delay>d` for
 a delay clock, or `<initial>+0` for sudden death. A token that omits a clock
 defaults to `10+0`, and every registration fixes its own clock at registration.
@@ -662,7 +664,9 @@ game_hash = H("sccp/v1/game", {
 A Chess960 game hashes the same way with its own `start_fen` (one of the 960
 legal positions, in Shredder-FEN) and an added `"variant": "chess960"`, so a
 shuffled game can never collide with the standard one that happens to reach the
-same moves.
+same moves. A token with a pinned start uses that canonical FEN and its variant
+name in the same payload, so two tokens that reach an identical move list from
+different positions still have different game hashes.
 
 Headers, comments, clock annotations and move-number formatting are excluded.
 Two PGNs with the same canonical moves and result on the same network produce
@@ -687,9 +691,13 @@ distinguish it from honest weakness. Only the win/loss column prices it.
 ### 8.5 Opening book
 
 The shipped book lives in `data/openings.json` and is also packaged with the
-wheel. Each line has a stable index, a name and a legal SAN prefix of at most
-12 plies. The book is replayed and validated when loaded; an illegal or
-malformed line is a startup error, not a runtime surprise.
+wheel. Each packaged-book line has a stable index, a name and a legal SAN prefix
+of at most 12 plies. A chain-registered token may pin a legal start `FEN` and/or
+declare its own opening line of up to 40 plies (20 full moves), which is enough
+to start from a chosen position and certify a middle-game prefix before the
+engines take over. Token lines replay from the pinned FEN when present. The book
+is replayed and validated when loaded; an illegal or malformed line is a startup
+error, not a runtime surprise.
 
 Selection is a pure function:
 
@@ -1366,12 +1374,14 @@ token id identifies which one a balance or pool means. The token's games settle
 as proofs of that variant, and a block pays its `subsidy` (halved on its own
 `halving_interval`, capped by `max_supply * 10^decimals` base units) at most once
 per block. The payload fixes `ruleset`, `decimals`, `initial_supply`, `min_plies`,
-`max_games_per_block`, `opening_book`, its optional SAN `openings`, the
-initial/increment/delay clock and any later `time_control_periods`; an omitted
-`opening_book` is `token-<ticket>` when the token declares its own lines and
+`max_games_per_block`, an optional pinned `start_fen`, `opening_book`, its
+optional SAN `openings`, the initial/increment/delay clock and any later
+`time_control_periods`; an omitted `opening_book` is `token-<ticket>` when the
+token declares its own lines, `none` when it pins a start without lines, and
 otherwise the network's own `book_version`. When the beacon selects a network
-line that is illegal under the token's ruleset, the match starts from that
-ruleset's fixed initial position with book `none`. The asset id is derived as
+line that is illegal under the token's start and ruleset, the match starts from
+the token's pinned position or the ruleset's fixed initial position with book
+`none`. The asset id is derived as
 `H("sccp/v1/asset", {kind, ticket, decimals, ruleset})` from the unique
 registration serial and the consensus-relevant rules, so it is immutable and
 needs no issuer key. An unused ticket is required, derived asset ids may not

@@ -24,6 +24,7 @@ from sccp.chess.rulesets import (
     chess960_position,
     chess960_start_fen,
     normalise_standard_start_fen,
+    normalise_token_start_fen,
     ruleset_for,
     start_position_for,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "chess960_start_fen",
     "is_chess960",
     "normalise_start_fen",
+    "normalise_token_start_fen",
     "rules_for_network",
     "select_chess960_start",
     "start_position_for",
@@ -72,9 +74,29 @@ def normalise_start_fen(fen: str | None, variant: str) -> str:
         raise ConfigError(f"invalid start FEN {fen!r} for variant {variant!r}: {exc}") from None
 
 
-def board_for_variant(variant: str, start_fen: str | None = None) -> chess.Board:
-    """Build the initial board for ``variant`` (Chess960 requires ``start_fen``)."""
+def board_for_variant(
+    variant: str,
+    start_fen: str | None = None,
+    *,
+    token_start_fen: str | None = None,
+) -> chess.Board:
+    """Build the initial board for ``variant`` (Chess960 requires ``start_fen``).
+
+    ``token_start_fen`` names a chain-registered token's pinned position. When it
+    is set, ``start_fen`` must agree with it; this keeps a certificate from
+    smuggling a different board past a token's immutable registration.
+    """
     rules = ruleset_for(variant)
+    if token_start_fen is not None:
+        canonical = normalise_token_start_fen(rules, token_start_fen)
+        if start_fen is not None:
+            requested = normalise_token_start_fen(rules, start_fen)
+            if requested != canonical:
+                raise ConfigError(
+                    f"start FEN {requested!r} does not match the token's pinned "
+                    f"position {canonical!r}"
+                )
+        return rules.board(canonical)
     canonical = rules.normalise_start_fen(start_fen)
     return rules.board(canonical)
 

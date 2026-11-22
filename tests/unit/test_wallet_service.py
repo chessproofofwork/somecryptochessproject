@@ -236,6 +236,41 @@ def test_register_token_builds_a_signed_variant_registration(live_chain: Any) ->
         )
 
 
+def test_register_token_can_pin_a_start_fen(live_chain: Any) -> None:
+    chain = live_chain.chain
+    wallet = WalletService(DEVNET, chain.state, chain=chain)
+    alice = live_chain.accounts["alice"]
+    start_fen = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3"
+    canonical = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"
+    tx = wallet.build_register_token(
+        alice.keypair,
+        ticket="0052",
+        display_name="Pinned Start",
+        symbol="PIN",
+        ruleset="standard",
+        subsidy=COINS,
+        start_fen=start_fen,
+        openings=("Nf3 Nf6",),
+    )
+    assert tx.payload["start_fen"] == canonical
+    assert tx.payload["openings"] == [["Nf3", "Nf6"]]
+    assert tx.payload["opening_book"] == "token-0052"
+    validate_transaction(tx, DEVNET, chain.state, height=chain.height + 1)
+
+    fixed = wallet.build_register_token(
+        alice.keypair,
+        ticket="0053",
+        display_name="Fixed Start",
+        symbol="FIX",
+        ruleset="standard",
+        subsidy=COINS,
+        start_fen=start_fen,
+    )
+    assert fixed.payload["opening_book"] == "none"
+    assert "openings" not in fixed.payload
+    validate_transaction(fixed, DEVNET, chain.state, height=chain.height + 1)
+
+
 def test_transfer_refuses_a_symbol_shared_by_two_tokens(live_chain: Any) -> None:
     chain = live_chain.chain
     wallet = WalletService(DEVNET, chain.state, chain=chain)

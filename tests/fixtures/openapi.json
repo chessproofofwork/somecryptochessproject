@@ -1927,7 +1927,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 12,
+            "maxItems": 40,
             "type": "array"
           },
           "start_fen": {
@@ -2931,6 +2931,18 @@
           "ruleset": {
             "anyOf": [
               {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start_fen": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
                 "type": "string"
               },
               {

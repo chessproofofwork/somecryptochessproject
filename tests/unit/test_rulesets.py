@@ -8,8 +8,10 @@ import pytest
 from sccp.chess.rulesets import (
     CHESS960_VARIANT,
     STANDARD_VARIANT,
+    canonical_opening_line,
     chess960_position,
     chess960_start_fen,
+    normalise_token_start_fen,
     opening_line_fits,
     ruleset_for,
     ruleset_for_rules,
@@ -85,3 +87,17 @@ def test_opening_lines_are_checked_against_their_ruleset_start() -> None:
     horde = ruleset_for("horde")
     assert horde.allow_book_moves is True
     assert opening_line_fits(horde, ("e4",)) is False
+
+
+def test_a_token_start_fen_is_canonical_and_drives_opening_replay() -> None:
+    standard = ruleset_for(STANDARD_VARIANT)
+    fen = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3"
+    canonical = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"
+    assert normalise_token_start_fen(standard, fen) == canonical
+    assert opening_line_fits(standard, ("Nf3",), start_fen=fen) is True
+    assert opening_line_fits(standard, ("e4",), start_fen=fen) is False
+    assert canonical_opening_line("standard", ("Nf3",), start_fen=fen) == ("Nf3",)
+
+    # A pinned Chess960 start overrides the beacon selector but keeps Shredder-FEN.
+    chess960 = chess960_start_fen(0)
+    assert normalise_token_start_fen(CHESS960_VARIANT, chess960) == chess960

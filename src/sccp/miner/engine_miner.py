@@ -847,10 +847,12 @@ class EngineMiner:
             )
         if certificate.opening.variant != certificate.variant:
             raise MinerError("certificate opening is for another variant")
+        registered = self.variants.get(certificate.variant)
         try:
             board = board_for_variant(
                 self._ruleset_name(certificate.variant),
                 certificate.opening.start_fen,
+                token_start_fen=registered.start_fen if registered is not None else None,
             )
         except ConfigError as exc:
             raise MinerError(f"certificate has an invalid start position: {exc}") from exc

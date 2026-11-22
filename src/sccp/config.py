@@ -21,6 +21,7 @@ from sccp.chess.rulesets import (
 )
 from sccp.chess.rulesets import (
     canonical_opening_line,
+    normalise_token_start_fen,
     opening_line_fits,
     ruleset_for,
     supported_rules,
@@ -45,6 +46,16 @@ DEFAULT_TIME_CONTROL_DELAY_MS: Final = 0
 
 MAX_PLIES_LIMIT: Final = 1000
 """Hard upper bound for ``max_plies``; longer games are never consensus-valid."""
+
+MAX_TOKEN_OPENING_PLIES: Final = 40
+"""Most plies one chain-registered token opening line may carry.
+
+Forty plies is twenty full moves, which is enough to certify a middle-game
+prefix before the engines take over. The packaged opening book keeps its own,
+smaller limit (``MAX_BOOK_PLIES`` in :mod:`sccp.chess.openings`); this constant is
+only for the ``openings`` a ``register_token`` transaction declares. It is part
+of registration validity, so every node must agree on the value.
+"""
 
 CLOCK_EVIDENCE_PLIES: Final = 64
 """Most move receipts a clock-evidence bundle may carry (PROTOCOL.md section 8.4).
@@ -226,6 +237,17 @@ class VariantParams(BaseModel):
     ruleset (for example ``chess960``) so validation never has to execute code
     supplied by a transaction.
     """
+    start_fen: str | None = Field(default=None, min_length=1, max_length=128)
+    """Pinned initial position for a token, in canonical FEN.
+
+    ``None`` means the ruleset owns the start: standard chess uses the ordinary
+    initial position, Chess960 selects one from the epoch beacon, and a fixed
+    python-chess variant uses its own layout. A token may set this to begin
+    every match from a chosen legal position (for example a middle game). The
+    value is canonicalised at registration, carries no move counters, and is
+    part of consensus state. It overrides a beacon-selected ruleset start, and a
+    FEN with no token openings uses ``opening_book = "none"``.
+    """
     asset: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     symbol: str = Field(min_length=1, max_length=16)
     display_name: str = Field(min_length=1, max_length=64)
@@ -298,6 +320,16 @@ class VariantParams(BaseModel):
                 f"{ruleset.pgn_rules!r}, not {self.rules!r}; known rules: "
                 f"{', '.join(sorted(supported_rules()))}"
             )
+        if self.start_fen is not None:
+            if self.name == STANDARD_VARIANT:
+                raise ConfigError("the standard variant must start from the initial position")
+            try:
+                canonical_start = normalise_token_start_fen(ruleset, self.start_fen)
+            except ConfigError as exc:
+                raise ConfigError(
+                    f"variant {self.name!r} has an invalid start FEN: {exc}"
+                ) from None
+            object.__setattr__(self, "start_fen", canonical_start)
         if self.ticket is not None:
             if self.name != token_variant_name(self.ticket):
                 raise ConfigError(
@@ -330,13 +362,18 @@ class VariantParams(BaseModel):
         if self.time_control_first_moves is not None and not self.time_control_periods:
             raise ConfigError("time_control_first_moves is only valid with a later period")
         for index, line in enumerate(self.openings):
-            if not 1 <= len(line) <= 12:
+            if not 1 <= len(line) <= MAX_TOKEN_OPENING_PLIES:
                 raise ConfigError(
                     f"variant {self.name!r} opening {index} has {len(line)} plies; "
-                    "a certified opening carries between 1 and 12"
+                    f"a certified token opening carries between 1 and "
+                    f"{MAX_TOKEN_OPENING_PLIES}"
                 )
             try:
-                canonical = canonical_opening_line(ruleset.name, line)
+                canonical = canonical_opening_line(
+                    ruleset.name,
+                    line,
+                    start_fen=self.start_fen,
+                )
             except ConfigError as exc:
                 raise ConfigError(
                     f"variant {self.name!r} opening {index} is invalid: {exc}"
@@ -346,11 +383,16 @@ class VariantParams(BaseModel):
                     f"variant {self.name!r} opening {index} is not canonical SAN; "
                     f"expected {' '.join(canonical)}"
                 )
-            if not opening_line_fits(ruleset, line):
+            if not opening_line_fits(ruleset, line, start_fen=self.start_fen):
                 raise ConfigError(
                     f"variant {self.name!r} opening {index} is not playable under "
                     f"ruleset {ruleset.name!r}"
                 )
+        if self.start_fen is not None and not self.openings and self.opening_book != "none":
+            raise ConfigError(
+                f"variant {self.name!r} pins a start FEN without openings; "
+                "set opening_book to 'none'"
+            )
         period_increments = [self.time_control_increment_ms]
         total_moves = self.time_control_first_moves or (MAX_PLIES_LIMIT // 2)
         added = 0
