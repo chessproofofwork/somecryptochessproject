@@ -191,12 +191,13 @@ with book version `none` instead of certifying a prefix the token cannot play.
 more. Each line may carry up to 40 plies (20 full moves), enough to certify a
 middle-game prefix: the line is replayed before the clocks start, then the
 engines play on from the resulting position. The chain replays each line from the
-named ruleset's start and canonicalises it to SAN, so every move must be legal
-there. The epoch beacon selects one line per match. When any custom line is
-present, the default book version becomes `token-<ticket>`, which is the internal
-variant recorded with those lines. A token whose ruleset is Chess960 cannot take
-custom lines: the beacon selects its start position and the ruleset allows no
-book moves.
+token's pinned `--start-fen` when set, otherwise from the named ruleset's start,
+and canonicalises it to SAN, so every move must be legal there. The epoch beacon
+selects one line per match. When any custom line is present, the default book
+version becomes `token-<ticket>`, which is the internal variant recorded with
+those lines. A token whose ruleset is Chess960 can pin `--start-fen`, but it
+cannot take custom lines: Chess960 allows no book moves, so a pinned-start token
+without lines uses `opening_book=none`.
 
 `--opening-book` is an advanced override for the version name recorded with the
 registration. The relay must be able to load the version you name; do not set it
