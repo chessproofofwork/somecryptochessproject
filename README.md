@@ -306,6 +306,7 @@ responsibility rather than a construction phase.
 │   ├── guides/                       # use the CLI, the wallet and the web app
 │   │   ├── INSTALL.md                # install, node URL, network flag, keyfile rules
 │   │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
+│   │   ├── CREATE_YOUR_OWN_CRYPTO.md # register a variant token and open its first pool
 │   │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   │   ├── SEND_COINS.md             # fund a wallet and send a transfer
 │   │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
@@ -505,6 +506,7 @@ each one needs and where it ends, in [`docs/README.md`](docs/README.md):
 | --- | --- |
 | [`guides/INSTALL.md`](docs/guides/INSTALL.md) | install the CLI, choose a node, the `--network` rule |
 | [`guides/CREATE_A_TESTNET_WALLET.md`](docs/guides/CREATE_A_TESTNET_WALLET.md) | keyfile, faucet, balance — the short path |
+| [`guides/CREATE_YOUR_OWN_CRYPTO.md`](docs/guides/CREATE_YOUR_OWN_CRYPTO.md) | register a variant token, wait for it, transfer it, open a pool |
 | [`guides/OPEN_A_WALLET.md`](docs/guides/OPEN_A_WALLET.md) | the full keyfile, mnemonic and restore reference |
 | [`guides/SEND_COINS.md`](docs/guides/SEND_COINS.md) | fund, transfer, fees and settlement |
 | [`guides/PLAY_AND_EXPORT.md`](docs/guides/PLAY_AND_EXPORT.md) | play on-chain and export the block's games |

@@ -589,16 +589,27 @@ def _asset_symbol(params: NetworkParams, asset: str) -> str:
 
 
 def _asset_id(params: NetworkParams, asset: str | None) -> str:
-    """Resolve a CLI asset name to an id; native ZQWX is the empty string."""
+    """Resolve a CLI asset name to an id; native ZQWX is the empty string.
+
+    Built-in variants may be named by name or symbol. A chain-registered token
+    is not in ``NetworkParams`` because it was created after genesis, so its
+    derived 64-character asset id is accepted verbatim -- the id printed by
+    ``dex register-token`` and listed by ``dex tokens``.
+    """
     if asset is None or asset.strip() == "" or asset.upper() == "ZQWX":
         return dex.NATIVE_ASSET
     for variant in params.variants:
         if asset in (variant.asset, variant.name, variant.symbol):
             return variant.asset or dex.NATIVE_ASSET
+    if len(asset) == 64 and all(character in "0123456789abcdef" for character in asset):
+        return asset
     known = ", ".join(
         ["ZQWX", *(variant.symbol for variant in params.variants if not variant.native)]
     )
-    _fail(f"unknown asset {asset!r}; this network has: {known}")
+    _fail(
+        f"unknown asset {asset!r}; this network has {known}, and a registered token "
+        "is named by its 64-character asset id"
+    )
     raise AssertionError("unreachable")
 
 
@@ -1964,7 +1975,6 @@ def miner_register(
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
     params = wallet.network_params
-    _run(lambda: params.variant(variant))
     with _local_node(ctx, params.network_id) as service:
         tx = _run(
             lambda: WalletService(params, service.chain.state, chain=service.chain).build_register(
@@ -2468,7 +2478,13 @@ def dex_quote(
     amount_in: Annotated[int, typer.Option("--amount-in", help="Input amount, in whole coins.")],
     asset_in: Annotated[
         str | None,
-        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for ZQWX)."),
+        typer.Option(
+            "--asset-in",
+            help=(
+                "Asset id, or a built-in variant name/symbol (omit for ZQWX); "
+                "registered tokens use their 64-character asset id."
+            ),
+        ),
     ] = None,
     slippage_bps: Annotated[
         int,
@@ -2520,11 +2536,23 @@ def dex_create_pool(
     amount_b: Annotated[int, typer.Option("--amount-b", help="Second side, in whole coins.")],
     asset_a: Annotated[
         str | None,
-        typer.Option("--asset-a", help="First asset id/name/symbol (omit for ZQWX)."),
+        typer.Option(
+            "--asset-a",
+            help=(
+                "First asset id, or a built-in variant name/symbol (omit for ZQWX); "
+                "registered tokens use their 64-character asset id."
+            ),
+        ),
     ] = None,
     asset_b: Annotated[
         str | None,
-        typer.Option("--asset-b", help="Second asset id/name/symbol (omit for ZQWX)."),
+        typer.Option(
+            "--asset-b",
+            help=(
+                "Second asset id, or a built-in variant name/symbol (omit for ZQWX); "
+                "registered tokens use their 64-character asset id."
+            ),
+        ),
     ] = None,
     fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
     node: Annotated[
@@ -2627,7 +2655,13 @@ def dex_swap(
     amount_in: Annotated[int, typer.Option("--amount-in", help="Input amount, in whole coins.")],
     asset_in: Annotated[
         str | None,
-        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for ZQWX)."),
+        typer.Option(
+            "--asset-in",
+            help=(
+                "Asset id, or a built-in variant name/symbol (omit for ZQWX); "
+                "registered tokens use their 64-character asset id."
+            ),
+        ),
     ] = None,
     min_out: Annotated[
         int | None,
