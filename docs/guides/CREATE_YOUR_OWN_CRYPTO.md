@@ -134,7 +134,7 @@ token with a limited supply:
 | `--halving-interval` | `210000` | Blocks between subsidy halvings, counted from chain height. |
 | `--min-plies` | `20` | Shorter games do not earn the token. |
 | `--max-games-per-block` | `1` | Games of this token a block may settle, as served by the node. |
-| `--opening` | *(omit)* | Adds a token-specific opening line. Repeat for several lines. |
+| `--opening` | *(omit)* | Adds a token-specific opening line (up to 40 plies). Repeat for several lines. |
 | `--opening-book` | *(omit)* | Advanced book-version override; see below. |
 | `--time-control` | *(omit)* | Whole-second PGN clock; omit for sudden-death 10+0. |
 
@@ -188,12 +188,15 @@ token's ruleset, the match starts from that ruleset's fixed initial position
 with book version `none` instead of certifying a prefix the token cannot play.
 
 `--opening "e4 e5 Nf3"` declares one token-specific line; repeat the flag to add
-more. The chain replays each line from the named ruleset's start and
-canonicalises it to SAN, so every move must be legal there. The epoch beacon
-selects one line per match. When any custom line is present, the default book
-version becomes `token-<ticket>`, which is the internal variant recorded with
-those lines. A token whose ruleset is Chess960 cannot take custom lines: the
-beacon selects its start position and the ruleset allows no book moves.
+more. Each line may carry up to 40 plies (20 full moves), enough to certify a
+middle-game prefix: the line is replayed before the clocks start, then the
+engines play on from the resulting position. The chain replays each line from the
+named ruleset's start and canonicalises it to SAN, so every move must be legal
+there. The epoch beacon selects one line per match. When any custom line is
+present, the default book version becomes `token-<ticket>`, which is the internal
+variant recorded with those lines. A token whose ruleset is Chess960 cannot take
+custom lines: the beacon selects its start position and the ruleset allows no
+book moves.
 
 `--opening-book` is an advanced override for the version name recorded with the
 registration. The relay must be able to load the version you name; do not set it

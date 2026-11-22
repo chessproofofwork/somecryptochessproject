@@ -404,6 +404,40 @@ def test_register_token_adds_a_variant_and_credits_its_initial_supply(
     assert _reason(again, ledger) is TxFailure.TYPE
 
 
+def test_a_token_registration_can_certify_a_middle_game_prefix(
+    ledger: State,
+    protocol_accounts: Mapping[str, Any],
+    middle_game_opening: tuple[str, ...],
+) -> None:
+    """The registration path accepts a 40-ply start and rejects a 41st ply."""
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    tx = wallet.build_register_token(
+        alice.keypair,
+        ticket="0043",
+        display_name="Middle Game",
+        symbol="MID",
+        ruleset="standard",
+        subsidy=COINS,
+        openings=[middle_game_opening],
+    )
+    _check(tx, ledger)
+    too_long = _resigned(
+        tx.model_copy(
+            update={
+                "payload": {
+                    **tx.payload,
+                    "openings": [[*middle_game_opening, "Bxb8"]],
+                }
+            }
+        ),
+        alice,
+    )
+    assert _reason(too_long, ledger) is TxFailure.TYPE
+    apply_transaction(ledger, tx, height=HEIGHT)
+    assert ledger.tokens["token-0043"].variant.openings == (middle_game_opening,)
+
+
 def test_a_ticketed_registration_keeps_its_name_and_ticker_as_metadata(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:

@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 
 from sccp.chess.rulesets import ruleset_for
+from sccp.config import MAX_TOKEN_OPENING_PLIES
 from sccp.errors import TranscriptError
-from sccp.protocol.models import TimeControl, Transcript
+from sccp.protocol.models import OpeningRef, TimeControl, Transcript
 from sccp.protocol.transcript import (
     book_opening_ref,
     build_win_proof,
@@ -40,6 +41,31 @@ def test_opening_ref_matches_the_loaded_line(protocol_book) -> None:
     assert ref.moves == line.moves
     assert ref.hash == opening_hash(line.book_version, line.line_id, line.moves)
     validate_opening_ref(ref)
+
+
+def test_a_token_certificate_can_carry_a_middle_game_prefix(
+    middle_game_opening: tuple[str, ...],
+) -> None:
+    """The wire model and replay accept the full 40-ply token-opening cap."""
+    line = middle_game_opening
+    assert len(line) == MAX_TOKEN_OPENING_PLIES
+    ref = OpeningRef(
+        book_version="token-0042",
+        line_id=0,
+        hash=opening_hash("token-0042", 0, line, variant="token-0042"),
+        moves=line,
+        variant="token-0042",
+    )
+    validate_opening_ref(ref, rules=ruleset_for("standard"))
+
+    with pytest.raises(ValueError):
+        OpeningRef(
+            book_version="token-0042",
+            line_id=0,
+            hash=ref.hash,
+            moves=(*line, "Bxb8"),
+            variant="token-0042",
+        )
 
 
 def test_validate_opening_ref_rejects_tampering(protocol_book) -> None:

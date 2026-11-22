@@ -38,6 +38,7 @@ from sccp.config import (
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     MAX_CLOCK_MS,
     MAX_PLIES_LIMIT,
+    MAX_TOKEN_OPENING_PLIES,
     STANDARD_VARIANT,
     TimeControlPeriod,
 )
@@ -247,7 +248,7 @@ class OpeningRef(ProtocolModel):
     book_version: str = Field(min_length=1, max_length=64)
     line_id: int = Field(ge=0)
     hash: DigestHex
-    moves: tuple[str, ...] = Field(default=(), max_length=12)
+    moves: tuple[str, ...] = Field(default=(), max_length=MAX_TOKEN_OPENING_PLIES)
     start_fen: str = Field(default=STANDARD_START_FEN, min_length=1, max_length=128)
     variant: VariantName = STANDARD_VARIANT
 

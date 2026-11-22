@@ -803,8 +803,9 @@ class WalletService:
 
         ``openings`` is an optional per-token book: SAN lines (or space-delimited
         SAN strings) replayed against ``ruleset`` here and stored canonically on
-        chain. ``time_control_periods`` adds FIDE-style later periods, each with
-        its own delay or increment.
+        chain. A line may carry up to 40 plies (20 full moves), so it can certify
+        a middle-game prefix. ``time_control_periods`` adds FIDE-style later
+        periods, each with its own delay or increment.
 
         The local state is checked for a duplicate ticket, internal variant or
         asset id, so an impossible combination fails here instead of after paying

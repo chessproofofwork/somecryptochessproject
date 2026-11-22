@@ -12,6 +12,7 @@ from sccp.config import (
     C960_VARIANT,
     DEVNET,
     MAINNET,
+    MAX_TOKEN_OPENING_PLIES,
     NETWORKS,
     TESTNET,
     UNITS_PER_COIN,
@@ -98,6 +99,42 @@ def test_a_token_cannot_declare_an_opening_whose_game_already_ended() -> None:
             subsidy=1,
             min_plies=1,
             openings=(("f3", "e5", "g4", "Qh4#"),),
+        )
+
+
+def test_a_token_opening_can_start_from_a_middle_game_prefix(
+    middle_game_opening: tuple[str, ...],
+) -> None:
+    """A token may certify a 40-ply prefix (20 full moves) before engines play."""
+    line = middle_game_opening
+    assert len(line) == MAX_TOKEN_OPENING_PLIES
+    variant = VariantParams(
+        name="token-0123",
+        ticket="0123",
+        rules="chess",
+        ruleset="standard",
+        asset="b" * 64,
+        symbol="GOLD",
+        display_name="Gold Coin",
+        subsidy=1,
+        min_plies=1,
+        openings=(line,),
+    )
+    assert variant.openings == (line,)
+
+    too_long = (*line, "Bxb8")
+    with pytest.raises(ValidationError, match=f"carries between 1 and {MAX_TOKEN_OPENING_PLIES}"):
+        VariantParams(
+            name="token-0123",
+            ticket="0123",
+            rules="chess",
+            ruleset="standard",
+            asset="b" * 64,
+            symbol="GOLD",
+            display_name="Gold Coin",
+            subsidy=1,
+            min_plies=1,
+            openings=(too_long,),
         )
 
 

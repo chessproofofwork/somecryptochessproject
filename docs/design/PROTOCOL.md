@@ -205,8 +205,9 @@ on top of that format (see the end of this section).
 
 - `line_id` is the line's zero-based index in its book. It is stable for a
   published book version: never reorder or delete a line, only append.
-- Each line has 1–12 plies of legal SAN from the standard start. Stored SAN is
-  normalized to canonical SAN on load (check and mate markers included).
+- Each packaged-book line has 1–12 plies of legal SAN from the standard start.
+  Stored SAN is normalized to canonical SAN on load (check and mate markers
+  included).
 - Loading replays every line. An illegal move, a line that continues after the
   game ended, a duplicate name, an empty book or an unsupported `format` is a
   hard error, not a warning.
@@ -224,8 +225,10 @@ on top of that format (see the end of this section).
   `beacon` is the 32-byte epoch beacon; any other length is rejected. Selection
   is deterministic and uniform over the book.
 - A chain-registered token may instead declare its own `openings` at
-  registration. Those lines are canonicalised to SAN, recorded on chain and
-  selected with the same formula. A token that declares lines records
+  registration. Each token line may carry 1–40 plies (20 full moves), so a token
+  can certify a middle-game prefix before the engines take over. Those lines are
+  canonicalised to SAN, recorded on chain and selected with the same formula. A
+  token that declares lines records
   `opening_book = "token-<ticket>"` by default; a token that declares none uses
   the network's `book_version`. The selected line is accepted only when it
   replays legally from the token ruleset's start; otherwise the match starts
@@ -875,7 +878,7 @@ the one scheme, not a second way to spend.
 | --- | --- | --- |
 | `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
 | `register` | `public_key`, `endpoint`, `engine`, `bond`, `variant`? | locks `bond >= min_bond`, stores key/endpoint/engine and the chosen variant (`standard` when omitted), sets `registered_until_epoch = epoch + registration_epochs`; refused while banned, and a miner already registered for a different variant must unregister first |
-| `register_token` | `ticket`, `display_name`, `symbol`, `ruleset`, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be 16 lowercase hex characters (or a four-digit short form) and unused, and is the token's unique registration serial, deriving the internal `variant = "token-<ticket>"`; `display_name` is the user-chosen name and `symbol` is the printable ticker, both are display metadata and need not be unique; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})` must be unused; `openings` are canonicalised to SAN for that ruleset; an omitted `opening_book` is `token-<ticket>` when the token declares openings and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy name-based payloads (`variant` with `symbol` and `display_name`) remain accepted for pre-ticket chains. |
+| `register_token` | `ticket`, `display_name`, `symbol`, `ruleset`, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be 16 lowercase hex characters (or a four-digit short form) and unused, and is the token's unique registration serial, deriving the internal `variant = "token-<ticket>"`; `display_name` is the user-chosen name and `symbol` is the printable ticker, both are display metadata and need not be unique; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})` must be unused; `openings` are canonicalised to SAN for that ruleset (1–40 plies per line); an omitted `opening_book` is `token-<ticket>` when the token declares openings and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy name-based payloads (`variant` with `symbol` and `display_name`) remain accepted for pre-ticket chains. |
 | `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
 | `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
 | `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |

@@ -39,6 +39,7 @@ from sccp.config import (
     DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
+    MAX_TOKEN_OPENING_PLIES,
     TOKEN_TICKET_PATTERN,
     NetworkParams,
     TimeControlPeriod,
@@ -538,8 +539,11 @@ def _field_openings(
             canonical = canonical_opening_line(ruleset_name, tokens)
         except ConfigError as exc:
             _fail(TxFailure.TYPE, f"opening {index}: {exc}")
-        if len(canonical) > 12:
-            _fail(TxFailure.TYPE, f"opening {index} has more than 12 plies")
+        if len(canonical) > MAX_TOKEN_OPENING_PLIES:
+            _fail(
+                TxFailure.TYPE,
+                f"opening {index} has more than {MAX_TOKEN_OPENING_PLIES} plies",
+            )
         lines.append(canonical)
     return tuple(lines)
 

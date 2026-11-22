@@ -2467,8 +2467,9 @@ def dex_register_token(
         typer.Option(
             "--opening",
             help=(
-                "A token-specific opening line in SAN or UCI, e.g. 'e4 e5 Nf3'. "
-                "Repeat for several lines; the beacon selects one per match."
+                "A token-specific opening line in SAN or UCI, e.g. 'e4 e5 Nf3' "
+                "(at most 40 plies). Repeat for several lines; the beacon selects "
+                "one per match."
             ),
         ),
     ] = None,

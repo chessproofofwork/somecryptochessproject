@@ -687,9 +687,11 @@ distinguish it from honest weakness. Only the win/loss column prices it.
 ### 8.5 Opening book
 
 The shipped book lives in `data/openings.json` and is also packaged with the
-wheel. Each line has a stable index, a name and a legal SAN prefix of at most
-12 plies. The book is replayed and validated when loaded; an illegal or
-malformed line is a startup error, not a runtime surprise.
+wheel. Each packaged-book line has a stable index, a name and a legal SAN prefix
+of at most 12 plies. A chain-registered token may declare its own opening line of
+up to 40 plies (20 full moves), which is enough to certify a middle-game prefix
+before the engines take over. The book is replayed and validated when loaded; an
+illegal or malformed line is a startup error, not a runtime surprise.
 
 Selection is a pure function:
 

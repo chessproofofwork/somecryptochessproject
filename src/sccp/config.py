@@ -46,6 +46,16 @@ DEFAULT_TIME_CONTROL_DELAY_MS: Final = 0
 MAX_PLIES_LIMIT: Final = 1000
 """Hard upper bound for ``max_plies``; longer games are never consensus-valid."""
 
+MAX_TOKEN_OPENING_PLIES: Final = 40
+"""Most plies one chain-registered token opening line may carry.
+
+Forty plies is twenty full moves, which is enough to certify a middle-game
+prefix before the engines take over. The packaged opening book keeps its own,
+smaller limit (``MAX_BOOK_PLIES`` in :mod:`sccp.chess.openings`); this constant is
+only for the ``openings`` a ``register_token`` transaction declares. It is part
+of registration validity, so every node must agree on the value.
+"""
+
 CLOCK_EVIDENCE_PLIES: Final = 64
 """Most move receipts a clock-evidence bundle may carry (PROTOCOL.md section 8.4).
 
@@ -330,10 +340,11 @@ class VariantParams(BaseModel):
         if self.time_control_first_moves is not None and not self.time_control_periods:
             raise ConfigError("time_control_first_moves is only valid with a later period")
         for index, line in enumerate(self.openings):
-            if not 1 <= len(line) <= 12:
+            if not 1 <= len(line) <= MAX_TOKEN_OPENING_PLIES:
                 raise ConfigError(
                     f"variant {self.name!r} opening {index} has {len(line)} plies; "
-                    "a certified opening carries between 1 and 12"
+                    f"a certified token opening carries between 1 and "
+                    f"{MAX_TOKEN_OPENING_PLIES}"
                 )
             try:
                 canonical = canonical_opening_line(ruleset.name, line)
