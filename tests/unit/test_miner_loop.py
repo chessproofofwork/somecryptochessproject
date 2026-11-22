@@ -8,13 +8,24 @@ from typing import Any
 
 from sccp.chess.engines import ScriptedEngine
 from sccp.chess.openings import book_for
-from sccp.config import DEVNET
+from sccp.chess.pgn import validate_pgn
+from sccp.chess.rulesets import chess960_start_fen, ruleset_for
+from sccp.chess.variants import board_for_variant
+from sccp.config import C960, DEVNET
 from sccp.errors import EpochPipelineError, RelayError
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient
 from sccp.miner.epoch_pipeline import PipelineAction
 from sccp.miner.matchmaker import MatchView
-from sccp.protocol.models import GameResult, Matchup, WinProof
-from sccp.protocol.transcript import create_certificate
+from sccp.protocol.models import GameResult, Matchup, Transcript, WinProof
+from sccp.protocol.transcript import (
+    create_certificate,
+    create_result,
+    expected_from_certificate,
+    render_transcript_pgn,
+    sign_certificate,
+    sign_result,
+    start_opening_ref,
+)
 
 MATCH_ID = "ab" * 32
 OPENING = tuple(book_for(DEVNET).select(bytes(32), MATCH_ID).moves)
@@ -174,6 +185,67 @@ def _miner(
     )
 
 
+def _c960_finished_game(accounts: Any) -> tuple[Any, dict[str, Any], MatchView, Transcript]:
+    """A finished C960 token game whose transcript both seats signed."""
+    token = C960.model_copy(update={"min_plies": 1})
+    variants = {token.name: token}
+    alice, bob = accounts["alice"], accounts["bob"]
+    matchup = Matchup(
+        network=DEVNET.network_id,
+        match_id=MATCH_ID,
+        epoch=3,
+        round=0,
+        white=alice.address,
+        black=bob.address,
+        variant=token.name,
+    )
+    rules = ruleset_for(token.ruleset or token.name)
+    opening = start_opening_ref(token.name, rules, start_fen=chess960_start_fen(0))
+    certificate = create_certificate(
+        matchup,
+        opening,
+        engine_white="mock-v1:aaaaaaaaaaaaaaaa",
+        engine_black="mock-v1:bbbbbbbbbbbbbbbb",
+        variants=variants,
+    )
+    certificate = sign_certificate(certificate, "white", alice.keypair)
+    certificate = sign_certificate(certificate, "black", bob.keypair)
+    board = board_for_variant(
+        token.ruleset or token.name,
+        opening.start_fen,
+        token_start_fen=token.start_fen,
+    )
+    move = next(iter(board.legal_moves))
+    san = board.san(move)
+    board.push(move)
+    pgn = render_transcript_pgn(
+        certificate,
+        board,
+        result="1-0",
+        termination="resignation",
+        variants=variants,
+    )
+    parsed = validate_pgn(
+        pgn,
+        params=DEVNET,
+        expected=expected_from_certificate(certificate),
+        require_win=True,
+        variants=variants,
+    )
+    result = create_result(certificate, parsed)
+    result = sign_result(result, certificate, "white", alice.keypair)
+    result = sign_result(result, certificate, "black", bob.keypair)
+    transcript = Transcript(certificate=certificate, result=result, pgn=pgn)
+    view = MatchView(
+        matchup=matchup,
+        status="finished",
+        san_moves=(san,),
+        certificate=certificate,
+        result=result,
+    )
+    return token, variants, view, transcript
+
+
 def test_config_exposes_network_address_and_limit(protocol_accounts: Any) -> None:
     alice = protocol_accounts["alice"]
     config = MinerConfig.for_network("devnet", alice.keypair, nodes_per_move=1234)
@@ -182,6 +254,30 @@ def test_config_exposes_network_address_and_limit(protocol_accounts: Any) -> Non
     assert config.limit.nodes == 1234
     deeper = MinerConfig.for_network("devnet", alice.keypair, depth=3)
     assert deeper.limit.depth == 3
+
+
+def test_a_registered_token_winner_builds_its_proof(protocol_accounts: Any) -> None:
+    """The normal win path carries chain-registered variants into proof validation."""
+    token, variants, view, transcript = _c960_finished_game(protocol_accounts)
+    relay = _StubRelay(view, transcript_doc=transcript)
+    miner = EngineMiner(
+        MinerConfig(
+            params=DEVNET,
+            keypair=protocol_accounts["alice"].keypair,
+            variant=token.name,
+            variants=variants,
+        ),
+        engine=ScriptedEngine([]),
+        relay=relay,  # type: ignore[arg-type]
+        clock_ms=lambda: 0,
+    )
+
+    tick = miner.run_once()
+
+    assert tick.refusals == ()
+    assert tick.proofs
+    proof = miner.proofs[tick.proofs[0]]
+    assert proof.variant == token.name
 
 
 def test_relay_outage_is_recorded_as_a_refusal(protocol_accounts: Any) -> None:

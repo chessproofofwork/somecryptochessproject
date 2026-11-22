@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [0.39.0] - 2026-11-22
+
+### Fixed
+
+- **A winning miner can build a proof for a chain-registered token.** The normal
+  win path now passes the miner's registered variant definitions into
+  `proof_from_transcript`, so PGN validation resolves variants such as
+  `token-0960` (Chess960) instead of failing with
+  `PgnValidationError: unknown variant`. The timeout path already did this.
+
 ## [0.38.0] - 2026-11-22
 
 ### Added
