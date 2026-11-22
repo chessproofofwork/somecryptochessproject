@@ -1,10 +1,12 @@
 /**
- * The hamburger in the top-left corner: the switch between the five views.
+ * The hamburger in the top-left corner: the switch between the menu views.
  *
- * Explorer, Wallet, Play, DEX and Bridge are hash routes on the one origin,
- * `https://app.proofofchess.com`. The menu switches in place so the unlocked
- * keypair, which lives only in this tab's memory, is not lost. Each view is still a
- * direct, bookmarkable entry point; inside the app, the menu is one session. The
+ * Explorer, Wallet, DEX and Bridge are hash routes on the one origin,
+ * `https://app.proofofchess.com`. Play also has a live route (`#/play`), but it
+ * is intentionally absent from this menu: links and bookmarks still reach it
+ * without advertising the table. The menu switches in place so the unlocked
+ * keypair, which lives only in this tab's memory, is not lost. Each view is still
+ * a direct, bookmarkable entry point; inside the app, the menu is one session. The
  * last item leaves the app for the static overview at `https://proofofchess.com/`.
  *
  * The glyph is three `View`s rather than `IconButton icon="menu"`: react-native-paper
@@ -16,7 +18,7 @@ import { useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { Divider, Menu, useTheme } from "react-native-paper";
 
-import { SITE_LABELS, siteHash, type Site } from "../lib/site";
+import { MENU_SITES, SITE_LABELS, siteHash, type Site } from "../lib/site";
 import { navigate } from "../router";
 
 function HamburgerButton({ onPress }: { onPress: () => void }): ReactNode {
@@ -25,7 +27,7 @@ function HamburgerButton({ onPress }: { onPress: () => void }): ReactNode {
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel="Open the menu to switch between Explorer, Wallet, Play, DEX and Bridge"
+      accessibilityLabel="Open the menu to switch between Explorer, Wallet, DEX and Bridge"
       style={styles.button}
       hitSlop={8}
     >
@@ -52,7 +54,7 @@ export function AppMenu(): ReactNode {
       anchorPosition="bottom"
       anchor={<HamburgerButton onPress={() => setVisible(true)} />}
     >
-      {(Object.keys(SITE_LABELS) as Site[]).map((site) => (
+      {MENU_SITES.map((site) => (
         <Menu.Item
           key={site}
           title={SITE_LABELS[site]}

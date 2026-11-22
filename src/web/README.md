@@ -201,9 +201,11 @@ server-side rewrite rule.
 
 `#/` is the explorer overview, and `#/wallet`, `#/play`, `#/dex` and `#/bridge`
 are the other four landing views: one origin, one bundle, no hostnames. The
-hamburger offers exactly Explorer, Wallet, Play, DEX and Bridge, and switches by
-hash so the unlocked keypair (memory-only) stays in the tab. Each view is a
-direct, bookmarkable URL (`lib/site.ts` maps the views to their hashes).
+hamburger offers Explorer, Wallet, DEX and Bridge, and switches by hash so the
+unlocked keypair (memory-only) stays in the tab. Play is intentionally route-only:
+`#/play` stays live for links and bookmarks but is not advertised in the menu.
+Each view is a direct, bookmarkable URL (`lib/site.ts` maps the views to their
+hashes).
 
 Play, DEX and Bridge are gated by the shared wallet session. The strip under the
 header says `Wallet active` with the shortened address and a Lock button, or

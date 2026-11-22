@@ -319,8 +319,9 @@ hash routes are:
 | DEX | `http://127.0.0.1:8645/#/dex` |
 | Bridge | `http://127.0.0.1:8645/#/bridge` |
 
-The hamburger menu switches between Explorer, Wallet, Play, DEX and Bridge
-without leaving the origin, so the unlocked key stays in the tab.
+The hamburger menu switches between Explorer, Wallet, DEX and Bridge without
+leaving the origin, so the unlocked key stays in the tab. Play is not listed in
+the menu, but its `#/play` URL above remains live as a direct entry point.
 
 #### Vite dev server instead of `--web`
 

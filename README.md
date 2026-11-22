@@ -545,8 +545,9 @@ and wallet are one app deploy on `https://app.proofofchess.com`: nginx serves th
 built bundle with `/v1` and `/relay` proxied onto that origin, because the node
 sends no CORS headers. A Caddy terminator in front holds one certificate per
 name. The hamburger menu in the top-left corner switches between the explorer,
-the wallet, Play, the DEX and the bridge by hash route (`#/`, `#/wallet`,
-`#/play`, `#/dex`, `#/bridge`), so the unlocked key stays in the tab. See
+the wallet, the DEX and the bridge by hash route (`#/`, `#/wallet`, `#/dex`,
+`#/bridge`), so the unlocked key stays in the tab. Play is intentionally not in
+that menu, but `#/play` remains a live, bookmarkable route. See
 [`docs/setup/EXPLORER_DEPLOYMENT.md`](docs/setup/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws

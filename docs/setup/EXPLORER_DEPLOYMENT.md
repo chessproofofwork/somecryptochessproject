@@ -12,9 +12,10 @@ https://proofofchess.com       the project landing page
 The app is one bundle and one release directory. It selects its view from the
 hash route: `#/` is the explorer and dashboard, and `#/wallet`, `#/play`,
 `#/dex` and `#/bridge` are the other four. Every view is a direct, bookmarkable
-URL on the app origin, and the hamburger switches in place so the unlocked
-wallet session survives. The app origin serves three things: the bundle at `/`,
-the node API under `/v1` and the matchmaking relay under `/relay`.
+URL on the app origin. The hamburger switches between Explorer, Wallet, DEX and
+Bridge in place so the unlocked wallet session survives; Play stays a direct-only
+route and is not listed in the menu. The app origin serves three things: the
+bundle at `/`, the node API under `/v1` and the matchmaking relay under `/relay`.
 
 The apex is a separate, plain-HTML release built from `src/landing`. It has no
 JavaScript and no API proxy: it is the project overview and links every
@@ -121,9 +122,9 @@ origin. Open these in a browser:
 | Bridge | `https://app.proofofchess.com/#/bridge` |
 
 Every route is the same document, so a `curl` of `/` cannot tell them apart; the
-hash is read by the browser. The hamburger switches between all five in-app so the
-unlocked wallet session survives, and each URL above is still a direct entry
-point.
+hash is read by the browser. The hamburger switches between Explorer, Wallet, DEX
+and Bridge in-app so the unlocked wallet session survives. Play is not in that
+menu, but its URL above remains a direct entry point.
 
 ## Layout on the host
 
