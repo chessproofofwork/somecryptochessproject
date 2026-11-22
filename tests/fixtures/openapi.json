@@ -2741,7 +2741,15 @@
       "TimeControl": {
         "additionalProperties": false,
         "properties": {
+          "delay_ms": {
+            "default": 0,
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "multipleOf": 1000.0,
+            "type": "integer"
+          },
           "increment_ms": {
+            "default": 0,
             "minimum": 0.0,
             "multipleOf": 1000.0,
             "type": "integer"
@@ -2753,8 +2761,7 @@
           }
         },
         "required": [
-          "initial_ms",
-          "increment_ms"
+          "initial_ms"
         ],
         "type": "object"
       },
@@ -2874,6 +2881,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "time_control_delay_ms": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
           "time_control_increment_ms": {
             "minimum": 0.0,
             "type": "integer"
@@ -2898,6 +2909,7 @@
           "opening_book",
           "time_control_initial_ms",
           "time_control_increment_ms",
+          "time_control_delay_ms",
           "owner",
           "registered_at_height",
           "minted"

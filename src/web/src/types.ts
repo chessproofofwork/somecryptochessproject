@@ -33,6 +33,8 @@ export interface VariantParams {
   time_control_initial_ms: number;
   /** Time added after every move, in milliseconds. */
   time_control_increment_ms: number;
+  /** Free time at the start of every move, in milliseconds. */
+  time_control_delay_ms?: number;
 }
 
 export interface MempoolStatus {
@@ -172,6 +174,8 @@ export interface OpeningRef {
 export interface TimeControl {
   initial_ms: number;
   increment_ms: number;
+  /** Optional for old nodes and v1 vectors; omitted means no delay. */
+  delay_ms?: number;
 }
 
 /** A printable engine fingerprint: the registration's `engine` string, as-is. */

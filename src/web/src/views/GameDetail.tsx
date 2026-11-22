@@ -25,7 +25,7 @@ import {
   Section,
   StatusPill,
 } from "../components/Chrome";
-import { formatInteger, shortAddress } from "../lib/format";
+import { formatInteger, formatTimeControl, shortAddress } from "../lib/format";
 import { variantLabel } from "../lib/assets";
 import { useResource } from "../useResource";
 import type { GameView } from "../types";
@@ -141,9 +141,11 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
             {`${certificate.engine_white} vs ${certificate.engine_black}`}
           </KeyValue>
           <KeyValue label="Time control">
-            {`${formatInteger(certificate.time_control.initial_ms / 1000)}s + ${formatInteger(
-              certificate.time_control.increment_ms / 1000,
-            )}s`}
+            {formatTimeControl(
+              certificate.time_control.initial_ms,
+              certificate.time_control.increment_ms,
+              certificate.time_control.delay_ms ?? 0,
+            )}
           </KeyValue>
           <KeyValue label="Start signatures">
             <CodeBlock>{JSON.stringify(certificate.start_signatures, null, 2)}</CodeBlock>

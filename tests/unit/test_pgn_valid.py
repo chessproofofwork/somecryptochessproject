@@ -208,6 +208,27 @@ def test_pgn_time_control_must_match_the_token(
         validate_pgn(make_pgn(FOOLS_MATE, match_tags), params=params)
 
 
+def test_pgn_time_control_accepts_a_token_delay(
+    make_pgn: Callable[[str, Mapping[str, str]], str],
+    match_tags: dict[str, str],
+) -> None:
+    standard = VariantParams(
+        name="standard",
+        rules="chess",
+        symbol="ZQWX",
+        display_name="ZQWX",
+        subsidy=TESTNET.subsidy,
+        min_plies=TESTNET.min_plies,
+        time_control_initial_ms=180_000,
+        time_control_delay_ms=2_000,
+    )
+    params = NetworkParams(**{**TESTNET.model_dump(), "variants": [standard.model_dump()]})
+    tags = {**match_tags, "TimeControl": "180+2d"}
+    assert validate_pgn(make_pgn(FOOLS_MATE, tags), params=params).time_control == "180+2d"
+    with pytest.raises(PgnValidationError, match="declares"):
+        validate_pgn(make_pgn(FOOLS_MATE, match_tags), params=params)
+
+
 def test_a_registered_variant_may_share_the_chess_rules_tag(
     make_pgn: Callable[[str, Mapping[str, str]], str],
     match_tags: dict[str, str],

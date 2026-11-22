@@ -54,9 +54,10 @@ describe("parseAmount", () => {
     expect(formatCoins(null)).toBe("-");
   });
 
-  it("renders a variant clock in minutes plus increment seconds", () => {
+  it("renders a variant clock in minutes plus increment or delay seconds", () => {
     expect(formatTimeControl(600_000, 0)).toBe("10+0");
     expect(formatTimeControl(1_800_000, 5_000)).toBe("30+5");
+    expect(formatTimeControl(1_800_000, 0, 5_000)).toBe("30+5d");
     expect(formatTimeControl(90_000, 0)).toBe("1.5+0");
     expect(formatTimeControl(-1, -1)).toBe("0+0");
   });

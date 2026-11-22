@@ -105,7 +105,7 @@ when a second game follows the first.
 | `Result` | `1-0`, `0-1` or `1/2-1/2` (`*` is rejected) |
 | `Termination` | `checkmate`, `draw`, `resignation` or `time_forfeit` |
 | `MatchID` | Match identifier from the certificate |
-| `TimeControl` | `<initial>+<increment>` in whole seconds; must equal the certificate |
+| `TimeControl` | `<initial>+<increment>` or `<initial>+<delay>d` in whole seconds; must equal the certificate |
 | `Epoch`, `RoundNumber` | Non-negative integers; must equal the certificate |
 | `SeatWhite`, `SeatBlack` | Bech32 addresses; must equal the certificate |
 | `EngineWhite`, `EngineBlack` | Engine fingerprints; must equal the certificate |
@@ -119,7 +119,10 @@ Every tag must be present and non-empty. When a certificate is supplied,
 exactly; any mismatch is a validation error. The `TimeControl` form is strict:
 decimal seconds with no underscores or whitespace, initial time at least one
 second, and the worst case `initial_ms + increment_ms * max_plies` may not exceed
-`MAX_CLOCK_MS` (24 hours).
+`MAX_CLOCK_MS` (24 hours). `600+0` is sudden death, `600+5` adds a five-second
+increment after each move, and `600+5d` grants a five-second delay at the start
+of each turn. A control uses an increment or a delay, never both; delay is free
+time and never grows a clock, so it does not contribute to the worst case.
 
 ### 3.2 Replay
 
@@ -148,9 +151,11 @@ must agree with it.
 | Anything else (abandoned, unterminated) | rejected | rejected |
 
 A `time_forfeit` PGN is accepted only when its `TimeControl` matches the
-certificate and the accompanying clock evidence verifies. The protocol uses one
-fixed 10+0 control for every match; matchmaking does not offer per-match
-choices. See section 8.2 below and the clock implementation in
+certificate and the accompanying clock evidence verifies. The control is fixed
+by the variant token, not negotiated per match: built-in variants use
+sudden-death 10+0 unless the network overrides their standard entry, and a
+registered token declares its own initial time plus an increment or a delay.
+See section 8.2 below and the clock implementation in
 `src/sccp/protocol/clocks.py`.
 
 Notes:
@@ -323,6 +328,10 @@ to check the prefix:
  "start_signatures": {"white": "hex", "black": "hex"}}
 ```
 
+For a delayed token the control object also carries `"delay_ms": 5000`; the key
+is omitted when the delay is zero, so sudden-death and increment payloads keep
+their existing bytes.
+
 Both seats sign this payload with `H("sccp/v1/certificate", …)`:
 
 ```json
@@ -341,10 +350,12 @@ and `match_id` recomputes from the seats. Signing the certificate is what binds
 each seat's ML-DSA-65 key to the match, so a quantum attacker cannot impersonate
 a player for the moves that follow.
 
-The certificate commits to `time_control = {initial_ms, increment_ms}` and the
-signed payload covers it. Every match uses one protocol-fixed **10+0** control
-(`initial_ms = 600_000`, `increment_ms = 0`); matchmaking never offers or
-accepts a per-match choice. See section 8.4 for the timed-session API.
+The certificate commits to `time_control = {initial_ms, increment_ms}` plus a
+non-zero `delay_ms` when the token declares one, and the signed payload covers
+it. The control is chosen by the variant token: built-in variants default to
+sudden-death **10+0**, and a registered token fixes its own initial time and
+either an increment or a delay at registration. Matchmaking never accepts a
+different per-match choice. See section 8.4 for the timed-session API.
 
 ### 8.2 Result attestation
 
@@ -381,7 +392,8 @@ signature bytes against the registered keys.
 A transcript PGN is the game plus the required tags of section 3.1, with
 `White`/`Black` = seat addresses, `MatchID`, `Epoch`, `RoundNumber`,
 `SeatWhite`, `SeatBlack`, `EngineWhite`, `EngineBlack`, `OpeningID`,
-`OpeningHash`, `TimeControl = <initial>+<increment>` and `Rules = chess`.
+`OpeningHash`, `TimeControl = <initial>+<increment>` (or
+`<initial>+<delay>d` for a delayed token) and `Rules = chess`.
 `Termination` and `Result` come from the result attestation. The opening prefix
 is included in the move list. A `time_forfeit` PGN without a matching
 `TimeControl` tag is rejected before the clock evidence is considered.
@@ -390,9 +402,10 @@ is included in the move list. A `time_forfeit` PGN without a matching
 
 The relay is untrusted. It derives the round from public data and stores
 signatures; it never signs a result. It does keep the clock: every session runs
-the fixed **10+0** control (`TIMED_SESSIONS` in `sccp.miner.matchmaker`), charged
-from the relay's own monotonic clock, and the receipts it issues are the evidence
-the chain's bonded claim lifecycle (section 10.4) settles.
+the control the variant token declares (see `time_control_for` in
+`sccp.protocol.clocks`), charged from the relay's own monotonic clock, and the
+receipts it issues are the evidence the chain's bonded claim lifecycle
+(section 10.4) settles.
 
 Timed sessions work like this:
 
@@ -402,8 +415,10 @@ Timed sessions work like this:
   carry `clock_ms`, but it is display data: the relay ignores it and recomputes
   from its own source.
 - A move is checked for turn and SAN legality *before* the clock is charged, so
-  an illegal move costs no time. A charge is `elapsed - lag_grace_ms` (floored at
-  zero) plus the increment, applied to the mover only.
+  an illegal move costs no time. A charge is
+  `max(0, elapsed - lag_grace_ms - delay_ms)` (floored at zero) plus the
+  increment, applied to the mover only. A delay is free time at the start of the
+  turn; unused delay is not carried forward.
 - A move arriving after the mover's clock reached zero is refused and the
   session is flagged instead. The flag ends the game whether or not the losing
   seat ever answers, so a stall cannot deny the win.
@@ -815,7 +830,7 @@ the one scheme, not a second way to spend.
 | --- | --- | --- |
 | `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
 | `register` | `public_key`, `endpoint`, `engine`, `bond`, `variant`? | locks `bond >= min_bond`, stores key/endpoint/engine and the chosen variant (`standard` when omitted), sets `registered_until_epoch = epoch + registration_epochs`; refused while banned, and a miner already registered for a different variant must unregister first |
-| `register_token` | `variant`, `ruleset`, `symbol`, `display_name`, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `public_key`* | adds an immutable variant token; `variant` must be a new lowercase slug, `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {variant, symbol, decimals, ruleset})` must be unused; an omitted `opening_book` defaults to the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval` |
+| `register_token` | `variant`, `ruleset`, `symbol`, `display_name`, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `public_key`* | adds an immutable variant token; `variant` must be a new lowercase slug, `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {variant, symbol, decimals, ruleset})` must be unused; an omitted `opening_book` defaults to the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; the clock fields must be whole seconds and use an increment or a delay, not both |
 | `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
 | `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
 | `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |

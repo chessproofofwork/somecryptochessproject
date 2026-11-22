@@ -97,12 +97,24 @@ supply:
 | `--min-plies` | `20` | Shorter games do not earn the token. |
 | `--max-games-per-block` | `1` | Games of this token a block may settle, as served by the node. |
 | `--opening-book` | *(omit)* | Defaults to the network's real `book_version`. |
+| `--time-control` | *(omit)* | Whole-second PGN clock: `600+0` sudden death, `600+5` increment, or `300+5d` delay. |
 
-The example omits two clock flags that also become immutable:
-`--time-control-initial-ms` (default `600000`, ten minutes) and
-`--time-control-increment-ms` (default `0`). Both must be whole seconds. Set
-them if the token's games should have a different clock from the network
-variant.
+### Choose the clock
+
+The clock is fixed at registration. The simplest form is one PGN-style
+`--time-control` tag, in whole seconds:
+
+| Mode | Example | Meaning |
+| --- | --- | --- |
+| Sudden death | `--time-control 600+0` | Ten minutes each, no bonus. |
+| Increment (Fischer) | `--time-control 600+5` | Five seconds are added after every move. |
+| Delay | `--time-control 300+5d` | The first five seconds of every turn are free; unused delay is not carried. |
+
+A delay and an increment are mutually exclusive. If you prefer explicit
+millisecond flags, use `--time-control-initial-ms`,
+`--time-control-increment-ms` and `--time-control-delay-ms` instead; they cannot
+be combined with `--time-control`. All values must be whole seconds, and the
+worst case must fit the protocol's one-day clock ceiling.
 
 Two supply modes are possible:
 
@@ -181,11 +193,13 @@ sccp dex register-token \
     --halving-interval 210000 \
     --min-plies 20 \
     --max-games-per-block 1 \
+    --time-control 600+0 \
     --node "$NODE"
 ```
 
 ```text
 registered token dragonchess (DRG) as asset <64-hex-asset-id>
+time control: 600+0
 txid: <txid>
 ```
 
@@ -211,6 +225,7 @@ sccp --json dex register-token \
     --halving-interval 210000 \
     --min-plies 20 \
     --max-games-per-block 1 \
+    --time-control 600+0 \
     --node "$NODE" \
     | tee "$HOME/.sccp/dragonchess-registration.json"
 ```
@@ -229,7 +244,8 @@ sccp --json dex register-token \
   "symbol": "DRG",
   "ruleset": "standard",
   "initial_supply": 10000000000,
-  "subsidy": 5000000000
+  "subsidy": 5000000000,
+  "time_control": {"initial_ms": 600000, "increment_ms": 0}
 }
 ```
 
@@ -249,6 +265,7 @@ built. The common refusals are:
 | `asset id ... is already registered` | The name, symbol, decimals and ruleset hash to an existing token. Change one of them. |
 | `payload field 'variant' must be a lowercase slug...` | The name has spaces, uppercase letters or an unsupported character. |
 | `invalid token parameters` | A value violates the protocol, for example `min_plies` above the network maximum or `max_supply` without `halving_interval`. |
+| `uses an increment or a delay, not both` | A clock cannot carry both bonus modes. Pick one, or set both to zero. |
 | `initial_supply ... exceeds the ... supply cap` | The initial mint is larger than `max_supply`. |
 | `cannot pay the ... ZQWX fee` | The registration is paid in native ZQWX; the token balance does not exist yet. |
 

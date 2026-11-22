@@ -216,6 +216,14 @@ def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
     seat, so the colour assignment is covered without ambiguity. ``network`` is
     included so a certificate can never be replayed on another chain.
     """
+    control_payload: dict[str, int] = {
+        "initial_ms": cert.time_control.initial_ms,
+        "increment_ms": cert.time_control.increment_ms,
+    }
+    # Keep the v1 payload byte-for-byte unchanged for increment and sudden-death
+    # controls; a delay is added only when the token actually declares one.
+    if cert.time_control.delay_ms:
+        control_payload["delay_ms"] = cert.time_control.delay_ms
     payload: dict[str, object] = {
         "network": cert.network,
         "match_id": cert.match_id,
@@ -224,10 +232,7 @@ def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
         "seats": sorted((cert.white, cert.black)),
         "colors": {"white": cert.white, "black": cert.black},
         "opening_hash": cert.opening.hash,
-        "time_control": {
-            "initial_ms": cert.time_control.initial_ms,
-            "increment_ms": cert.time_control.increment_ms,
-        },
+        "time_control": control_payload,
         "engine_fingerprints": {
             "white": cert.engine_white,
             "black": cert.engine_black,

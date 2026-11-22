@@ -168,6 +168,7 @@ def test_activation_starts_both_clocks_at_the_fixed_control(signed_match: Any) -
     assert view["time_control"] == {
         "initial_ms": FIXED_TIME_CONTROL.initial_ms,
         "increment_ms": FIXED_TIME_CONTROL.increment_ms,
+        "delay_ms": FIXED_TIME_CONTROL.delay_ms,
     }
     assert view["white_ms"] == FIXED_TIME_CONTROL.initial_ms
     assert view["black_ms"] == FIXED_TIME_CONTROL.initial_ms

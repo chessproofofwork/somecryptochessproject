@@ -25,6 +25,7 @@ from sccp.chess.rulesets import CHESS960_VARIANT, ruleset_for
 from sccp.chess.variants import board_for_variant, normalise_start_fen
 from sccp.config import STANDARD_VARIANT, NetworkParams
 from sccp.errors import GameError
+from sccp.protocol.clocks import time_control_for, time_control_tag
 
 EVENT_TAG: Final = "sccp match"
 RULES_TAG: Final = "chess"
@@ -157,10 +158,7 @@ def play_game(
     canonical_start = normalise_start_fen(start_fen, variant)
     board = board_for_variant(variant, canonical_start)
     variant_params = params.variant(variant)
-    time_control = (
-        f"{variant_params.time_control_initial_ms // 1000}"
-        f"+{variant_params.time_control_increment_ms // 1000}"
-    )
+    time_control = time_control_tag(time_control_for(variant_params))
     san_moves: list[str] = []
     opening_moves = opening.moves if isinstance(opening, OpeningLine) else tuple(opening or ())
 

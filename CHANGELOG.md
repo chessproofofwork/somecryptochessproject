@@ -7,6 +7,17 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **Token clocks support increment, delay and sudden death.** A custom token can
+  now declare `time_control_delay_ms` alongside the initial time and increment.
+  Delay is free time at the start of every turn (`300+5d` in a PGN), increment
+  adds time after every move (`300+5`), and `300+0` is sudden death; a control
+  uses one bonus mode or the other, never both. `sccp dex register-token`
+  accepts a single `--time-control 300+5d` tag as well as the three millisecond
+  flags, and the node API, certificate payload, clock receipts, timeout
+  arithmetic, relay, miners and explorer all carry the chosen control.
+
 ### Changed
 
 - **The mainnet 2-bps premine moved to a fresh key before launch.** The single

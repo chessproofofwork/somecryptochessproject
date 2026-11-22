@@ -128,6 +128,20 @@ describe("the browser verifier", () => {
     expect(verdict.checks).toHaveLength(14);
   });
 
+  it("rejects a certificate clock that differs from the token's control", () => {
+    const verdict = verifyProof(proof, {
+      ...context,
+      params: {
+        ...proofParams,
+        time_controls: {
+          [proof.variant]: { initial_ms: 600_000, increment_ms: 5_000 },
+        },
+      },
+    });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.checks.find((check) => check.rule === "time control")?.ok).toBe(false);
+  });
+
   it("catches a wrong low-ply flag", () => {
     const verdict = verifyProof({ ...proof, low_ply: !proof.low_ply }, context);
     expect(verdict.ok).toBe(false);

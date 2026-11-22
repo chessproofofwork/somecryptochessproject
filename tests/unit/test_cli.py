@@ -2376,6 +2376,62 @@ def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
     assert tx.payload["initial_supply"] == 100 * UNITS_PER_COIN
     assert tx.payload["max_supply"] == 21_000_000
     assert tx.payload["halving_interval"] == 210_000
+    assert tx.payload["time_control_initial_ms"] == 600_000
+    assert tx.payload["time_control_increment_ms"] == 0
+    assert tx.payload["time_control_delay_ms"] == 0
+    assert payload["time_control"] == {"initial_ms": 600_000, "increment_ms": 0}
+
+
+def test_dex_register_token_accepts_a_pgn_time_control(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    key = tmp_path / "issuer-delay.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    node_accounts[address] = account_document(address, spendable=200 * UNITS_PER_COIN, nonce=7)
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(tmp_path / "no-chain"),
+            "dex",
+            "register-token",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--name",
+            "delaychess",
+            "--ruleset",
+            "standard",
+            "--symbol",
+            "DLY",
+            "--time-control",
+            "300+5d",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["time_control"] == {
+        "initial_ms": 300_000,
+        "increment_ms": 0,
+        "delay_ms": 5_000,
+    }
+    assert len(recorded_node) == 1
+    assert recorded_node[0].payload["time_control_initial_ms"] == 300_000
+    assert recorded_node[0].payload["time_control_increment_ms"] == 0
+    assert recorded_node[0].payload["time_control_delay_ms"] == 5_000
 
 
 def test_bridge_secret_prints_a_matching_pair() -> None:

@@ -14,7 +14,6 @@ result the board never reached.
 from __future__ import annotations
 
 import io
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -36,8 +35,8 @@ from sccp.chess.variants import (
     variant_rules,
 )
 from sccp.config import NetworkParams, VariantParams
-from sccp.errors import ConfigError, PgnValidationError
-from sccp.protocol.models import MAX_CLOCK_MS, MAX_PLIES_LIMIT
+from sccp.errors import ClockError, ConfigError, PgnValidationError
+from sccp.protocol.clocks import time_control_for, time_control_from_tag, time_control_tag
 from sccp.serialization import Domain, domain_hex
 
 RULES_VALUE: Final = "chess"
@@ -72,8 +71,6 @@ REQUIRED_TAGS: Final[tuple[str, ...]] = (
 _PROOF_TERMINATIONS: Final[frozenset[str]] = frozenset(
     {"checkmate", "draw", "resignation", "time_forfeit"}
 )
-
-_TIME_CONTROL_PATTERN: Final = re.compile(r"(?P<initial>[0-9]+)\+(?P<increment>[0-9]+)\Z")
 
 
 class GameResult(StrEnum):
@@ -306,21 +303,11 @@ def _time_control_tag(tags: Mapping[str, str]) -> str | None:
     raw = tags.get("TimeControl", "")
     if not raw:
         return None
-    match = _TIME_CONTROL_PATTERN.fullmatch(raw)
-    if match is None:
-        raise PgnValidationError(
-            f"tag TimeControl is {raw!r}; expected whole seconds as 'initial+increment'"
-        )
-    initial = int(match.group("initial"))
-    increment = int(match.group("increment"))
-    if initial < 1:
-        raise PgnValidationError("tag TimeControl must have a positive initial time")
-    worst_case = initial * 1000 + increment * 1000 * MAX_PLIES_LIMIT
-    if worst_case > MAX_CLOCK_MS:
-        raise PgnValidationError(
-            f"tag TimeControl {raw!r} exceeds MAX_CLOCK_MS for max_plies={MAX_PLIES_LIMIT}"
-        )
-    return f"{initial}+{increment}"
+    try:
+        control = time_control_from_tag(raw)
+    except ClockError as exc:
+        raise PgnValidationError(f"tag TimeControl is {raw!r}: {exc}") from None
+    return time_control_tag(control)
 
 
 def _check_expectations(
@@ -533,10 +520,7 @@ def validate_pgn(
 
     numbers = {name: _int_tag(tags, name) for name in ("Epoch", "RoundNumber", "OpeningID")}
     time_control = _time_control_tag(tags)
-    declared_control = (
-        f"{variant_params.time_control_initial_ms // 1000}"
-        f"+{variant_params.time_control_increment_ms // 1000}"
-    )
+    declared_control = time_control_tag(time_control_for(variant_params))
     if time_control != declared_control:
         raise PgnValidationError(
             f"tag TimeControl is {time_control!r}, but variant {variant!r} declares "

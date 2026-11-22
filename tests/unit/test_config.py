@@ -83,8 +83,8 @@ def test_clock_and_timeout_parameters() -> None:
 
 def test_each_variant_declares_its_own_time_control() -> None:
     """A token controls its clock independently of the network default."""
-    assert TESTNET.variant("standard").time_control == (600_000, 0)
-    assert TESTNET.variant("chess960").time_control == (600_000, 0)
+    assert TESTNET.variant("standard").time_control == (600_000, 0, 0)
+    assert TESTNET.variant("chess960").time_control == (600_000, 0, 0)
 
     faster_chess960 = CHESS960.model_copy(
         update={"time_control_initial_ms": 300_000, "time_control_increment_ms": 5_000}
@@ -95,8 +95,19 @@ def test_each_variant_declares_its_own_time_control() -> None:
             "variants": [faster_chess960.model_dump()],
         }
     )
-    assert params.variant("chess960").time_control == (300_000, 5_000)
-    assert params.variant("standard").time_control == (600_000, 0)
+    assert params.variant("chess960").time_control == (300_000, 5_000, 0)
+    assert params.variant("standard").time_control == (600_000, 0, 0)
+
+    delayed_chess960 = CHESS960.model_copy(
+        update={"time_control_initial_ms": 180_000, "time_control_delay_ms": 2_000}
+    )
+    params = NetworkParams(
+        **{
+            **DEVNET.model_dump(),
+            "variants": [delayed_chess960.model_dump()],
+        }
+    )
+    assert params.variant("chess960").time_control == (180_000, 0, 2_000)
 
     faster_standard = VariantParams(
         name="standard",
@@ -114,7 +125,7 @@ def test_each_variant_declares_its_own_time_control() -> None:
             "variants": [faster_standard.model_dump()],
         }
     )
-    assert params.variant("standard").time_control == (180_000, 2_000)
+    assert params.variant("standard").time_control == (180_000, 2_000, 0)
 
 
 @pytest.mark.parametrize(
@@ -122,9 +133,11 @@ def test_each_variant_declares_its_own_time_control() -> None:
     [
         {"time_control_initial_ms": 500},  # PGN tags carry whole seconds only
         {"time_control_increment_ms": 1_500},
+        {"time_control_delay_ms": 1_500},
         {"time_control_initial_ms": 86_400_001},
         {"time_control_initial_ms": 0},
         {"time_control_initial_ms": 86_000_000, "time_control_increment_ms": 1_000},
+        {"time_control_increment_ms": 1_000, "time_control_delay_ms": 1_000},
     ],
 )
 def test_variant_time_controls_are_bounded_and_lossless(override: dict[str, Any]) -> None:

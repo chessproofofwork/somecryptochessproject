@@ -582,6 +582,16 @@ function Table({
         network_id: network,
         rounds_per_epoch: params.rounds_per_epoch,
         min_plies: minPlies,
+        time_controls: Object.fromEntries(
+          params.variants.map((variant) => [
+            variant.name,
+            {
+              initial_ms: variant.time_control_initial_ms,
+              increment_ms: variant.time_control_increment_ms,
+              delay_ms: variant.time_control_delay_ms ?? 0,
+            },
+          ]),
+        ),
       };
       const built = buildWinProof({
         certificate: transcript.certificate,

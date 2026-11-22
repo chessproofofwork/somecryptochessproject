@@ -681,6 +681,7 @@ class NodeService:
             opening_book=variant.opening_book,
             time_control_initial_ms=variant.time_control_initial_ms,
             time_control_increment_ms=variant.time_control_increment_ms,
+            time_control_delay_ms=variant.time_control_delay_ms,
             owner=record.owner,
             registered_at_height=record.registered_at_height,
             minted=self.chain.state.minted_assets.get(variant.asset, 0),

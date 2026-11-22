@@ -383,7 +383,7 @@ as zero; a fresh replay from genesis counts every historical slash.
 | `htlc_claim` | new | `{htlc_id, preimage, public_key}` |
 | `htlc_refund` | new | `{htlc_id, public_key}` |
 | `register` | extended | `{public_key, endpoint, engine, bond, variant?}`; `variant` defaults to `standard` and is fixed until the account unregisters |
-| `register_token` | new | `{variant, ruleset, symbol, display_name, subsidy, decimals?, initial_supply?, halving_interval?, max_supply?, min_plies?, max_games_per_block?, opening_book?, time_control_initial_ms?, time_control_increment_ms?, public_key}`; adds an immutable variant token and a derived asset id |
+| `register_token` | new | `{variant, ruleset, symbol, display_name, subsidy, decimals?, initial_supply?, halving_interval?, max_supply?, min_plies?, max_games_per_block?, opening_book?, time_control_initial_ms?, time_control_increment_ms?, time_control_delay_ms?, public_key}`; adds an immutable variant token and a derived asset id |
 | `availability` | unchanged | `{epoch, max_games, commitment, public_key}`; the variant comes from the account, so a registration plays one discipline |
 
 Workstream B shipped with **no `create_asset` transaction**: the asset set was

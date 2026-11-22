@@ -34,6 +34,9 @@ DEFAULT_TIME_CONTROL_INITIAL_MS: Final = 600_000
 DEFAULT_TIME_CONTROL_INCREMENT_MS: Final = 0
 """Default per-move increment for a network that does not override it: sudden death."""
 
+DEFAULT_TIME_CONTROL_DELAY_MS: Final = 0
+"""Default per-move delay for a network that does not override it: no delay."""
+
 CHESS960_ASSET_ID: Final = domain_hex(
     Domain.ASSET,
     {
@@ -157,6 +160,12 @@ class VariantParams(BaseModel):
         default=DEFAULT_TIME_CONTROL_INCREMENT_MS, ge=0, le=MAX_CLOCK_MS
     )
     """Time added after every move, in milliseconds."""
+    time_control_delay_ms: int = Field(default=DEFAULT_TIME_CONTROL_DELAY_MS, ge=0, le=MAX_CLOCK_MS)
+    """Per-move delay, in milliseconds: time that does not count down on each turn.
+
+    A delay is mutually exclusive with an increment. ``0`` means no delay, so
+    ``increment_ms == delay_ms == 0`` is sudden death.
+    """
 
     @property
     def native(self) -> bool:
@@ -164,9 +173,13 @@ class VariantParams(BaseModel):
         return self.asset is None
 
     @property
-    def time_control(self) -> tuple[int, int]:
-        """``(initial_ms, increment_ms)`` for this variant's games."""
-        return self.time_control_initial_ms, self.time_control_increment_ms
+    def time_control(self) -> tuple[int, int, int]:
+        """``(initial_ms, increment_ms, delay_ms)`` for this variant's games."""
+        return (
+            self.time_control_initial_ms,
+            self.time_control_increment_ms,
+            self.time_control_delay_ms,
+        )
 
     @model_validator(mode="after")
     def _check_invariants(self) -> Self:
@@ -185,13 +198,20 @@ class VariantParams(BaseModel):
             raise ConfigError(f"variant {self.name!r} needs a derived asset id")
         if (self.max_supply is None) != (self.halving_interval is None):
             raise ConfigError("a variant sets max_supply and halving_interval together")
-        if self.time_control_initial_ms % 1000 or self.time_control_increment_ms % 1000:
+        if (
+            self.time_control_initial_ms % 1000
+            or self.time_control_increment_ms % 1000
+            or self.time_control_delay_ms % 1000
+        ):
             raise ConfigError(
                 "variant time controls must be whole seconds, because the PGN "
                 "TimeControl tag is lossless only in whole seconds"
             )
+        if self.time_control_increment_ms and self.time_control_delay_ms:
+            raise ConfigError(f"variant {self.name!r} uses an increment or a delay, not both")
         # A clock never exceeds one day even if the game runs to the protocol's
-        # ply ceiling, so ``mm:ss`` formatting cannot overflow.
+        # ply ceiling, so ``mm:ss`` formatting cannot overflow. A delay never
+        # grows a clock, so only the increment contributes to the upper bound.
         worst_case = self.time_control_initial_ms + self.time_control_increment_ms * MAX_PLIES_LIMIT
         if worst_case > MAX_CLOCK_MS:
             raise ConfigError(
@@ -377,6 +397,11 @@ class NetworkParams(BaseModel):
                 supplied_standard.time_control_increment_ms
                 if supplied_standard is not None
                 else DEFAULT_TIME_CONTROL_INCREMENT_MS
+            ),
+            time_control_delay_ms=(
+                supplied_standard.time_control_delay_ms
+                if supplied_standard is not None
+                else DEFAULT_TIME_CONTROL_DELAY_MS
             ),
         )
         variants = (

@@ -212,6 +212,9 @@ def test_token_routes_name_tokens_by_name_asset_and_unique_symbol() -> None:
     assert by_name["asset"] == alpha.variant.asset
     assert by_name["symbol"] == "AAA"
     assert by_name["ruleset"] == "standard"
+    assert by_name["time_control_initial_ms"] == 600_000
+    assert by_name["time_control_increment_ms"] == 0
+    assert by_name["time_control_delay_ms"] == 0
     assert by_name["owner"] == FAUCET_ADDRESS
     assert by_name["registered_at_height"] == 4
     assert by_name["minted"] == 99

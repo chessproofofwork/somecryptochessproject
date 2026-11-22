@@ -19,6 +19,7 @@ import type {
 /** The node's fallback clock for networks defined before token time controls. */
 const DEFAULT_TIME_CONTROL_INITIAL_MS = 600_000;
 const DEFAULT_TIME_CONTROL_INCREMENT_MS = 0;
+const DEFAULT_TIME_CONTROL_DELAY_MS = 0;
 
 /** One tradeable token, native ZQWX included. */
 export interface Token {
@@ -36,6 +37,7 @@ export interface Token {
   minPlies: number;
   timeControlInitialMs: number;
   timeControlIncrementMs: number;
+  timeControlDelayMs: number;
 }
 
 const ZQWX: Token = {
@@ -51,6 +53,7 @@ const ZQWX: Token = {
   minPlies: 0,
   timeControlInitialMs: DEFAULT_TIME_CONTROL_INITIAL_MS,
   timeControlIncrementMs: DEFAULT_TIME_CONTROL_INCREMENT_MS,
+  timeControlDelayMs: DEFAULT_TIME_CONTROL_DELAY_MS,
 };
 
 /** Project one network variant onto the token the UI spends and displays. */
@@ -70,6 +73,7 @@ export function tokenForVariantParams(variant: VariantParams): Token {
       variant.time_control_initial_ms ?? DEFAULT_TIME_CONTROL_INITIAL_MS,
     timeControlIncrementMs:
       variant.time_control_increment_ms ?? DEFAULT_TIME_CONTROL_INCREMENT_MS,
+    timeControlDelayMs: variant.time_control_delay_ms ?? DEFAULT_TIME_CONTROL_DELAY_MS,
   };
 }
 

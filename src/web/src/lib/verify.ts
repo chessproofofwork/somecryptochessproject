@@ -14,10 +14,11 @@
  * single opaque "invalid".
  */
 
-import type { WinProof } from "../types";
+import type { TimeControl, WinProof } from "../types";
 import { DOMAINS, fromHex } from "./canonical";
 import { certificatePayload, openingHash } from "./certificate";
 import { certificateMoveRoot } from "./commitment";
+import { formatTimeControl } from "./format";
 import { canonicalGameHash, matchId, resultPayload, whiteSeat } from "./protocol";
 import { proofId } from "./proof";
 import { VariantGame } from "./variantGame";
@@ -26,6 +27,8 @@ export interface VerifyParams {
   network_id: string;
   rounds_per_epoch: number;
   min_plies: number;
+  /** The token's declared control, keyed by variant name, when available. */
+  time_controls?: Record<string, TimeControl>;
 }
 
 /**
@@ -66,8 +69,9 @@ function require(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
 }
 
-/** The fixed v1 control: 10 minutes, no increment. */
-const FIXED_INITIAL_MS = 600_000;
+/** Protocol-wide clock bounds, mirrored from `sccp/config.py`. */
+const MAX_CLOCK_MS = 86_400_000;
+const MAX_PLIES = 1_000;
 
 /**
  * Run every locally-checkable proof rule.
@@ -151,11 +155,33 @@ export function verifyProof(
 
   run("time control", () => {
     const control = proof.certificate.time_control;
+    const increment = control.increment_ms ?? 0;
+    const delay = control.delay_ms ?? 0;
+    require(Number.isInteger(control.initial_ms) && control.initial_ms >= 1_000, "initial time is invalid");
+    require(control.initial_ms % 1_000 === 0, "initial time is not whole seconds");
+    require(Number.isInteger(increment) && increment >= 0, "increment is invalid");
+    require(Number.isInteger(delay) && delay >= 0, "delay is invalid");
+    require(increment % 1_000 === 0 && delay % 1_000 === 0, "clock bonus is not whole seconds");
+    require(!(increment && delay), "a control uses an increment or a delay, not both");
     require(
-      control.initial_ms === FIXED_INITIAL_MS && control.increment_ms === 0,
-      `control is ${control.initial_ms}+${control.increment_ms}, v1 fixes 600000+0`,
+      control.initial_ms + increment * MAX_PLIES <= MAX_CLOCK_MS,
+      `control exceeds the ${MAX_CLOCK_MS} ms clock ceiling`,
     );
-    return "600000+0";
+    const declared = context.params.time_controls?.[proof.variant];
+    if (declared !== undefined) {
+      require(
+        declared.initial_ms === control.initial_ms &&
+          (declared.increment_ms ?? 0) === increment &&
+          (declared.delay_ms ?? 0) === delay,
+        `the certificate clock does not match the token's declared ` +
+          `${formatTimeControl(
+            declared.initial_ms,
+            declared.increment_ms,
+            declared.delay_ms ?? 0,
+          )}`,
+      );
+    }
+    return formatTimeControl(control.initial_ms, increment, delay);
   });
 
   run("opening commitment", () => {

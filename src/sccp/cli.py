@@ -55,6 +55,7 @@ from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
 from sccp.chess.variants import is_chess960
 from sccp.config import (
+    DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     NetworkParams,
@@ -89,7 +90,8 @@ from sccp.node.app import create_app as create_node_app
 from sccp.node.app import web_dist_root
 from sccp.node.miner import NodeMiner, proof_summary
 from sccp.node.service import NodeService, sync_peers
-from sccp.protocol.models import Transaction, WinProof
+from sccp.protocol.clocks import time_control_from_tag, time_control_tag
+from sccp.protocol.models import TimeControl, Transaction, WinProof
 from sccp.protocol.verification import (
     ProofContext,
     context_from_document,
@@ -2365,14 +2367,45 @@ def dex_register_token(
     decimals: Annotated[
         int, typer.Option("--decimals", help="Decimal places, fixed at registration.")
     ] = 8,
+    time_control: Annotated[
+        str | None,
+        typer.Option(
+            "--time-control",
+            help=(
+                "PGN clock tag in whole seconds: '600+0' sudden death, '600+5' "
+                "increment, or '600+5d' delay. Cannot be combined with the raw "
+                "millisecond flags."
+            ),
+        ),
+    ] = None,
     time_control_initial_ms: Annotated[
-        int,
-        typer.Option("--time-control-initial-ms", help="Starting clock, in milliseconds."),
-    ] = DEFAULT_TIME_CONTROL_INITIAL_MS,
+        int | None,
+        typer.Option(
+            "--time-control-initial-ms",
+            help=f"Starting clock, in milliseconds (default: {DEFAULT_TIME_CONTROL_INITIAL_MS}).",
+        ),
+    ] = None,
     time_control_increment_ms: Annotated[
-        int,
-        typer.Option("--time-control-increment-ms", help="Per-move increment, in milliseconds."),
-    ] = DEFAULT_TIME_CONTROL_INCREMENT_MS,
+        int | None,
+        typer.Option(
+            "--time-control-increment-ms",
+            help=(
+                "Fischer increment added after every move, in milliseconds "
+                f"(default: {DEFAULT_TIME_CONTROL_INCREMENT_MS})."
+            ),
+        ),
+    ] = None,
+    time_control_delay_ms: Annotated[
+        int | None,
+        typer.Option(
+            "--time-control-delay-ms",
+            help=(
+                "Per-move delay that does not count down, in milliseconds "
+                f"(default: {DEFAULT_TIME_CONTROL_DELAY_MS}). Cannot be combined "
+                "with an increment."
+            ),
+        ),
+    ] = None,
     fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
     node: Annotated[
         str | None, typer.Option("--node", help="Node that receives the transaction.")
@@ -2384,6 +2417,35 @@ def dex_register_token(
         _fail("--initial-supply cannot be negative", code=2)
     if subsidy <= 0:
         _fail("--subsidy must be positive", code=2)
+    raw_clock = (time_control_initial_ms, time_control_increment_ms, time_control_delay_ms)
+    if time_control is not None:
+        if any(value is not None for value in raw_clock):
+            _fail(
+                "--time-control cannot be combined with --time-control-initial-ms, "
+                "--time-control-increment-ms or --time-control-delay-ms",
+                code=2,
+            )
+        control = _run(lambda: time_control_from_tag(time_control))
+    else:
+        control = _run(
+            lambda: TimeControl(
+                initial_ms=(
+                    DEFAULT_TIME_CONTROL_INITIAL_MS
+                    if time_control_initial_ms is None
+                    else time_control_initial_ms
+                ),
+                increment_ms=(
+                    DEFAULT_TIME_CONTROL_INCREMENT_MS
+                    if time_control_increment_ms is None
+                    else time_control_increment_ms
+                ),
+                delay_ms=(
+                    DEFAULT_TIME_CONTROL_DELAY_MS
+                    if time_control_delay_ms is None
+                    else time_control_delay_ms
+                ),
+            )
+        )
     params = _resolve_network(ctx, network)
     wallet = _wallet_for(ctx, key, network)
     with _account_source(ctx, params, wallet.address, node) as accounts:
@@ -2402,12 +2464,19 @@ def dex_register_token(
                 min_plies=min_plies,
                 max_games_per_block=max_games_per_block,
                 opening_book=opening_book,
-                time_control_initial_ms=time_control_initial_ms,
-                time_control_increment_ms=time_control_increment_ms,
+                time_control_initial_ms=control.initial_ms,
+                time_control_increment_ms=control.increment_ms,
+                time_control_delay_ms=control.delay_ms,
                 fee=fee,
             )
         )
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    control_payload = {
+        "initial_ms": control.initial_ms,
+        "increment_ms": control.increment_ms,
+    }
+    if control.delay_ms:
+        control_payload["delay_ms"] = control.delay_ms
     payload = {
         **_transaction_summary(tx, receipt),
         "variant": name,
@@ -2416,11 +2485,13 @@ def dex_register_token(
         "ruleset": ruleset,
         "initial_supply": coins_to_units(initial_supply, decimals=decimals),
         "subsidy": coins_to_units(subsidy, decimals=decimals),
+        "time_control": control_payload,
     }
     if _options(ctx).json_output:
         _echo_json(payload)
         return
     typer.echo(f"registered token {name} ({symbol}) as asset {payload['asset']}")
+    typer.echo(f"time control: {time_control_tag(control)}")
     typer.echo(f"txid: {payload['txid']}")
 
 

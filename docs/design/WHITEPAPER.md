@@ -638,11 +638,12 @@ TimeControl, Rules
 `Rules` must match the variant the proof names: `chess` for a standard game, or
 `chess960` for a Chess960 game, whose PGN also carries `SetUp "1"`, a
 Shredder-FEN `FEN` and `Variant "Chess960"`. `TimeControl` is
-`<initial>+<increment>` in seconds;
-the v1 policy uses `10+0`. `MatchID`, epoch, round, seats, engines, opening id,
-opening hash and time control are checked against the match certificate, so a
-proof cannot silently describe a different game. Variations are rejected when a
-certificate is supplied.
+`<initial>+<increment>` in seconds for a Fischer clock, `<initial>+<delay>d` for
+a delay clock, or `<initial>+0` for sudden death. The built-in variants use
+`10+0`, and a registered token fixes its own clock at registration. `MatchID`,
+epoch, round, seats, engines, opening id, opening hash and time control are
+checked against the match certificate, so a proof cannot silently describe a
+different game. Variations are rejected when a certificate is supplied.
 
 ### 8.3 Canonical game identity
 
@@ -943,10 +944,13 @@ A `MatchCertificate` binds:
 Both seats sign the canonical certificate payload. The relay refuses to start
 until both signatures verify. The signatures are over the certificate, not over
 a relay-generated session token, so the same certificate can be checked offline.
-The fixed v1 control is 10 minutes per seat with no increment:
+The built-in v1 control is 10 minutes per seat with no bonus, but a registered
+token fixes its own clock. The three protocol forms are:
 
 ```text
-TimeControl(initial_ms = 600_000, increment_ms = 0)
+TimeControl(initial_ms = 600_000, increment_ms = 0)              # sudden death
+TimeControl(initial_ms = 600_000, increment_ms = 5_000)          # Fischer increment
+TimeControl(initial_ms = 600_000, delay_ms = 5_000)              # per-turn delay
 ```
 
 ### 11.3 Starting the clock

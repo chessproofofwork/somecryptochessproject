@@ -127,18 +127,24 @@ export function formatBytes(value: number): string {
 }
 
 /**
- * A variant's clock in the usual minutes-plus-seconds form, e.g. `10+0`.
+ * A variant's clock in the usual minutes-plus-bonus form, e.g. `10+0`.
  *
  * The protocol stores whole seconds; a control that is not a whole number of
- * minutes keeps up to two decimals (`1.5+0` for ninety seconds).
+ * minutes keeps up to two decimals (`1.5+0` for ninety seconds). A non-zero
+ * delay is printed with a `d` suffix (`10+5d`), matching the PGN tag.
  */
-export function formatTimeControl(initialMs: number, incrementMs = 0): string {
+export function formatTimeControl(
+  initialMs: number,
+  incrementMs = 0,
+  delayMs = 0,
+): string {
   const minutes = Math.max(0, initialMs / 60_000);
   const initial = Number.isInteger(minutes)
     ? String(minutes)
     : minutes.toFixed(2).replace(/\.?0+$/, "");
-  const increment = Math.max(0, Math.floor(incrementMs / 1_000));
-  return `${initial}+${increment}`;
+  const bonus = Math.max(0, Math.floor((delayMs || incrementMs) / 1_000));
+  const suffix = delayMs > 0 ? "d" : "";
+  return `${initial}+${bonus}${suffix}`;
 }
 
 /** A millisecond duration as a clock, e.g. `3:07`. */

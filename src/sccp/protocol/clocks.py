@@ -2,10 +2,12 @@
 
 A token declares its time control in :class:`~sccp.config.VariantParams`. A match
 starts with both clocks at that control's ``initial_ms``; only the side to move
-spends time. A move deducts ``max(0, elapsed - lag_grace_ms)`` from the mover and
-rejects the move when the result would be ``<= 0``. The relay is authoritative
-for live play; the on-chain verifier only sees the signed move stream and the
-witness receipts in :class:`~sccp.protocol.models.ClockEvidence`.
+spends time. A move deducts ``max(0, elapsed - lag_grace_ms - delay_ms)`` from
+the mover and adds the control's increment, if any. The move is rejected when
+the result would be ``<= 0``. A control with neither an increment nor a delay is
+sudden death. The relay is authoritative for live play; the on-chain verifier
+only sees the signed move stream and the witness receipts in
+:class:`~sccp.protocol.models.ClockEvidence`.
 :data:`FIXED_TIME_CONTROL` remains the historical default for callers that have
 no token parameters, but new code should pass the token's control explicitly.
 
@@ -26,6 +28,7 @@ import chess
 
 from sccp.config import (
     CLOCK_EVIDENCE_PLIES,
+    DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     VariantParams,
@@ -86,7 +89,9 @@ MAX_LAG_GRACE_MS: Final = 1_000
 
 OPPOSITE: Final[dict[Color, Color]] = {"white": "black", "black": "white"}
 
-_TIME_CONTROL_TAG_PATTERN: Final = re.compile(r"(?P<initial>[0-9]+)\+(?P<increment>[0-9]+)\Z")
+_TIME_CONTROL_TAG_PATTERN: Final = re.compile(
+    r"(?P<initial>[0-9]+)\+(?P<bonus>[0-9]+)(?P<delay>d)?\Z"
+)
 
 
 def opposite(seat: Color) -> Color:
@@ -94,11 +99,22 @@ def opposite(seat: Color) -> Color:
     return OPPOSITE[seat]
 
 
+def _deduction_ms(elapsed_ms: int, lag_grace_ms: int, control: TimeControl) -> int:
+    """The part of ``elapsed_ms`` charged to the mover.
+
+    A delay is free time at the start of every turn, so it is subtracted from
+    the elapsed time exactly like the relay's lag grace. A move made inside the
+    delay costs nothing; unused delay is not carried to the next turn.
+    """
+    return max(0, elapsed_ms - lag_grace_ms - control.delay_ms)
+
+
 def time_control_for(variant: VariantParams) -> TimeControl:
     """Build the protocol time control a token variant declares."""
     return TimeControl(
         initial_ms=variant.time_control_initial_ms,
         increment_ms=variant.time_control_increment_ms,
+        delay_ms=variant.time_control_delay_ms,
     )
 
 
@@ -113,6 +129,7 @@ def validate_time_control(
 
     ``required`` is the token-level control and takes precedence over the legacy
     ``require_fixed`` flag. Passing neither checks only the protocol bounds.
+    A delay never grows a clock, so the worst case uses the increment only.
     """
     expected = required
     fixed_only = require_fixed and required is None
@@ -123,6 +140,8 @@ def validate_time_control(
         raise ClockError(
             f"time control {control.model_dump()} is not the {declared} {expected.model_dump()}"
         )
+    if control.increment_ms and control.delay_ms:
+        raise ClockError("a time control uses an increment or a delay, not both")
     upper = control.initial_ms + control.increment_ms * max_plies
     if upper > MAX_CLOCK_MS:
         raise ClockError(
@@ -132,7 +151,14 @@ def validate_time_control(
 
 
 def time_control_tag(control: TimeControl) -> str:
-    """Render a control as a lossless PGN ``TimeControl`` tag (``"600+0"``)."""
+    """Render a control as a lossless PGN ``TimeControl`` tag.
+
+    ``600+5`` is an increment, ``600+5d`` is a delay, and ``600+0`` is sudden
+    death. The ``d`` suffix is what python-chess and common PGN tools use to
+    distinguish a delay from an increment of the same length.
+    """
+    if control.delay_ms:
+        return f"{control.initial_ms // 1000}+{control.delay_ms // 1000}d"
     return f"{control.initial_ms // 1000}+{control.increment_ms // 1000}"
 
 
@@ -142,17 +168,23 @@ def time_control_from_tag(tag: str) -> TimeControl:
     if match is None:
         raise ClockError(f"invalid TimeControl tag: {tag!r}")
     initial_seconds = int(match.group("initial"))
-    increment_seconds = int(match.group("increment"))
+    bonus_seconds = int(match.group("bonus"))
+    is_delay = match.group("delay") is not None
     if initial_seconds < 1:
         raise ClockError(f"invalid TimeControl tag: {tag!r}")
-    worst_case = initial_seconds * 1000 + increment_seconds * 1000 * MAX_PLIES_LIMIT
+    if is_delay and bonus_seconds == 0:
+        raise ClockError(f"invalid TimeControl tag: {tag!r}; a delay must be positive")
+    worst_case = initial_seconds * 1000
+    if not is_delay:
+        worst_case += bonus_seconds * 1000 * MAX_PLIES_LIMIT
     if worst_case > MAX_CLOCK_MS:
         raise ClockError(
             f"TimeControl tag {tag!r} exceeds MAX_CLOCK_MS for max_plies={MAX_PLIES_LIMIT}"
         )
     return TimeControl(
         initial_ms=initial_seconds * 1000,
-        increment_ms=increment_seconds * 1000,
+        increment_ms=0 if is_delay else bonus_seconds * 1000,
+        delay_ms=bonus_seconds * 1000 if is_delay else DEFAULT_TIME_CONTROL_DELAY_MS,
     )
 
 
@@ -234,14 +266,14 @@ class MatchClock:
         return max(0, now_ms - self.turn_started_at_ms)
 
     def remaining_ms(self, now_ms: int) -> dict[Color, int]:
-        """The remaining clocks after applying elapsed time and lag grace.
+        """The remaining clocks after applying elapsed time, lag grace and delay.
 
         A clock that is not running (never started, or stopped after the game
         ended) does not count down: its stored values are returned unchanged.
         """
         if not self.started:
             return {"white": self.white_ms, "black": self.black_ms}
-        deduction = max(0, self.elapsed_ms(now_ms) - self.lag_grace_ms)
+        deduction = _deduction_ms(self.elapsed_ms(now_ms), self.lag_grace_ms, self.control)
         current = self.white_ms if self.turn == "white" else self.black_ms
         remaining = max(0, current - deduction)
         if self.turn == "white":
@@ -257,7 +289,7 @@ class MatchClock:
         return self.current_remaining_ms(now_ms) <= 0
 
     def apply_move(self, now_ms: int) -> int:
-        """Deduct the mover's elapsed time, add increment and switch turns.
+        """Deduct the mover's elapsed time, apply delay/increment and switch turns.
 
         Returns the mover's remaining time after the move. Raises
         :class:`~sccp.errors.ClockError` when the move arrives at or after zero.
@@ -265,7 +297,7 @@ class MatchClock:
         if not self.started:
             raise ClockError("the match clock has not started")
         started_at = max(self.turn_started_at_ms, now_ms)
-        deduction = max(0, self.elapsed_ms(now_ms) - self.lag_grace_ms)
+        deduction = _deduction_ms(self.elapsed_ms(now_ms), self.lag_grace_ms, self.control)
         current = self.white_ms if self.turn == "white" else self.black_ms
         after = current - deduction
         if after <= 0:
@@ -779,7 +811,7 @@ def verify_clock_evidence(
                 raise ClockError("receipt changed the clock of the idle side")
         else:
             elapsed = receipt.received_at_ms - previous_received
-            deduction = max(0, elapsed - lag_grace_ms)
+            deduction = _deduction_ms(elapsed, lag_grace_ms, control)
             expected_after = running[mover_seat] - deduction + control.increment_ms
             if expected_after <= 0:
                 raise ClockError(
@@ -801,7 +833,7 @@ def verify_clock_evidence(
         final_elapsed = final.received_at_ms - previous_received
         if final_elapsed < 0:
             raise ClockError("flag receipt predates the last move receipt")
-        expected_flagged = running[flagged] - max(0, final_elapsed - lag_grace_ms)
+        expected_flagged = running[flagged] - _deduction_ms(final_elapsed, lag_grace_ms, control)
         if expected_flagged > 0:
             raise ClockError(
                 "flag receipt arrives before the flagged clock reaches zero "

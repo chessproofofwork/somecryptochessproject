@@ -45,6 +45,7 @@ const params = {
       opening_book: "none",
       time_control_initial_ms: 600_000,
       time_control_increment_ms: 0,
+      time_control_delay_ms: 3_000,
     },
   ],
 } as unknown as NetworkParams;
@@ -55,6 +56,7 @@ describe("tokens", () => {
     expect(tokens.map((token) => token.symbol)).toStrictEqual(["ZQWX", "C960"]);
     expect(tokenForAsset(tokens, "a".repeat(64))?.symbol).toBe("C960");
     expect(tokenForVariant(tokens, "chess960")?.symbol).toBe("C960");
+    expect(tokenForVariant(tokens, "chess960")?.timeControlDelayMs).toBe(3_000);
     expect(tokenForAsset(tokens, null)?.native).toBe(true);
   });
 

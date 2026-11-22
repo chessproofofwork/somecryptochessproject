@@ -66,7 +66,11 @@ export function TokenTable({
                 {variantLabel(token.variant)}
               </Text>
               <Text variant="bodyMedium" style={[styles.colTime, tableStyles.numeric]}>
-                {formatTimeControl(token.timeControlInitialMs, token.timeControlIncrementMs)}
+                {formatTimeControl(
+                  token.timeControlInitialMs,
+                  token.timeControlIncrementMs,
+                  token.timeControlDelayMs,
+                )}
               </Text>
               <Text variant="bodyMedium" style={styles.colTicker}>
                 {token.symbol}

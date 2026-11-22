@@ -505,6 +505,7 @@ class TokenView(ProtocolModel):
     opening_book: str = Field(min_length=1)
     time_control_initial_ms: int = Field(ge=1)
     time_control_increment_ms: int = Field(ge=0)
+    time_control_delay_ms: int = Field(ge=0)
     owner: str = Field(min_length=1)
     registered_at_height: int = Field(ge=0)
     minted: int = Field(ge=0)

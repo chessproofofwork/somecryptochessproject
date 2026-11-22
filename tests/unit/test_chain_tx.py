@@ -519,6 +519,42 @@ def test_register_token_rejects_a_bad_slug_and_an_impossible_issuance(
     assert _reason(no_halving, ledger) is TxFailure.SCHEMA
 
 
+def test_register_token_records_a_delay_and_rejects_a_mixed_bonus(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        name="delaychess",
+        ruleset="standard",
+        symbol="DLY",
+        display_name="Delay Chess",
+        subsidy=COINS,
+        time_control_initial_ms=180_000,
+        time_control_delay_ms=3_000,
+    )
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+    variant = ledger.variant("delaychess")
+    assert variant.time_control == (180_000, 0, 3_000)
+
+    mixed = _resigned(
+        tx.model_copy(
+            update={
+                "nonce": 1,
+                "payload": {
+                    **tx.payload,
+                    "variant": "mixedchess",
+                    "symbol": "MIX",
+                    "time_control_increment_ms": 2_000,
+                },
+            }
+        ),
+        alice,
+    )
+    assert _reason(mixed, ledger, height=HEIGHT + 1) is TxFailure.SCHEMA
+
+
 def test_txid_ignores_the_signature_and_tracks_the_body(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:

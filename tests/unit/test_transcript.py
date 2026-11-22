@@ -86,6 +86,15 @@ def test_certificate_payload_is_colour_and_network_bound(signed_match) -> None:
     }
     assert "start_signatures" not in payload
 
+    delayed = signed_match.certificate.model_copy(
+        update={"time_control": TimeControl(initial_ms=600_000, delay_ms=5_000)}
+    )
+    assert certificate_payload(delayed)["time_control"] == {
+        "initial_ms": 600_000,
+        "increment_ms": 0,
+        "delay_ms": 5_000,
+    }
+
 
 def test_certificate_signatures_verify_and_reject_tampering(signed_match) -> None:
     verify_certificate_signatures(signed_match.certificate, signed_match.public_keys)

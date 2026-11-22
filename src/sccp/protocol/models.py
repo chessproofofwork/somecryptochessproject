@@ -33,6 +33,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from sccp.config import (
+    DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     MAX_CLOCK_MS,
@@ -132,18 +133,26 @@ class Transaction(ProtocolModel):
 class TimeControl(ProtocolModel):
     """One fixed chess clock control (PROTOCOL.md section 8.4).
 
-    Both values are whole seconds expressed in milliseconds, so the PGN
-    ``TimeControl`` tag is lossless. The complete ``initial + increment * plies``
-    bound is checked against the network's ``max_plies`` by
+    All values are whole seconds expressed in milliseconds, so the PGN
+    ``TimeControl`` tag is lossless. A control uses an **increment** (Fischer:
+    time is added after each move), a **delay** (the first ``delay_ms`` of each
+    turn is free), or neither (**sudden death**). Increment and delay are
+    mutually exclusive. The complete ``initial + increment * plies`` bound is
+    checked against the network's ``max_plies`` by
     :func:`sccp.protocol.clocks.validate_time_control`; this model enforces the
     protocol-wide worst case as soon as it is constructed.
     """
 
     initial_ms: int = Field(ge=1_000, multiple_of=1_000)
-    increment_ms: int = Field(ge=0, multiple_of=1_000)
+    increment_ms: int = Field(default=0, ge=0, multiple_of=1_000)
+    delay_ms: int = Field(
+        default=DEFAULT_TIME_CONTROL_DELAY_MS, ge=0, le=MAX_CLOCK_MS, multiple_of=1_000
+    )
 
     @model_validator(mode="after")
     def _check_worst_case(self) -> TimeControl:
+        if self.increment_ms and self.delay_ms:
+            raise ProtocolError("a time control uses an increment or a delay, not both")
         if self.initial_ms + self.increment_ms * MAX_PLIES_LIMIT > MAX_CLOCK_MS:
             raise ProtocolError(
                 "time control exceeds MAX_CLOCK_MS for max_plies="
@@ -254,6 +263,7 @@ class MatchCertificate(ProtocolModel):
         default_factory=lambda: TimeControl(
             initial_ms=DEFAULT_TIME_CONTROL_INITIAL_MS,
             increment_ms=DEFAULT_TIME_CONTROL_INCREMENT_MS,
+            delay_ms=DEFAULT_TIME_CONTROL_DELAY_MS,
         )
     )
     start_signatures: dict[Color, LedgerSignatureHex] = Field(default_factory=dict)

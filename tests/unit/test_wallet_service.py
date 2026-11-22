@@ -135,8 +135,36 @@ def test_register_token_builds_a_signed_variant_registration(live_chain: Any) ->
     # A token omitted from the CLI must play the network's own book, not a
     # placeholder label the relay cannot load.
     assert tx.payload["opening_book"] == DEVNET.book_version
+    assert tx.payload["time_control_delay_ms"] == 0
     assert tx.signature is not None
     validate_transaction(tx, DEVNET, chain.state, height=chain.height + 1)
+
+    delayed = wallet.build_register_token(
+        alice.keypair,
+        name="delaychess",
+        ruleset="standard",
+        symbol="DLY",
+        display_name="Delay Chess",
+        subsidy=COINS,
+        time_control_initial_ms=180_000,
+        time_control_delay_ms=3_000,
+    )
+    assert delayed.payload["time_control_initial_ms"] == 180_000
+    assert delayed.payload["time_control_increment_ms"] == 0
+    assert delayed.payload["time_control_delay_ms"] == 3_000
+    validate_transaction(delayed, DEVNET, chain.state, height=chain.height + 1)
+
+    with pytest.raises(WalletServiceError, match="increment or a delay"):
+        wallet.build_register_token(
+            alice.keypair,
+            name="mixedchess",
+            ruleset="standard",
+            symbol="MIX",
+            display_name="Mixed Chess",
+            subsidy=COINS,
+            time_control_increment_ms=2_000,
+            time_control_delay_ms=2_000,
+        )
 
     with pytest.raises(WalletServiceError, match="already known"):
         wallet.build_register_token(

@@ -36,6 +36,7 @@ from sccp.chain.state import (
 )
 from sccp.chess.rulesets import ruleset_for
 from sccp.config import (
+    DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     NetworkParams,
@@ -426,6 +427,7 @@ ALLOWED: dict[TxType, frozenset[str]] = {
             "opening_book",
             "time_control_initial_ms",
             "time_control_increment_ms",
+            "time_control_delay_ms",
             "public_key",
         }
     ),
@@ -539,6 +541,11 @@ def _parse_token_registration(
         if "time_control_increment_ms" in payload
         else DEFAULT_TIME_CONTROL_INCREMENT_MS
     )
+    delay_ms = (
+        _field_int(payload, "time_control_delay_ms", minimum=0)
+        if "time_control_delay_ms" in payload
+        else DEFAULT_TIME_CONTROL_DELAY_MS
+    )
     for label, value in (
         ("initial_supply", initial_supply),
         ("subsidy", subsidy),
@@ -575,6 +582,7 @@ def _parse_token_registration(
             opening_book=opening_book or params.book_version,
             time_control_initial_ms=initial_ms,
             time_control_increment_ms=increment_ms,
+            time_control_delay_ms=delay_ms,
         )
     except ValidationError as exc:
         detail = "; ".join(

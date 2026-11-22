@@ -28,6 +28,7 @@ from sccp.chain.state import Account, HtlcRecord, State, epoch_of
 from sccp.chain.tx import MAX_TOKEN_AMOUNT, sign_transaction, txid
 from sccp.chess.rulesets import ruleset_for
 from sccp.config import (
+    DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     NetworkParams,
@@ -778,6 +779,7 @@ class WalletService:
         opening_book: str | None = None,
         time_control_initial_ms: int = DEFAULT_TIME_CONTROL_INITIAL_MS,
         time_control_increment_ms: int = DEFAULT_TIME_CONTROL_INCREMENT_MS,
+        time_control_delay_ms: int = DEFAULT_TIME_CONTROL_DELAY_MS,
         fee: int | None = None,
         nonce: int | None = None,
     ) -> Transaction:
@@ -842,6 +844,7 @@ class WalletService:
                 opening_book=resolved_opening_book,
                 time_control_initial_ms=time_control_initial_ms,
                 time_control_increment_ms=time_control_increment_ms,
+                time_control_delay_ms=time_control_delay_ms,
             )
         except ValueError as exc:
             raise WalletServiceError(f"invalid token parameters: {exc}") from None
@@ -867,6 +870,7 @@ class WalletService:
             "opening_book": resolved_opening_book,
             "time_control_initial_ms": time_control_initial_ms,
             "time_control_increment_ms": time_control_increment_ms,
+            "time_control_delay_ms": time_control_delay_ms,
             "public_key": keypair.public_key_hex,
         }
         if halving_interval is not None:
