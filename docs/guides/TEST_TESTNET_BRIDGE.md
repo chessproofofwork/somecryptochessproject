@@ -4,10 +4,11 @@ This is the testnet counterpart to
 [`TEST_DEVNET_BRIDGE_DEX.md`](TEST_DEVNET_BRIDGE_DEX.md). It covers the two jobs
 that are different on a public testnet:
 
-1. **Operator setup** — get Sepolia ETH, deploy `EthHtlc`, and point a
-   `testnet` SCCP node at that contract and RPC.
-2. **User flow** — fund a `testnet` ZQWX wallet, publish an order on the Bridge
-   page, lock Sepolia ETH, and claim both legs with MetaMask.
+1. **Operator setup** — create a deployer wallet, get Sepolia ETH, deploy
+   `EthHtlc`, and point a `testnet` SCCP node at that contract and RPC.
+2. **User flow** — create maker and taker wallets, fund a `testnet` ZQWX wallet,
+   publish an order on the Bridge page, lock Sepolia ETH, and claim both legs
+   with MetaMask.
 
 The bridge is the same trustless HTLC as on devnet. The SCCP node never holds an
 Ethereum key: it publishes the Sepolia chain id, contract and confirmation depth
@@ -61,8 +62,9 @@ You need:
 - **Foundry** (`forge`, `cast`) to deploy and inspect the contract — install it
   from <https://book.getfoundry.sh/getting-started/installation>;
 - a Sepolia RPC endpoint and Sepolia ETH for gas and the swap;
-- MetaMask (or another EIP-1193 wallet) and two browser profiles for the maker
-  and taker;
+- MetaMask (or another EIP-1193 wallet), two browser profiles, and a fresh
+  Sepolia test account for each role (section 2.1);
+- a deployer account if you deploy `EthHtlc` (section 2.2);
 - two `testnet` SCCP keyfiles, one per role.
 
 Set the shared variables once per shell:
@@ -91,8 +93,8 @@ ETH; the taker pays ETH and receives ZQWX.
 
 | Role | Needs on Sepolia | Needs on SCCP testnet |
 | --- | --- | --- |
-| Maker | an address to receive ETH, plus gas to claim it | ZQWX to sell, plus the lock fee |
-| Taker | the ETH principal, plus gas to lock it | an address to receive ZQWX |
+| Maker | `ETH_MAKER`, an address to receive ETH, plus gas to claim it | ZQWX to sell, plus the lock fee |
+| Taker | `ETH_TAKER`, the ETH principal, plus gas to lock it | an address to receive ZQWX |
 
 The taker locks ETH first. The maker verifies that lock on Ethereum, then locks
 ZQWX under the same SHA-256 hash. The taker claims ZQWX, revealing the preimage;
@@ -112,26 +114,99 @@ it below what the page accepts.
 
 ---
 
-## 2. Get Sepolia ETH and an RPC endpoint
+## 2. Create Ethereum wallets and get Sepolia ETH
 
-### 2.1 Add Sepolia to the browser wallet
+An Ethereum address is the public half of a keypair: `0x` followed by 40 hex
+characters. Creating a wallet generates the keypair locally; the address needs
+no registration and can receive ETH as soon as someone sends it. The private key
+and recovery phrase control the address, so never share them or reuse a key that
+holds real funds.
 
-MetaMask usually knows Sepolia already. If it does not, add it manually:
+You need two bridge addresses (maker and taker), plus a deployer address if you
+are deploying `EthHtlc`. If you already have dedicated Sepolia test accounts,
+reuse them and skip the creation steps; do not use a mainnet key.
+
+### 2.1 Create the maker and taker addresses
+
+The Bridge page signs through an EIP-1193 wallet, so MetaMask is the reference
+setup. Create a **separate test wallet in each browser profile** (profile A is
+the maker and profile B is the taker in section 6):
+
+1. Install MetaMask from <https://metamask.io/download/> in profile A.
+2. Choose **Create a new wallet**, set a password, and write the Secret Recovery
+   Phrase down offline. Do not use a phrase that holds real funds.
+3. Rename the first account `maker` under **Account details → Name**.
+4. Copy its address from the account selector. It is `0x` plus 40 hex characters.
+5. Repeat steps 1–4 in profile B and name that account `taker`.
+6. Record both public addresses:
+
+```bash
+export ETH_MAKER=0x...
+export ETH_TAKER=0x...
+```
+
+Two separate test wallets are simpler than sharing one recovery phrase between
+profiles: each profile has its own MetaMask storage, and it is harder to sign
+with the wrong role. The selected address is bound into the order or take, so a
+mismatch is rejected.
+
+Use accounts whose keys you control. A deposit address from an exchange cannot
+sign the bridge transaction. These `0x...` addresses are also separate from the
+`sccpt1...` keyfiles in section 5; the signed order and take link the two.
+
+The addresses are safe to share; faucets and the Bridge page need them. Never
+paste a private key or recovery phrase into the repository, chat, or a website.
+
+### 2.2 Create a deployer address (operator)
+
+Skip this if you are not deploying `EthHtlc`. The deployer pays gas once and has
+no owner powers afterward, so a fresh key is enough. The node and web app never
+need this key; they only need the deployed contract address.
+
+Generate it with Foundry rather than exporting a MetaMask key. If `cast` is not
+installed yet, run the install block in section 3.1 first and return here.
+
+```bash
+cast wallet new
+```
+
+The command prints the new address and private key once:
+
+```text
+Successfully created new keypair.
+Address: 0x...
+Private key: 0x...
+```
+
+Store the private key in a password manager, then load it only for the deploy:
+
+```bash
+export DEPLOYER_ADDRESS=0x...
+export DEPLOYER_PRIVATE_KEY=0x...
+cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY"
+# must print $DEPLOYER_ADDRESS
+```
+
+Fund `DEPLOYER_ADDRESS` with Sepolia ETH in section 2.4. The address is public;
+the private key controls it, so do not commit or share the key.
+
+### 2.3 Add Sepolia to the browser wallet
+
+MetaMask usually knows Sepolia already. If it does not, add it manually. The RPC
+URL comes from section 2.5, so you can skip this until then:
 
 | Field | Value |
 | --- | --- |
 | Network name | `Sepolia` |
-| RPC URL | your Sepolia endpoint from section 2.2 |
+| RPC URL | your Sepolia endpoint from section 2.5 |
 | Chain ID | `11155111` |
 | Currency symbol | `ETH` |
 | Block explorer | `https://sepolia.etherscan.io` |
 
-Use **two different Ethereum accounts**: one for the maker and one for the
-taker. They can live in the same MetaMask installation, but the two browser
-profiles must select different accounts. Never import a key that holds real
-funds.
+Each profile must select its own address: `ETH_MAKER` in profile A and
+`ETH_TAKER` in profile B. Never import a key that holds real funds.
 
-### 2.2 Get Sepolia ETH
+### 2.4 Get Sepolia ETH
 
 Sepolia ETH is free test currency. Use a faucet you qualify for; eligibility
 and drip sizes change, so check the page rather than assuming a fixed amount:
@@ -149,17 +224,15 @@ Never pay for Sepolia ETH; any site selling it is a scam. Faucets are
 rate-limited, so if one rejects your wallet, try another before asking the
 testnet operator for a grant.
 
-Ask for enough to cover both roles. With the example order below, the taker
-locks `0.01 ETH` and needs gas; the maker needs gas only to claim. Two drips of
-`0.1 ETH` are more than enough. Import the funded accounts into MetaMask and
-record their addresses:
+Fund every address you created: maker, taker, and the deployer if you are
+deploying. With the example order below, the taker locks `0.01 ETH` and needs
+gas; the maker needs gas only to claim; the deployer needs gas to deploy. A
+`0.1 ETH` drip to each address is more than enough. Request the drip to each
+address. Maker and taker balances appear in MetaMask; the `cast balance` check
+below covers every address. If a faucet only connects a wallet, use its address
+flow; never expose a private key to a faucet.
 
-```bash
-export ETH_MAKER=0x...
-export ETH_TAKER=0x...
-```
-
-### 2.3 Get an RPC endpoint
+### 2.5 Get an RPC endpoint
 
 The node needs a Sepolia JSON-RPC URL. The Bridge page also publishes that URL
 so a wallet that does not yet know Sepolia can add it. Any provider works
@@ -181,6 +254,18 @@ not.
 > Bridge page can offer to add Sepolia to MetaMask. Treat the URL as public: use
 > a dedicated, rate-limited provider key, not a secret shared with other
 > production systems.
+
+Check that the addresses are valid and the faucet has arrived:
+
+```bash
+cast balance "$ETH_MAKER" --ether --rpc-url "$SEPOLIA_RPC_URL"
+cast balance "$ETH_TAKER" --ether --rpc-url "$SEPOLIA_RPC_URL"
+# if you created a deployer:
+cast balance "$DEPLOYER_ADDRESS" --ether --rpc-url "$SEPOLIA_RPC_URL"
+```
+
+A zero balance means the drip has not arrived yet; it does not mean the address
+is invalid.
 
 ---
 
@@ -204,12 +289,12 @@ deploy.
 
 ### 3.2 Deploy
 
-From `contracts/`, with the deployer key in an environment variable and never in
-the repository:
+From `contracts/`, with the deployer key created in section 2.2 and the RPC from
+section 2.5 already exported in this shell:
 
 ```bash
+# reuse SEPOLIA_RPC_URL and DEPLOYER_PRIVATE_KEY from section 2
 export SCCP_NETWORK=testnet
-export DEPLOYER_PRIVATE_KEY=0x...
 
 forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$SEPOLIA_RPC_URL" \
@@ -583,9 +668,9 @@ consensus state and stays visible at `#/accounts/<address>` and through
 | `/v1/bridge` says `"configured": false` | node has no `SCCP_ETH_HTLC_CONTRACT` | set it and restart the node (section 4) |
 | The page says **ETH not configured** | same, or the page is talking to another node | check `$SCCP_NODE/v1/bridge`, then reload |
 | The page says **Sepolia ready** but cannot add the network | `eth_rpc_url` is `null` | set `SCCP_ETH_RPC_URL` and restart |
-| `switch the Ethereum wallet to Sepolia (chain 11155111)` | MetaMask is on another chain | switch to Sepolia, or add it with the table in section 2.1 |
+| `switch the Ethereum wallet to Sepolia (chain 11155111)` | MetaMask is on another chain | switch to Sepolia, or add it with the table in section 2.3 |
 | `the wallet is on chain 1, expected 11155111` | wrong network selected | switch MetaMask to Sepolia |
-| `insufficient funds for gas * price + value` | the taker has no Sepolia ETH | use a faucet in section 2.2 |
+| `insufficient funds for gas * price + value` | the taker has no Sepolia ETH | use a faucet in section 2.4 |
 | `the ETH lock was not sent by the taker` | the selected MetaMask account is not the take's `taker_eth` | reconnect the account that locked the ETH |
 | `the ETH transaction did not call the bridge contract` | node and user are looking at different contracts | restore the correct `SCCP_ETH_HTLC_CONTRACT`; do not lock ZQWX |
 | `the ETH lock carries a different hashlock or timelock` | stale local swap or a mismatched transaction | do not lock ZQWX; refund the ETH after its timelock |
@@ -621,6 +706,9 @@ confirmation depth in place of Anvil's instant blocks.
 ## 10. Safety checklist
 
 - [ ] The Ethereum accounts are dedicated test accounts, not mainnet keys.
+- [ ] Each MetaMask test wallet's Secret Recovery Phrase is backed up offline.
+- [ ] The deployer private key is stored outside the repository, in a password
+      manager or ignored keyfile.
 - [ ] The contract address on the node is the one you deployed, and
       `cast code` or Etherscan shows code there.
 - [ ] The node's `/v1/bridge` and the Bridge page both say chain `11155111`.
@@ -643,6 +731,7 @@ confirmation depth in place of Anvil's instant blocks.
 
 ```bash
 # Sepolia RPC and a funded, disposable deployer key
+# (the key is generated with `cast wallet new` in section 2.2)
 export SEPOLIA_RPC_URL='https://...'
 export DEPLOYER_PRIVATE_KEY=0x...
 
