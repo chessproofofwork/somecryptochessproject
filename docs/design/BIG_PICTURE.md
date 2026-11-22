@@ -106,20 +106,23 @@ An asset id is the domain hash of its immutable identity. A built-in variant
 asset_id = H("sccp/v1/asset", {variant, symbol, decimals, name})
 ```
 
-A chain-registered token commits to the ruleset that settles it instead:
+A chain-registered token commits to its unique registration serial and ruleset
+instead:
 
 ```text
-asset_id = H("sccp/v1/asset", {variant, symbol, decimals, ruleset})
+asset_id = H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})
 ```
 
-The id commits to the variant that mints the token and to its identity fields;
-`max_supply`, `halving_interval` and the subsidy schedule live in
-`VariantParams`, fixed per built-in variant or, for a token, fixed by the
-registration transaction. The id is derived, so two nodes cannot disagree about
-which asset a transfer touches, and the symbol is display only: consensus never
-compares it. Built-in symbols come from `GET /v1/params`; chain-registered
-tokens are published by `GET /v1/tokens`, and an asset id neither endpoint names
-is rendered as `asset` with its id beside it, never mapped to a guessed symbol.
+The id commits to the registration that created the token and to its
+consensus-relevant rules; `max_supply`, `halving_interval` and the subsidy
+schedule live in `VariantParams`, fixed per built-in variant or, for a token,
+fixed by the registration transaction. The id is derived, so two nodes cannot
+disagree about which asset a transfer touches, and the name and ticker are
+display only: consensus never compares them. Two tokens may therefore share a
+display name and ticker and still have different ids. Built-in symbols come from
+`GET /v1/params`; chain-registered tokens are published by `GET /v1/tokens`, and
+an asset id neither endpoint names is rendered as `asset` with its id beside it,
+never mapped to a guessed symbol.
 
 Shipped and proposed parameters (decisions 1 and 3 in section 12):
 
@@ -385,7 +388,7 @@ as zero; a fresh replay from genesis counts every historical slash.
 | `htlc_claim` | new | `{htlc_id, preimage, public_key}` |
 | `htlc_refund` | new | `{htlc_id, public_key}` |
 | `register` | extended | `{public_key, endpoint, engine, bond, variant?}`; `variant` defaults to `standard` and is fixed until the account unregisters |
-| `register_token` | new | `{ticket, ruleset, openings?, subsidy, decimals?, initial_supply?, halving_interval?, max_supply?, min_plies?, max_games_per_block?, opening_book?, time_control_initial_ms?, time_control_increment_ms?, time_control_delay_ms?, time_control_first_moves?, time_control_periods?, public_key}`; adds an immutable variant token and a derived asset id |
+| `register_token` | new | `{ticket, display_name, symbol, ruleset, openings?, subsidy, decimals?, initial_supply?, halving_interval?, max_supply?, min_plies?, max_games_per_block?, opening_book?, time_control_initial_ms?, time_control_increment_ms?, time_control_delay_ms?, time_control_first_moves?, time_control_periods?, public_key}`; adds an immutable variant token and a derived asset id |
 | `availability` | unchanged | `{epoch, max_games, commitment, public_key}`; the variant comes from the account, so a registration plays one discipline |
 
 Workstream B shipped with **no `create_asset` transaction**: the asset set was
@@ -393,11 +396,12 @@ fixed by `NetworkParams`, which made a variant token a claim on a game corpus
 rather than a promise by an issuer, and removed lookalike and spam assets by
 construction. Registration now closes that gap without reopening it. Any funded
 account may submit `register_token` with an unused four-digit `ticket`; the
-payload only names an existing ruleset, and every identity, issuance and clock
-parameter is fixed in the same transaction. The ticket derives the variant
-`token-<ticket>`, symbol `T<ticket>` and label `Token <ticket>`, so the asset id
-commits to the variant, symbol, decimals and ruleset, and no issuer key or
-mutable metadata exists to trust afterwards. The registering key receives
+payload claims a unique registration serial, chooses display metadata, names an
+existing ruleset, and fixes every issuance and clock parameter in the same
+transaction. The ticket derives the internal variant `token-<ticket>` and salts
+the asset id; the name and ticker are display only and may repeat, so two
+tokens can share them and still be distinct assets. No issuer key or mutable
+metadata exists to trust afterwards. The registering key receives
 `initial_supply`. The result is permissionless discovery with the same derived,
 collision-resistant identity the closed set had.
 
@@ -413,8 +417,8 @@ class VariantParams:
     rules: str                # PGN Rules tag; validated against the ruleset
     ruleset: str | None       # registered ruleset; None means the variant's own
     asset: str | None         # asset id hex; None for standard, which mints ZQWX
-    symbol: str               # "C960", or "T0042" for a ticket
-    display_name: str
+    symbol: str               # user-chosen ticker; display only, may repeat
+    display_name: str         # user-chosen name; display only, may repeat
     decimals: int
     subsidy: int
     halving_interval: int | None
@@ -426,8 +430,8 @@ class VariantParams:
 ```
 
 Chain-registered tokens reuse this record but live in `State.tokens`, keyed by
-ticket and variant name; a block resolves a proof against the built-ins plus
-that registry.
+their internal variant name `token-<ticket>`; a block resolves a proof against
+the built-ins plus that registry, while balances and pools use the token id.
 
 Rules that follow from it:
 
@@ -967,7 +971,7 @@ column says otherwise.
 | 7 | First bridge chains | Ethereum mainnet / an L2 | mainnet plus one L2 (Base), because claim gas dominates small trades | open; the mapping that exists is devnet→Anvil 31337, testnet→Sepolia 11155111, mainnet→Ethereum 1 |
 | 8 | Timelock margin | 10 / 20 blocks on mainnet | 20 blocks (~200 min), 24 on devnet/testnet | yes, `sccp_margin` per environment |
 | 9 | Order transport | node REST / gossip | REST first, gossip later, same signed body | yes, REST only |
-| 10 | Symbols | ticker collision handling | symbol is display only; the token list is keyed by asset id | yes, `lib/assets.ts` |
+| 10 | Symbols | ticker collision handling | symbol and display name are display only; the token list is keyed by asset id and duplicate names and tickers are allowed | yes, `lib/assets.ts` |
 
 ## 13. References
 

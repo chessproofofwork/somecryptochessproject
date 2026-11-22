@@ -3,10 +3,10 @@
  *
  * Chain registration is permissionless, so a token existing is not a reason to
  * put it in every wallet. A token reaches the tables when the node operator
- * approved it (`TokenView.approved`) or when the user looked it up by ticket or
- * token id and chose to keep it. This store is the second half of that rule:
- * one JSON array of the ids this browser pinned, beside the contacts and other
- * non-secret preferences.
+ * approved it (`TokenView.approved`) or when the user looked it up by ticket,
+ * token id, name or ticker and chose to keep it. This store is the second half
+ * of that rule: one JSON array of the ids this browser pinned, beside the
+ * contacts and other non-secret preferences.
  *
  * Nothing here is evidence. The chain is still the authority on the token's
  * parameters; an entry only says "show this one even if the node did not
@@ -15,7 +15,7 @@
 
 export interface ApprovedToken {
   network: string;
-  /** Four-digit ticket, or `null` for a token registered before tickets. */
+  /** Four-digit registration serial, or `null` for a token registered before tickets. */
   ticket: string | null;
   /** The network-assigned token id (the asset id). */
   tokenId: string;

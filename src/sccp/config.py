@@ -104,12 +104,12 @@ def format_coins(units: int) -> str:
 
 
 def derive_variant_asset_id(name: str, symbol: str, decimals: int, ruleset: str) -> str:
-    """Derive a token's immutable asset id from its registration fields.
+    """Derive a built-in or legacy variant's asset id from its definition.
 
-    A token's symbol and display name are discovery metadata, not identity: the
-    asset id commits to the variant name, ticker, decimal precision and the
-    ruleset used to settle games. The variant name is part of the hash so a
-    second registration cannot claim an existing token's asset id.
+    This is the pre-ticket/name-based path: the id commits to the variant name,
+    symbol, decimal precision and ruleset. A chain-registered token uses
+    :func:`derive_token_asset_id` instead, where the user-chosen name and ticker
+    are display-only and a unique ticket supplies the identity.
     """
     return domain_hex(
         Domain.ASSET,
@@ -123,31 +123,44 @@ def derive_variant_asset_id(name: str, symbol: str, decimals: int, ruleset: str)
 
 
 TOKEN_TICKET_PATTERN: Final = r"^[0-9]{4}$"
-"""A chip-style four-digit ticket. Every chain-registered token has one."""
+"""A four-digit registration serial. Every chain-registered token has one.
+
+The ticket makes two registrations distinct even when they choose the same name
+and ticker. It is a salt, not a ticker: the printable ticker is the token's
+``symbol`` and may be reused by another registration.
+"""
 
 
 def token_variant_name(ticket: str) -> str:
-    """The internal variant name for a four-digit ticket.
+    """The internal variant name for a four-digit registration serial.
 
-    Users pick a ticket, not a name. Names are derived here so two spellings of
-    one ticket can never create two variants, and the asset id then commits to
-    the ticket through the variant name.
+    The name is deliberately derived from the ticket rather than from the
+    user-chosen display name. Consensus state, miner registration and proof
+    hashes need one unique, stable key per token, while two tokens may show the
+    same name to users.
     """
     if not isinstance(ticket, str) or re.fullmatch(TOKEN_TICKET_PATTERN, ticket) is None:
         raise ConfigError(f"token ticket must be exactly four digits, got {ticket!r}")
     return f"token-{ticket}"
 
 
-def token_symbol_for_ticket(ticket: str) -> str:
-    """The printable ticker derived from a ticket, e.g. ``T0042``."""
-    token_variant_name(ticket)
-    return f"T{ticket}"
+def derive_token_asset_id(ticket: str, decimals: int, ruleset: str) -> str:
+    """Derive a registered token's id from its registration serial and rules.
 
-
-def token_display_name_for_ticket(ticket: str) -> str:
-    """The explorer label for a ticket, e.g. ``Token 0042``."""
+    Names and tickers are display metadata, not identity: they may repeat. The
+    unique ticket plus the consensus-relevant decimals and ruleset determine the
+    asset id, so two tokens called "Gold" still have different ids.
+    """
     token_variant_name(ticket)
-    return f"Token {ticket}"
+    return domain_hex(
+        Domain.ASSET,
+        {
+            "kind": "registered-token",
+            "ticket": ticket,
+            "decimals": decimals,
+            "ruleset": ruleset,
+        },
+    )
 
 
 class TimeControlPeriod(BaseModel):
@@ -183,11 +196,13 @@ class VariantParams(BaseModel):
 
     name: str = Field(min_length=1, max_length=32)
     ticket: str | None = Field(default=None, pattern=TOKEN_TICKET_PATTERN)
-    """The four-digit ticket that identifies a chain-registered token.
+    """The four-digit registration serial that makes a token unique.
 
-    Built-in variants have no ticket. The ticket replaces every user-chosen name
-    as the token's public identity; ``name`` is derived from it and the asset id
-    (the network-assigned token id) commits to that derivation.
+    Built-in variants have no ticket. The ticket derives the internal variant
+    name ``token-<ticket>`` and salts the token id; it is not the printable
+    ticker. ``symbol`` is the ticker and ``display_name`` is the name, and both
+    are display metadata that another registration may reuse. The asset id (the
+    network-assigned token id) is the identity that balances and pools use.
     """
     rules: str = Field(min_length=1, max_length=32)
     ruleset: str | None = Field(default=None, min_length=1, max_length=32)

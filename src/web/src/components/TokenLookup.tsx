@@ -1,11 +1,12 @@
 /**
- * Manual token lookup by four-digit ticket or network-assigned token id.
+ * Manual token lookup by ticket, token id, name or ticker.
  *
  * The token tables show what the node approved or this browser already pinned;
- * a permissionless registration can otherwise be invisible. Paste either
- * identifier here to read the chain's record and keep the token in the local
- * registry. The lookup itself goes to `GET /v1/tokens/{reference}`, so the
- * displayed rules, clock and issuance are the node's, never the entry's.
+ * a permissionless registration can otherwise be invisible. Paste a unique
+ * ticket or token id, or a name/ticker when only one token uses it, to read the
+ * chain's record and keep the token in the local registry. The lookup itself
+ * goes to `GET /v1/tokens/{reference}`, so the displayed rules, clock and
+ * issuance are the node's, never the entry's.
  */
 
 import { useState, type ReactNode } from "react";
@@ -69,7 +70,7 @@ export function TokenLookup({
         <TextInput
           mode="outlined"
           dense
-          label="Ticket or token id"
+          label="Token id, ticket, name or ticker"
           value={query}
           onChangeText={(value) => {
             setQuery(value);
@@ -90,8 +91,8 @@ export function TokenLookup({
         </Button>
       </View>
       <HelperText type="info" visible>
-        A registered token has a four-digit ticket and a 64-hex token id. Either one opens it; the
-        node&apos;s record is the authority.
+        The 64-hex token id is the identity. A four-digit ticket is also unique;
+        names and tickers may repeat, so they resolve only when exactly one token uses them.
       </HelperText>
       {error !== undefined && (
         <HelperText type="error" visible>

@@ -44,7 +44,7 @@ export interface Token {
   timeControlFirstMoves: number | null;
   /** Later periods; empty for plain sudden death. */
   timeControlPeriods: readonly TimeControlPeriod[];
-  /** Four-digit ticket for chain-registered tokens, `null` for built-ins. */
+  /** Four-digit registration serial for chain-registered tokens, `null` for built-ins. */
   ticket: string | null;
   /** The ruleset the verifier replays, when it differs from `variant`. */
   ruleset: string | null;

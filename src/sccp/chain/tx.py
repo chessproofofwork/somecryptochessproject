@@ -43,9 +43,8 @@ from sccp.config import (
     NetworkParams,
     TimeControlPeriod,
     VariantParams,
+    derive_token_asset_id,
     derive_variant_asset_id,
-    token_display_name_for_ticket,
-    token_symbol_for_ticket,
     token_variant_name,
     units_per_coin,
 )
@@ -505,7 +504,7 @@ def _validate_register(params: NetworkParams, state: State, tx: Transaction, hei
 
 
 def _field_ticket(payload: Mapping[str, object]) -> str:
-    """A ticket is exactly four digits and is the only public token name."""
+    """A ticket is exactly four digits and is a unique registration serial."""
     ticket = payload.get("ticket")
     if not isinstance(ticket, str) or re.fullmatch(TOKEN_TICKET_PATTERN, ticket) is None:
         _fail(TxFailure.SCHEMA, "payload field 'ticket' must be exactly four digits")
@@ -580,23 +579,23 @@ def _parse_token_registration(
 
     Both validation and application call this function, so the definition that
     is checked is byte-for-byte the definition that is stored. A ticketed token
-    derives its variant name, ticker and label from the ticket; the legacy
-    name-based payload is still accepted for pre-ticket chains.
+    uses the ticket as a unique registration serial and keeps the user-chosen
+    name and ticker as display metadata; the legacy name-based payload is still
+    accepted for pre-ticket chains.
     """
     symbol: str | None
     display_name: str | None
     if "ticket" in payload:
         ticket = _field_ticket(payload)
-        legacy = {"variant", "symbol", "display_name"} & set(payload)
-        if legacy:
+        if "variant" in payload:
             _fail(
                 TxFailure.SCHEMA,
-                "a ticketed token derives its name from the ticket; "
-                f"remove {', '.join(sorted(legacy))}",
+                "a ticketed token derives its internal variant name from the ticket; "
+                "remove 'variant'",
             )
         name = token_variant_name(ticket)
-        symbol = token_symbol_for_ticket(ticket)
-        display_name = token_display_name_for_ticket(ticket)
+        symbol = _field_text(payload, "symbol")
+        display_name = _field_text(payload, "display_name")
     else:
         ticket = None
         name = _field_token_name(payload, "variant")
@@ -664,7 +663,11 @@ def _parse_token_registration(
             f"initial_supply {initial_supply} exceeds the {max_supply}-coin supply cap",
         )
 
-    asset = derive_variant_asset_id(name, symbol, decimals, ruleset_name)
+    asset = (
+        derive_token_asset_id(ticket, decimals, ruleset_name)
+        if ticket is not None
+        else derive_variant_asset_id(name, symbol, decimals, ruleset_name)
+    )
     try:
         token = VariantParams(
             name=name,
@@ -704,8 +707,9 @@ def _validate_register_token(
 
     A registration fixes every consensus-relevant token parameter at creation
     time. There is no issuer key and no later mutation: the derived asset id
-    commits to the parameters, so a transfer or a DEX pool names exactly one
-    token definition.
+    commits to the unique ticket, decimals and ruleset, so a transfer or a DEX
+    pool names exactly one token definition while display names and tickers may
+    repeat.
     """
     _check_unknown_keys(tx.payload, ALLOWED[TxType.REGISTER_TOKEN])
     token, _ = _parse_token_registration(params, tx.payload)

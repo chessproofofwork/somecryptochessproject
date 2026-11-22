@@ -34,11 +34,10 @@ from sccp.config import (
     NetworkParams,
     TimeControlPeriod,
     VariantParams,
+    derive_token_asset_id,
     derive_variant_asset_id,
     format_coins,
     get_network,
-    token_display_name_for_ticket,
-    token_symbol_for_ticket,
     token_variant_name,
     units_per_coin,
 )
@@ -793,10 +792,12 @@ class WalletService:
     ) -> Transaction:
         """Build and sign a permissionless ``register_token`` transaction.
 
-        A new token is identified by a four-digit ``ticket`` and the ruleset that
-        settles its games. The variant name, ticker and label are derived from
-        the ticket, and the asset id (the network-assigned token id) commits to
-        that derivation, so users never choose a name or a ticker. The legacy
+        A new token is identified by a unique four-digit ``ticket`` and the
+        ruleset that settles its games. The ticket derives the internal variant
+        name ``token-<ticket>`` and salts the token id; ``display_name`` and
+        ``symbol`` are the user's chosen name and ticker. Neither is identity,
+        so another registration may reuse them and only the token id
+        (the network-assigned asset id) distinguishes the two. The legacy
         ``name``/``symbol``/``display_name`` form is kept for pre-ticket chains.
 
         ``openings`` is an optional per-token book: SAN lines (or space-delimited
@@ -804,20 +805,20 @@ class WalletService:
         chain. ``time_control_periods`` adds FIDE-style later periods, each with
         its own delay or increment.
 
-        The local state is checked for a duplicate ticket, variant or asset id,
-        so an impossible combination fails here instead of after paying a fee;
-        the chain repeats every check.
+        The local state is checked for a duplicate ticket, internal variant or
+        asset id, so an impossible combination fails here instead of after paying
+        a fee; the chain repeats every check.
         """
         sender = self.address_for(keypair)
         if ticket is not None:
-            if name is not None or symbol is not None or display_name is not None:
+            if name is not None:
                 raise WalletServiceError(
-                    "a ticketed token derives its name, ticker and label from the ticket"
+                    "a ticketed token derives its internal variant name from the ticket"
                 )
+            if symbol is None or display_name is None:
+                raise WalletServiceError("a ticketed token needs a display name and a ticker")
             try:
                 name = token_variant_name(ticket)
-                symbol = token_symbol_for_ticket(ticket)
-                display_name = token_display_name_for_ticket(ticket)
             except ConfigError as exc:
                 raise WalletServiceError(str(exc)) from None
         elif name is None or symbol is None or display_name is None:
@@ -876,7 +877,11 @@ class WalletService:
                 ticket=ticket,
                 rules=selected_ruleset.pgn_rules,
                 ruleset=ruleset,
-                asset=derive_variant_asset_id(name, symbol, decimals, ruleset),
+                asset=(
+                    derive_token_asset_id(ticket, decimals, ruleset)
+                    if ticket is not None
+                    else derive_variant_asset_id(name, symbol, decimals, ruleset)
+                ),
                 symbol=symbol,
                 display_name=display_name,
                 decimals=decimals,
@@ -919,6 +924,8 @@ class WalletService:
         }
         if ticket is not None:
             payload["ticket"] = ticket
+            payload["symbol"] = symbol
+            payload["display_name"] = display_name
         else:
             payload["variant"] = name
             payload["symbol"] = symbol

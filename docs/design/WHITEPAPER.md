@@ -1353,26 +1353,28 @@ C960 still needs a little native coin to spend it.
 
 Registration is not limited to the two built-ins. Any account may pay a fee and
 submit `register_token`, which adds one variant to the chain's registry and
-mints an asset under the same rules as Chess960. A registration names a
+mints an asset under the same rules as Chess960. A registration claims a unique
 four-digit `ticket` and an existing ruleset — `standard`, `chess960`, or one of
 the python-chess variants `antichess`, `atomic`, `crazyhouse`, `giveaway`,
-`horde`, `kingofthehill`, `racingkings`, `suicide` and `threecheck` — and the
-ticket derives `token-<ticket>`, symbol `T<ticket>` and label `Token <ticket>`.
-The token's games settle as proofs of that variant, and a block pays its
-`subsidy` (halved on its own `halving_interval`, capped by
-`max_supply * 10^decimals` base units) at most once per block. The payload fixes
-`ruleset`, `decimals`, `initial_supply`, `min_plies`, `max_games_per_block`,
-`opening_book`, its optional SAN `openings`, the initial/increment/delay clock
-and any later `time_control_periods`; an omitted `opening_book` is
-`token-<ticket>` when the token declares its own lines and otherwise the
-network's own `book_version`. When the beacon selects a network line that is
-illegal under the token's ruleset, the match starts from that ruleset's fixed
-initial position with book `none`. The asset id is derived as
-`H("sccp/v1/asset", {variant, symbol, decimals, ruleset})` from the derived
-variant, symbol, decimals and ruleset, so it is immutable and needs no issuer
-key. An unused ticket is required, derived asset ids may not collide, and the
-registering key receives `initial_supply` base units, which are minted and count
-against the cap exactly like a mined reward.
+`horde`, `kingofthehill`, `racingkings`, `suicide` and `threecheck` — and
+chooses a display name and printable ticker. The ticket derives the internal
+variant name `token-<ticket>` and salts the asset id; the name and ticker are
+display metadata, so two tokens may share them and only the token id identifies
+which one a balance or pool means. The token's games settle as proofs of that
+variant, and a block pays its `subsidy` (halved on its own `halving_interval`,
+capped by `max_supply * 10^decimals` base units) at most once per block. The
+payload fixes `ruleset`, `decimals`, `initial_supply`, `min_plies`,
+`max_games_per_block`, `opening_book`, its optional SAN `openings`, the
+initial/increment/delay clock and any later `time_control_periods`; an omitted
+`opening_book` is `token-<ticket>` when the token declares its own lines and
+otherwise the network's own `book_version`. When the beacon selects a network
+line that is illegal under the token's ruleset, the match starts from that
+ruleset's fixed initial position with book `none`. The asset id is derived as
+`H("sccp/v1/asset", {kind, ticket, decimals, ruleset})` from the unique
+registration serial and the consensus-relevant rules, so it is immutable and
+needs no issuer key. An unused ticket is required, derived asset ids may not
+collide, and the registering key receives `initial_supply` base units, which
+are minted and count against the cap exactly like a mined reward.
 `GET /v1/tokens` publishes the registry, including the total
 minted, so a wallet or pool can quote a token without replaying the chain.
 
@@ -1694,7 +1696,7 @@ contract (snapshotted in `tests/fixtures/openapi.json`):
 | `GET /v1/pools` | Every DEX pool: reserves, total shares, fee, LP positions |
 | `GET /v1/pools/{pool_id}` | One DEX pool |
 | `GET /v1/tokens` | Every registered variant token and its minted supply |
-| `GET /v1/tokens/{reference}` | One token by ticket, variant name, symbol or asset id |
+| `GET /v1/tokens/{reference}` | One token by ticket, token id, internal variant name, display name or ticker |
 | `GET /v1/bridge` | The Ethereum deployment facts for this network |
 | `GET /v1/htlcs` | SCCP hash locks, filtered by address or hashlock |
 | `GET /v1/htlcs/{htlc_id}` | One lock, its status and the preimage once claimed |
@@ -2319,7 +2321,7 @@ the engine-marked tests.
 
 | Term | Meaning |
 | --- | --- |
-| **Asset id** | A domain hash of a token's immutable identity: `H("sccp/v1/asset", {symbol, name, decimals, variant})` for a built-in variant, `{variant, symbol, decimals, ruleset}` for a registered token; derived rather than issued |
+| **Asset id** | A domain hash of a token's immutable identity: `H("sccp/v1/asset", {symbol, name, decimals, variant})` for a built-in variant, `{kind, ticket, decimals, ruleset}` for a registered token; derived rather than issued, and display names and tickers are not part of a registered token's identity |
 | **Availability** | A bonded commitment to be matchable in a future epoch |
 | **Beacon** | Public epoch randomness derived from reveals (and optionally drand) |
 | **Block** | Header plus coinbase, transactions and win proofs |

@@ -31,7 +31,7 @@ export interface VariantParams {
   ruleset?: string | null;
   /** `null` for standard chess: its proofs mint native ZQWX. */
   asset: string | null;
-  /** Four-digit ticket a chain-registered token claimed. */
+  /** Four-digit registration serial a chain-registered token claimed. */
   ticket?: string | null;
   symbol: string;
   display_name: string;
@@ -58,8 +58,9 @@ export interface VariantParams {
 
 /** `GET /v1/tokens`: one chain-registered token and its issuance. */
 export interface TokenView {
+  /** Internal variant key (`token-<ticket>`), not the display name. */
   name: string;
-  /** Four-digit ticket; absent on chains that predate tickets. */
+  /** Four-digit registration serial; absent on chains that predate tickets. */
   ticket: string | null;
   network: string;
   /** The immutable asset id, also accepted as the token's lookup id. */

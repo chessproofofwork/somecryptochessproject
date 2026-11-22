@@ -26,9 +26,8 @@ from sccp.config import (
     DEVNET,
     TESTNET,
     VariantParams,
+    derive_token_asset_id,
     derive_variant_asset_id,
-    token_display_name_for_ticket,
-    token_symbol_for_ticket,
     token_variant_name,
 )
 from sccp.crypto.address import encode_address
@@ -230,8 +229,6 @@ def test_token_routes_name_tokens_by_name_asset_and_unique_symbol() -> None:
 
 def _ticketed_token_record(ticket: str) -> TokenRecord:
     name = token_variant_name(ticket)
-    symbol = token_symbol_for_ticket(ticket)
-    asset = derive_variant_asset_id(name, symbol, 8, "standard")
     return TokenRecord(
         name=name,
         variant=VariantParams(
@@ -239,9 +236,9 @@ def _ticketed_token_record(ticket: str) -> TokenRecord:
             ticket=ticket,
             rules="chess",
             ruleset="standard",
-            asset=asset,
-            symbol=symbol,
-            display_name=token_display_name_for_ticket(ticket),
+            asset=derive_token_asset_id(ticket, 8, "standard"),
+            symbol="GOLD",
+            display_name="Gold Coin",
             subsidy=50,
             min_plies=1,
             opening_book=f"token-{ticket}",
@@ -252,8 +249,8 @@ def _ticketed_token_record(ticket: str) -> TokenRecord:
     )
 
 
-def test_token_lookup_accepts_a_ticket_or_token_id_and_reports_approval() -> None:
-    """A permissionless token stays listed, but only approved ones reach a wallet."""
+def test_token_lookup_uses_the_ticket_or_token_id_not_the_display_name() -> None:
+    """Duplicate display names are fine; the ticket and token id stay unique."""
     service = NodeService.open(DEVNET, approved_tokens=["0042"])
     approved = _ticketed_token_record("0042")
     hidden = _ticketed_token_record("0043")
@@ -264,6 +261,8 @@ def test_token_lookup_accepts_a_ticket_or_token_id_and_reports_approval() -> Non
         by_ticket = client.get("/v1/tokens/0042")
         by_token_id = client.get(f"/v1/tokens/{approved.token_id}")
         hidden_lookup = client.get("/v1/tokens/0043")
+        by_name = client.get("/v1/tokens/Gold Coin")
+        by_ticker = client.get("/v1/tokens/GOLD")
     service.close()
 
     flags = {token["ticket"]: token["approved"] for token in listing["tokens"]}
@@ -273,7 +272,14 @@ def test_token_lookup_accepts_a_ticket_or_token_id_and_reports_approval() -> Non
     assert by_ticket.json()["name"] == "token-0042"
     assert by_ticket.json()["ticket"] == "0042"
     assert by_ticket.json()["token_id"] == approved.token_id
+    assert by_ticket.json()["display_name"] == "Gold Coin"
+    assert by_ticket.json()["symbol"] == "GOLD"
     assert by_ticket.json()["opening_book"] == "token-0042"
+    # A display name and a ticker may be shared, so neither identifies a token.
+    assert by_name.status_code == 404
+    assert "ambiguous" in by_name.json()["detail"]
+    assert by_ticker.status_code == 404
+    assert "ambiguous" in by_ticker.json()["detail"]
     # A lookup still finds a token the operator did not approve; the wallet
     # decides whether to keep it in its own registry.
     assert hidden_lookup.status_code == 200

@@ -213,7 +213,7 @@ export function fetchTokens(signal?: AbortSignal): Promise<TokenList> {
   return request<TokenList>("/v1/tokens", { signal });
 }
 
-/** `GET /v1/tokens/{reference}`: one token by ticket, token id, name or symbol. */
+/** `GET /v1/tokens/{reference}`: one token by ticket, token id, name or ticker. */
 export function fetchToken(reference: string, signal?: AbortSignal): Promise<TokenView> {
   return request<TokenView>(`/v1/tokens/${encodeURIComponent(reference)}`, { signal });
 }

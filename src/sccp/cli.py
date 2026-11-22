@@ -61,10 +61,9 @@ from sccp.config import (
     NetworkParams,
     VariantParams,
     coins_to_units,
-    derive_variant_asset_id,
+    derive_token_asset_id,
     format_coins,
     get_network,
-    token_symbol_for_ticket,
     token_variant_name,
 )
 from sccp.crypto.address import encode_address, validate_address
@@ -1412,8 +1411,8 @@ def node_run(
         typer.Option(
             "--approved-token",
             help=(
-                "Ticket, token id or legacy name to approve for wallet display "
-                "(repeatable). Omit to approve every registered token."
+                "Ticket, token id or internal variant name to approve for wallet "
+                "display (repeatable). Omit to approve every registered token."
             ),
         ),
     ] = None,
@@ -2317,8 +2316,11 @@ def dex_tokens(
         cap = f" cap {maximum} coins" if maximum is not None else " uncapped"
         ticket = row.get("ticket")
         identity = f"ticket {ticket} " if isinstance(ticket, str) else ""
+        internal = row.get("name")
+        label = row.get("display_name") or internal
+        variant = f" [{internal}]" if internal is not None and internal != label else ""
         typer.echo(
-            f"{row.get('name')} ({row.get('symbol')}) {identity}{row.get('ruleset')} "
+            f"{label}{variant} ({row.get('symbol')}) {identity}{row.get('ruleset')} "
             f"asset {row.get('asset')}{cap}"
         )
         typer.echo(
@@ -2337,9 +2339,23 @@ def dex_register_token(
         typer.Option(
             "--ticket",
             help=(
-                "Four-digit ticket that identifies the token, e.g. 0042. The name, "
-                "ticker and network-assigned id are all derived from it."
+                "Unique four-digit registration serial, e.g. 0042. It salts the "
+                "token id and derives the internal variant name; it is not the ticker."
             ),
+        ),
+    ],
+    name: Annotated[
+        str,
+        typer.Option(
+            "--name",
+            help="Display name, e.g. 'Gold Coin'. Another token may use the same name.",
+        ),
+    ],
+    ticker: Annotated[
+        str,
+        typer.Option(
+            "--ticker",
+            help="Printable ticker, e.g. GOLD. It is display metadata and may be reused.",
         ),
     ],
     ruleset: Annotated[
@@ -2441,13 +2457,12 @@ def dex_register_token(
     ] = None,
     network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
 ) -> None:
-    """Register a token under a four-digit ticket; immutable once mined."""
+    """Register a token under a unique ticket; immutable once mined."""
     if initial_supply < 0:
         _fail("--initial-supply cannot be negative", code=2)
     if subsidy <= 0:
         _fail("--subsidy must be positive", code=2)
-    name = _run(lambda: token_variant_name(ticket))
-    symbol = token_symbol_for_ticket(ticket)
+    variant = _run(lambda: token_variant_name(ticket))
     raw_clock = (time_control_initial_ms, time_control_increment_ms, time_control_delay_ms)
     if time_control is not None:
         if any(value is not None for value in raw_clock):
@@ -2485,6 +2500,8 @@ def dex_register_token(
                 wallet.signer,
                 ticket=ticket,
                 ruleset=ruleset,
+                symbol=ticker,
+                display_name=name,
                 subsidy=coins_to_units(subsidy, decimals=decimals),
                 initial_supply=coins_to_units(initial_supply, decimals=decimals),
                 decimals=decimals,
@@ -2512,9 +2529,10 @@ def dex_register_token(
     payload = {
         **_transaction_summary(tx, receipt),
         "ticket": ticket,
-        "variant": name,
-        "asset": derive_variant_asset_id(name, symbol, decimals, ruleset),
-        "symbol": symbol,
+        "variant": variant,
+        "asset": derive_token_asset_id(ticket, decimals, ruleset),
+        "name": name,
+        "symbol": ticker,
         "ruleset": ruleset,
         "initial_supply": coins_to_units(initial_supply, decimals=decimals),
         "subsidy": coins_to_units(subsidy, decimals=decimals),
@@ -2523,7 +2541,10 @@ def dex_register_token(
     if _options(ctx).json_output:
         _echo_json(payload)
         return
-    typer.echo(f"registered token {ticket} as {name} ({symbol}), asset {payload['asset']}")
+    typer.echo(
+        f"registered token {ticket} as {name} ({ticker}), variant {variant}, "
+        f"asset {payload['asset']}"
+    )
     typer.echo(f"time control: {time_control_tag(control)}")
     typer.echo(f"txid: {payload['txid']}")
 

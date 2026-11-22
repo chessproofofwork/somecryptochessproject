@@ -19,9 +19,7 @@ from sccp.chain.tx import (
 from sccp.config import (
     DEVNET,
     NetworkParams,
-    derive_variant_asset_id,
-    token_display_name_for_ticket,
-    token_symbol_for_ticket,
+    derive_token_asset_id,
     token_variant_name,
 )
 from sccp.errors import TxValidationError
@@ -406,19 +404,21 @@ def test_register_token_adds_a_variant_and_credits_its_initial_supply(
     assert _reason(again, ledger) is TxFailure.TYPE
 
 
-def test_a_ticketed_registration_derives_its_identity_and_keeps_its_own_book(
+def test_a_ticketed_registration_keeps_its_name_and_ticker_as_metadata(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:
-    """A ticket is the only public name a registration chooses.
+    """A ticket is a registration serial; a name and ticker are display metadata.
 
-    The chain derives the variant name, ticker and label; stores the opening
-    lines as canonical SAN; and keeps the FIDE-style periods in one immutable
-    record resolvable by either the ticket or the network-assigned token id.
+    The chain derives a unique internal variant and token id from the ticket,
+    stores the chosen name and ticker verbatim, keeps the opening lines as
+    canonical SAN, and resolves the record by either the ticket or token id.
     """
     alice = protocol_accounts["alice"]
     tx = _wallet(ledger).build_register_token(
         alice.keypair,
         ticket="0042",
+        display_name="Gold Coin",
+        symbol="GOLD",
         ruleset="standard",
         subsidy=COINS,
         initial_supply=7,
@@ -428,20 +428,20 @@ def test_a_ticketed_registration_derives_its_identity_and_keeps_its_own_book(
         time_control_periods=[{"moves": 20, "initial_ms": 1_800_000, "increment_ms": 30_000}],
     )
     assert tx.payload["ticket"] == "0042"
+    assert tx.payload["display_name"] == "Gold Coin"
+    assert tx.payload["symbol"] == "GOLD"
     assert "variant" not in tx.payload
-    assert "symbol" not in tx.payload
-    assert "display_name" not in tx.payload
     _check(tx, ledger)
     apply_transaction(ledger, tx, height=HEIGHT)
 
     record = ledger.tokens["token-0042"]
     variant = record.variant
-    asset = derive_variant_asset_id("token-0042", "T0042", 8, "standard")
+    asset = derive_token_asset_id("0042", 8, "standard")
     assert record.ticket == "0042"
     assert record.token_id == asset
     assert variant.name == token_variant_name("0042")
-    assert variant.symbol == token_symbol_for_ticket("0042")
-    assert variant.display_name == token_display_name_for_ticket("0042")
+    assert variant.symbol == "GOLD"
+    assert variant.display_name == "Gold Coin"
     assert variant.opening_book == "token-0042"
     assert variant.openings == (("e4", "e5", "Nf3"), ("d4",))
     assert variant.time_control_initial_ms == 5_400_000
@@ -471,6 +471,41 @@ def test_a_ticketed_registration_derives_its_identity_and_keeps_its_own_book(
     assert _reason(mixed, ledger, height=HEIGHT + 1) is TxFailure.SCHEMA
 
 
+def test_two_tokens_may_share_a_name_and_ticker(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """Identity is the token id, so display metadata does not have to be unique."""
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    first = wallet.build_register_token(
+        alice.keypair,
+        ticket="0042",
+        display_name="Gold Coin",
+        symbol="GOLD",
+        ruleset="standard",
+        subsidy=COINS,
+    )
+    _check(first, ledger, height=HEIGHT)
+    apply_transaction(ledger, first, height=HEIGHT)
+
+    second = wallet.build_register_token(
+        alice.keypair,
+        ticket="0043",
+        display_name="Gold Coin",
+        symbol="GOLD",
+        ruleset="standard",
+        subsidy=COINS,
+    )
+    _check(second, ledger, height=HEIGHT + 1)
+    apply_transaction(ledger, second, height=HEIGHT + 1)
+
+    one = ledger.tokens["token-0042"]
+    two = ledger.tokens["token-0043"]
+    assert one.variant.display_name == two.variant.display_name == "Gold Coin"
+    assert one.variant.symbol == two.variant.symbol == "GOLD"
+    assert one.token_id != two.token_id
+
+
 def test_a_ticketed_token_without_its_own_lines_uses_the_network_book(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:
@@ -479,6 +514,8 @@ def test_a_ticketed_token_without_its_own_lines_uses_the_network_book(
     tx = _wallet(ledger).build_register_token(
         alice.keypair,
         ticket="0044",
+        display_name="Silver Coin",
+        symbol="SLV",
         ruleset="standard",
         subsidy=COINS,
     )

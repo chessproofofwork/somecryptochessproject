@@ -290,7 +290,7 @@ class NodeService:
     max_sync_blocks: int = 512
     syncing: bool = False
     approved_tokens: frozenset[str] | None = None
-    """Tickets, token ids or names this operator approved for wallet display.
+    """Tickets, token ids or internal variant names this operator approved.
 
     ``None`` approves every chain-registered token. An empty set approves none,
     which leaves them reachable through the manual lookup endpoint only.
@@ -723,13 +723,14 @@ class NodeService:
         )
 
     def token(self, reference: str) -> TokenView:
-        """One token by ticket, token id, variant name or legacy symbol; 404 when unknown.
+        """One token by ticket, token id, internal variant name, name or ticker.
 
-        A four-digit ticket and the network-assigned token id are unique by
+        The four-digit ticket and the network-assigned token id are unique by
         construction, which is what makes the manual lookup in a wallet
-        deterministic. Legacy name/symbol resolution is kept for tokens
-        registered before tickets existed; a symbol that two registrations
-        share resolves only when one token on the chain carries it.
+        deterministic. Display names and tickers are not unique; a repeated
+        name or ticker resolves only when exactly one token on the chain carries
+        it, and is otherwise reported as ambiguous. Internal variant names are
+        kept for miners and for tokens registered before tickets existed.
         """
         registry = self.chain.state.tokens
         if reference in registry:
@@ -741,13 +742,17 @@ class NodeService:
         record = self.chain.state.token_by_id(reference)
         if record is not None:
             return self._token_view(record.name)
-        matches = [name for name, token in registry.items() if token.variant.symbol == reference]
+        matches = [
+            name
+            for name, token in registry.items()
+            if token.variant.symbol == reference or token.variant.display_name == reference
+        ]
         if len(matches) == 1:
             return self._token_view(matches[0])
         if len(matches) > 1:
             raise NotFoundError(
                 f"token reference {reference!r} is ambiguous; "
-                "use a ticket, token id or variant name"
+                "use a ticket, token id or the internal variant name"
             )
         raise NotFoundError(f"unknown token {reference!r}")
 

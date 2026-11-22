@@ -541,10 +541,12 @@ class WitnessRecord:
 class TokenRecord:
     """A chain-registered variant token and the ruleset it settles under.
 
-    Registration is permissionless: any funded account can name a new variant,
-    choose a ruleset the verifier already knows, and fix the token's issuance and
-    clock parameters. The record is consensus state (it is committed in
-    :meth:`State.state_root` and in snapshots) and immutable once created.
+    Registration is permissionless: any funded account can claim an unused
+    four-digit ticket, choose display metadata, name a ruleset the verifier
+    already knows, and fix the token's issuance and clock parameters. The record
+    is consensus state (it is committed in :meth:`State.state_root` and in
+    snapshots) and immutable once created. Display names and tickers are not
+    unique; ``token_id`` is the identity.
     """
 
     name: str
@@ -555,7 +557,7 @@ class TokenRecord:
 
     @property
     def ticket(self) -> str | None:
-        """The four-digit ticket this token was registered under."""
+        """The four-digit registration serial this token was registered under."""
         return self.variant.ticket
 
     @property
@@ -823,7 +825,11 @@ class State:
     htlcs: dict[str, HtlcRecord] = field(default_factory=dict)
     """``htlc_id -> HtlcRecord`` for every hash lock, open or closed."""
     tokens: dict[str, TokenRecord] = field(default_factory=dict)
-    """``variant name -> TokenRecord`` for every chain-registered token."""
+    """``internal variant name -> TokenRecord`` for every registered token.
+
+    The internal name is ``token-<ticket>`` and is unique; user-facing display
+    names and tickers may repeat. Balances and pools use the token id.
+    """
 
     def __post_init__(self) -> None:
         if self.difficulty is None:

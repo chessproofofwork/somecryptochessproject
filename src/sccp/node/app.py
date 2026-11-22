@@ -393,10 +393,10 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
 
     @app.get("/v1/tokens/{reference}", response_model=TokenView, tags=["defi"])
     def token(reference: str) -> TokenView:
-        """Return one registered token by ticket, token id, name or legacy symbol.
+        """Return one registered token by ticket, token id, internal name, name or ticker.
 
         The four-digit ticket and the network-assigned token id are unique, so
-        either is safe for a wallet's manual lookup. A legacy symbol is display
+        either is safe for a wallet's manual lookup. A display name or ticker is
         metadata and may be shared, so it resolves only when exactly one token
         uses it; an unknown or ambiguous reference is a ``404``.
         """

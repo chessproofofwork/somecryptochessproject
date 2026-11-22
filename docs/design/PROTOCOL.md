@@ -875,7 +875,7 @@ the one scheme, not a second way to spend.
 | --- | --- | --- |
 | `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
 | `register` | `public_key`, `endpoint`, `engine`, `bond`, `variant`? | locks `bond >= min_bond`, stores key/endpoint/engine and the chosen variant (`standard` when omitted), sets `registered_until_epoch = epoch + registration_epochs`; refused while banned, and a miner already registered for a different variant must unregister first |
-| `register_token` | `ticket`, `ruleset`, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be exactly four digits and unused, and it derives `variant = "token-<ticket>"`, `symbol = "T<ticket>"` and `display_name = "Token <ticket>"`; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {variant, symbol, decimals, ruleset})` must be unused; `openings` are canonicalised to SAN for that ruleset; an omitted `opening_book` is `token-<ticket>` when the token declares openings and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy `variant`, `symbol` and `display_name` payloads remain accepted only for pre-ticket chains. |
+| `register_token` | `ticket`, `display_name`, `symbol`, `ruleset`, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be exactly four digits and unused and is the token's unique registration serial, deriving the internal `variant = "token-<ticket>"`; `display_name` is the user-chosen name and `symbol` is the printable ticker, both are display metadata and need not be unique; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})` must be unused; `openings` are canonicalised to SAN for that ruleset; an omitted `opening_book` is `token-<ticket>` when the token declares openings and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy name-based payloads (`variant` with `symbol` and `display_name`) remain accepted for pre-ticket chains. |
 | `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
 | `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
 | `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |
@@ -895,6 +895,13 @@ the one scheme, not a second way to spend.
 
 \* optional: only needed for an account whose public key the chain does not
 already know (10.1).
+
+A registered token's identity is its asset id, not its display name or ticker.
+The four-digit ticket is a unique registration serial: it selects the internal
+variant name and salts the id, so two registrations may choose the same
+`display_name` and `symbol` and still produce different assets. Name and ticker
+lookups are therefore convenience aliases that resolve only when one token uses
+the value; balances, pools and transfers always name the asset id.
 
 `htlc_id = H("sccp/v1/htlc", {from, nonce})`. A claimed or refunded record stays
 in state (and in `state_root`) so an explorer and the counterparty can read the
@@ -1387,8 +1394,8 @@ an orphan block on `POST /v1/blocks` → 202.
 | POST | `/v1/faucet` | `FaucetRequest {address, amount?}` → `FaucetView {network, address, amount, txid}`: the node spends from the published faucet key and admits the transfer; 429 when the address or client is over a limit |
 | GET | `/v1/pools` | `PoolList`: every DEX pool with reserves, total shares, fee, and each LP address's shares |
 | GET | `/v1/pools/{pool_id}` | `PoolView`: one DEX pool (404 when the chain has not created it) |
-| GET | `/v1/tokens` | `TokenList`: every registered variant token with its ticket, network-assigned `token_id`, approval flag, immutable parameters and minted supply |
-| GET | `/v1/tokens/{reference}` | `TokenView`: one token by ticket, derived variant name, symbol, network-assigned token id or asset id (404 when unknown or ambiguous). An unapproved token is still returned with `approved: false`. |
+| GET | `/v1/tokens` | `TokenList`: every registered variant token with its ticket, user-chosen name and ticker, network-assigned `token_id`, approval flag, immutable parameters and minted supply |
+| GET | `/v1/tokens/{reference}` | `TokenView`: one token by ticket, token id, internal variant name, display name or ticker (404 when unknown or ambiguous because a name or ticker is shared). An unapproved token is still returned with `approved: false`. |
 | GET | `/v1/bridge` | `BridgeView`: the Ethereum chain id/name, HTLC contract, confirmation depth and SCCP margin for this network |
 | GET | `/v1/htlcs` | `HtlcList`: SCCP hash locks filtered by `?address=` or `?hashlock=` |
 | GET | `/v1/htlcs/{htlc_id}` | `HtlcView`: one lock, its status and the preimage once claimed |

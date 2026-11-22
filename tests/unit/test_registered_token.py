@@ -20,7 +20,7 @@ from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
 from sccp.chess.pgn import validate_pgn
 from sccp.chess.rulesets import ruleset_for
-from sccp.config import NetworkParams, VariantParams, derive_variant_asset_id
+from sccp.config import NetworkParams, VariantParams, derive_token_asset_id, derive_variant_asset_id
 from sccp.errors import ProofVerificationError, RelayError
 from sccp.miner.block_builder import BlockBuilder
 from sccp.miner.matchmaker import Matchmaker
@@ -279,9 +279,9 @@ def test_a_fixed_start_token_falls_back_when_a_network_line_does_not_fit(
         ticket="0042",
         rules="horde",
         ruleset="horde",
-        asset=derive_variant_asset_id("token-0042", "T0042", 8, "horde"),
-        symbol="T0042",
-        display_name="Token 0042",
+        asset=derive_token_asset_id("0042", 8, "horde"),
+        symbol="HORDE",
+        display_name="Horde Token",
         subsidy=TOKEN_SUBSIDY,
         min_plies=TOKEN_MIN_PLIES,
         opening_book=protocol_book.version,

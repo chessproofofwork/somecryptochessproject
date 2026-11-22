@@ -1,12 +1,12 @@
 /**
  * The token summary: one row per chess variant and the asset it mints.
  *
- * A chain-registered token is identified twice: by the four-digit ticket its
- * issuer chose and by the network-assigned token id derived from its variant
- * name. The ticket is the human handle; the id is what a lookup accepts and what
- * an account's `assets` map uses. Built-in variants have a ticker but no ticket.
- * Issuance is split into what has been minted already and what the next block
- * can still mint; fees are deliberately absent, they are transfers not supply.
+ * A chain-registered token has a four-digit ticket (a unique registration
+ * serial), a user-chosen name and a printable ticker. Only the network-assigned
+ * token id identifies it: names and tickers may repeat. Built-in variants have
+ * a ticker but no ticket. Issuance is split into what has been minted already
+ * and what the next block can still mint; fees are deliberately absent, they
+ * are transfers not supply.
  */
 
 import type { ReactNode } from "react";

@@ -9,6 +9,14 @@ not itemised here.
 
 ### Added
 
+- **A custom token has a user-chosen name and ticker, and names may repeat.** A
+  `register_token` still claims a unique four-digit `ticket`, but the ticket is a
+  registration serial, not a ticker: it derives the internal variant
+  `token-<ticket>` and salts the token id while `display_name` and `symbol` are
+  display metadata. Two tokens may share both a name and a ticker and remain
+  distinct because their ids differ; a lookup by a shared name or ticker is
+  reported as ambiguous. `sccp dex register-token` takes `--name` and `--ticker`
+  alongside `--ticket`.
 - **Token clocks support increment, delay and sudden death.** A custom token can
   now declare `time_control_delay_ms` alongside the initial time and increment.
   Delay is free time at the start of every turn (`300+5d` in a PGN), increment

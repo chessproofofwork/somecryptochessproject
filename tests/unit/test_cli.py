@@ -2218,7 +2218,7 @@ def test_dex_and_bridge_series_are_available_from_the_cli() -> None:
         assert command in bridge.stdout
 
 
-def test_dex_tokens_names_the_ticket_and_the_derived_identity(
+def test_dex_tokens_names_the_ticket_and_the_display_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import sccp.cli as cli
@@ -2230,7 +2230,8 @@ def test_dex_tokens_names_the_ticket_and_the_derived_identity(
             {
                 "name": "token-0042",
                 "ticket": "0042",
-                "symbol": "T0042",
+                "display_name": "Gold Coin",
+                "symbol": "GOLD",
                 "ruleset": "standard",
                 "asset": token_id,
                 "max_supply": 21_000_000,
@@ -2244,9 +2245,9 @@ def test_dex_tokens_names_the_ticket_and_the_derived_identity(
     monkeypatch.setattr(cli, "_node_document", lambda *_args: document)
     result = runner.invoke(app, ["dex", "tokens", "--node", "http://node.test:8645"])
     assert result.exit_code == 0, result.output
-    assert f"token-0042 (T0042) ticket 0042 standard asset {token_id} cap 21000000 coins" in (
-        result.stdout
-    )
+    assert (
+        f"Gold Coin [token-0042] (GOLD) ticket 0042 standard asset {token_id} cap 21000000 coins"
+    ) in result.stdout
 
 
 def test_sccp_network_env_selects_the_network_when_no_flag_is_given(
@@ -2387,7 +2388,7 @@ def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
     recorded_node: list[Any],
     node_accounts: dict[str, dict[str, object]],
 ) -> None:
-    from sccp.config import derive_variant_asset_id
+    from sccp.config import derive_token_asset_id
 
     key = tmp_path / "issuer.key"
     created = runner.invoke(
@@ -2411,6 +2412,10 @@ def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
             str(key),
             "--ticket",
             "0042",
+            "--name",
+            "Gold Coin",
+            "--ticker",
+            "GOLD",
             "--ruleset",
             "standard",
             "--subsidy",
@@ -2428,16 +2433,19 @@ def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    expected = derive_variant_asset_id("token-0042", "T0042", 8, "standard")
+    expected = derive_token_asset_id("0042", 8, "standard")
     assert payload["ticket"] == "0042"
     assert payload["variant"] == "token-0042"
-    assert payload["symbol"] == "T0042"
+    assert payload["name"] == "Gold Coin"
+    assert payload["symbol"] == "GOLD"
     assert payload["asset"] == expected
     assert payload["type"] == "register_token"
     assert len(recorded_node) == 1
     tx = recorded_node[0]
     assert tx.nonce == 7
     assert tx.payload["ticket"] == "0042"
+    assert tx.payload["display_name"] == "Gold Coin"
+    assert tx.payload["symbol"] == "GOLD"
     assert "variant" not in tx.payload
     assert tx.payload["subsidy"] == 50 * UNITS_PER_COIN
     assert tx.payload["initial_supply"] == 100 * UNITS_PER_COIN
@@ -2477,6 +2485,10 @@ def test_dex_register_token_accepts_a_pgn_time_control(
             str(key),
             "--ticket",
             "0043",
+            "--name",
+            "Silver Coin",
+            "--ticker",
+            "SLV",
             "--ruleset",
             "standard",
             "--time-control",
