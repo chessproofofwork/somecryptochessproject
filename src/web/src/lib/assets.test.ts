@@ -113,6 +113,7 @@ describe("tokensWithRegistry", () => {
       ticket: "0042",
       rules: "chess",
       ruleset: "standard",
+      start_fen: null,
       network: "devnet",
       asset: "b".repeat(64),
       token_id: "b".repeat(64),
