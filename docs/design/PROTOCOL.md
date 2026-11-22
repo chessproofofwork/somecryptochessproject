@@ -875,7 +875,7 @@ the one scheme, not a second way to spend.
 | --- | --- | --- |
 | `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
 | `register` | `public_key`, `endpoint`, `engine`, `bond`, `variant`? | locks `bond >= min_bond`, stores key/endpoint/engine and the chosen variant (`standard` when omitted), sets `registered_until_epoch = epoch + registration_epochs`; refused while banned, and a miner already registered for a different variant must unregister first |
-| `register_token` | `ticket`, `display_name`, `symbol`, `ruleset`, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be exactly four digits and unused and is the token's unique registration serial, deriving the internal `variant = "token-<ticket>"`; `display_name` is the user-chosen name and `symbol` is the printable ticker, both are display metadata and need not be unique; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})` must be unused; `openings` are canonicalised to SAN for that ruleset; an omitted `opening_book` is `token-<ticket>` when the token declares openings and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy name-based payloads (`variant` with `symbol` and `display_name`) remain accepted for pre-ticket chains. |
+| `register_token` | `ticket`, `display_name`, `symbol`, `ruleset`, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be 16 lowercase hex characters (or a four-digit short form) and unused, and is the token's unique registration serial, deriving the internal `variant = "token-<ticket>"`; `display_name` is the user-chosen name and `symbol` is the printable ticker, both are display metadata and need not be unique; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})` must be unused; `openings` are canonicalised to SAN for that ruleset; an omitted `opening_book` is `token-<ticket>` when the token declares openings and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy name-based payloads (`variant` with `symbol` and `display_name`) remain accepted for pre-ticket chains. |
 | `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
 | `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
 | `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |
@@ -897,13 +897,15 @@ the one scheme, not a second way to spend.
 already know (10.1).
 
 A registered token's identity is its asset id, not its display name or ticker.
-The four-digit ticket is a unique registration serial: it selects the internal
-variant name and salts the id, so two registrations may choose the same
-`display_name` and `symbol` and still produce different assets. Name and ticker
-lookups are therefore convenience aliases that resolve only when one token uses
-the value; balances, pools and transfers always name the asset id. C960 follows
-the same rule: the shipped networks register it with ticket `0960`, internal
-variant `token-0960`, and no protocol privilege over any other token.
+The ticket is a unique registration serial: it selects the internal variant name
+and salts the id, so two registrations may choose the same `display_name` and
+`symbol` and still produce different assets. A ticket is normally 16 lowercase
+hex characters (8 random bytes, a 2^64 namespace); the finite four-digit space is
+retained only for the shipped C960 token and pre-existing registrations. Name
+and ticker lookups are therefore convenience aliases that resolve only when one
+token uses the value; balances, pools and transfers always name the asset id.
+C960 follows the same rule: the shipped networks register it with ticket `0960`,
+internal variant `token-0960`, and no protocol privilege over any other token.
 
 `htlc_id = H("sccp/v1/htlc", {from, nonce})`. A claimed or refunded record stays
 in state (and in `state_root`) so an explorer and the counterparty can read the
@@ -1352,11 +1354,11 @@ address may appear once per asset; a duplicate `(address, asset)` pair is
 rejected.
 
 `tokens` registers custom tokens at height 0. Each entry is the same
-`TokenRecord` a `register_token` transaction creates: a unique four-digit
-`ticket`, the internal name `token-<ticket>`, a registered ruleset, display
-metadata and immutable economics. `initial_supply` must be zero; any starting
-balance belongs in `allocations`. The C960 entry uses ticket `0960`; it is an
-ordinary custom token, not part of `NetworkParams`.
+`TokenRecord` a `register_token` transaction creates: a unique `ticket`, the
+internal name `token-<ticket>`, a registered ruleset, display metadata and
+immutable economics. `initial_supply` must be zero; any starting balance belongs
+in `allocations`. The C960 entry uses the short ticket `0960`; it is an ordinary
+custom token, not part of `NetworkParams`.
 
 `pools` and `htlcs` are optional and are applied after the allocations, in that
 order. A genesis pool debits its creator's allocation exactly like `create_pool`

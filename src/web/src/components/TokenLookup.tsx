@@ -91,8 +91,8 @@ export function TokenLookup({
         </Button>
       </View>
       <HelperText type="info" visible>
-        The 64-hex token id is the identity. A four-digit ticket is also unique;
-        names and tickers may repeat, so they resolve only when exactly one token uses them.
+        The 64-hex token id is the identity. A ticket is also unique; names and
+        tickers may repeat, so they resolve only when exactly one token uses them.
       </HelperText>
       {error !== undefined && (
         <HelperText type="error" visible>

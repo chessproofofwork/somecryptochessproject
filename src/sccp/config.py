@@ -107,17 +107,20 @@ def derive_variant_asset_id(name: str, symbol: str, decimals: int, ruleset: str)
     )
 
 
-TOKEN_TICKET_PATTERN: Final = r"^[0-9]{4}$"
-"""A four-digit registration serial. Every chain-registered token has one.
+TOKEN_TICKET_PATTERN: Final = r"^(?:[0-9]{4}|[0-9a-f]{16})$"
+"""A unique registration serial: 16 lowercase hex characters or four digits.
 
-The ticket makes two registrations distinct even when they choose the same name
-and ticker. It is a salt, not a ticker: the printable ticker is the token's
-``symbol`` and may be reused by another registration.
+The 16-hex form is the normal namespace: eight random bytes give 2^64 possible
+tickets, so registrations are not limited to a small human-numbered range. The
+four-digit form remains valid for the shipped C960 token and pre-existing
+registrations. The ticket makes two registrations distinct even when they
+choose the same name and ticker; it is a salt, not a ticker. The printable
+ticker is the token's ``symbol`` and may be reused by another registration.
 """
 
 
 def token_variant_name(ticket: str) -> str:
-    """The internal variant name for a four-digit registration serial.
+    """The internal variant name for a registration serial.
 
     The name is deliberately derived from the ticket rather than from the
     user-chosen display name. Consensus state, miner registration and proof
@@ -125,7 +128,9 @@ def token_variant_name(ticket: str) -> str:
     same name to users.
     """
     if not isinstance(ticket, str) or re.fullmatch(TOKEN_TICKET_PATTERN, ticket) is None:
-        raise ConfigError(f"token ticket must be exactly four digits, got {ticket!r}")
+        raise ConfigError(
+            f"token ticket must be four digits or 16 lowercase hex characters, got {ticket!r}"
+        )
     return f"token-{ticket}"
 
 
@@ -202,13 +207,15 @@ class VariantParams(BaseModel):
 
     name: str = Field(min_length=1, max_length=32)
     ticket: str | None = Field(default=None, pattern=TOKEN_TICKET_PATTERN)
-    """The four-digit registration serial that makes a token unique.
+    """The registration serial that makes a token unique.
 
-    Built-in variants have no ticket. The ticket derives the internal variant
-    name ``token-<ticket>`` and salts the token id; it is not the printable
-    ticker. ``symbol`` is the ticker and ``display_name`` is the name, and both
-    are display metadata that another registration may reuse. The asset id (the
-    network-assigned token id) is the identity that balances and pools use.
+    New tickets are 16 lowercase hex characters; four-digit short tickets remain
+    valid for C960 and pre-existing registrations. Built-in variants have no
+    ticket. The ticket derives the internal variant name ``token-<ticket>`` and
+    salts the token id; it is not the printable ticker. ``symbol`` is the ticker
+    and ``display_name`` is the name, and both are display metadata that another
+    registration may reuse. The asset id (the network-assigned token id) is the
+    identity that balances and pools use.
     """
     rules: str = Field(min_length=1, max_length=32)
     ruleset: str | None = Field(default=None, min_length=1, max_length=32)

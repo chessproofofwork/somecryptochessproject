@@ -1,8 +1,8 @@
 /**
  * The token summary: one row per chess variant and the asset it mints.
  *
- * A chain-registered token has a four-digit ticket (a unique registration
- * serial), a user-chosen name and a printable ticker. Only the network-assigned
+ * A chain-registered token has a ticket (a unique registration serial), a
+ * user-chosen name and a printable ticker. Only the network-assigned
  * token id identifies it: names and tickers may repeat. Built-in variants have
  * a ticker but no ticket. Issuance is split into what has been minted already
  * and what the next block can still mint; fees are deliberately absent, they

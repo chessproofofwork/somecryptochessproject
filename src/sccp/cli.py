@@ -2395,16 +2395,6 @@ def dex_tokens(
 def dex_register_token(
     ctx: typer.Context,
     key: Annotated[Path, typer.Option("--key", help="Keyfile that registers and funds the token.")],
-    ticket: Annotated[
-        str,
-        typer.Option(
-            "--ticket",
-            help=(
-                "Unique four-digit registration serial, e.g. 0042. It salts the "
-                "token id and derives the internal variant name; it is not the ticker."
-            ),
-        ),
-    ],
     name: Annotated[
         str,
         typer.Option(
@@ -2430,6 +2420,18 @@ def dex_register_token(
             ),
         ),
     ],
+    ticket: Annotated[
+        str | None,
+        typer.Option(
+            "--ticket",
+            help=(
+                "Unique registration serial: 16 lowercase hex characters "
+                "(recommended) or a short four-digit id. Omit to generate one. "
+                "It salts the token id and derives the internal variant name; "
+                "it is not the ticker."
+            ),
+        ),
+    ] = None,
     subsidy: Annotated[int, typer.Option("--subsidy", help="Reward per win, in whole coins.")] = 10,
     initial_supply: Annotated[
         int,
@@ -2523,6 +2525,8 @@ def dex_register_token(
         _fail("--initial-supply cannot be negative", code=2)
     if subsidy <= 0:
         _fail("--subsidy must be positive", code=2)
+    if ticket is None:
+        ticket = secrets.token_hex(8)
     variant = _run(lambda: token_variant_name(ticket))
     raw_clock = (time_control_initial_ms, time_control_increment_ms, time_control_delay_ms)
     if time_control is not None:

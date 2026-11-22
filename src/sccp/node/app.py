@@ -395,7 +395,7 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     def token(reference: str) -> TokenView:
         """Return one registered token by ticket, token id, internal name, name or ticker.
 
-        The four-digit ticket and the network-assigned token id are unique, so
+        The registration ticket and the network-assigned token id are unique, so
         either is safe for a wallet's manual lookup. A display name or ticker is
         metadata and may be shared, so it resolves only when exactly one token
         uses it; an unknown or ambiguous reference is a ``404``.

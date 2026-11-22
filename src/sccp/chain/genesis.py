@@ -297,7 +297,7 @@ def _parse_tokens(params: NetworkParams, raw: object) -> tuple[TokenRecord, ...]
             raise GenesisError(f"invalid genesis token: {exc}") from None
         variant = record.variant
         if variant.ticket is None:
-            raise GenesisError(f"genesis token {variant.name!r} needs a four-digit ticket")
+            raise GenesisError(f"genesis token {variant.name!r} needs a registration ticket")
         if variant.ruleset is None:
             raise GenesisError(f"genesis token {variant.name!r} needs a registered ruleset")
         expected = derive_token_asset_id(variant.ticket, variant.decimals, variant.ruleset)

@@ -22,7 +22,7 @@ undone.
 | `sccp` installed | See [`INSTALL.md`](INSTALL.md) for the shared install and node setup. |
 | A funded keyfile | The registration pays one network fee in native **ZQWX**. The fee comes from the spendable balance; `--initial-supply` is minted, not paid for. |
 | A node | The CLI reads the account and nonce from it, then submits the signed transaction to it. |
-| A four-digit token ticket, a name and a ticker | The ticket is the unique registration serial; the name and ticker are display metadata. The supply rules are fixed at registration. |
+| A token ticket, a name and a ticker | The ticket is the unique registration serial (the CLI generates one if omitted); the name and ticker are display metadata. The supply rules are fixed at registration. |
 
 Create and fund a wallet first if you have not already:
 
@@ -70,9 +70,15 @@ ruleset names are the Python-chess ones:
 | `suicide` | Suicide chess: compulsory captures, and losing every piece wins |
 | `threecheck` | Three-check: the first side to give check three times wins |
 
-A registration claims a **ticket** (`--ticket`), exactly four digits, for example
-`0042`. The ticket is a unique registration serial, not a ticker. It derives the
-internal variant key and salts the token id, so two registrations cannot collide:
+A registration claims a **ticket** (`--ticket`). A ticket is normally **16
+lowercase hex characters**, for example `7f3a9c2e5b1d4068`; the normal
+registration namespace has 2^64 values, so it is not a four-digit-limited set.
+The CLI generates a random 16-hex ticket when `--ticket` is omitted. Four-digit
+short tickets such as `0042` remain valid for C960 (`0960`) and pre-existing
+registrations, and this page keeps using `0042` so the examples stay readable.
+The ticket is a unique registration serial, not a ticker. It derives the
+internal variant key and salts the token id, so two registrations cannot
+collide:
 
 | Public value | Derivation for ticket `0042` |
 | --- | --- |
@@ -88,8 +94,8 @@ token uses it; a shared one is ambiguous and a lookup must use the ticket or id.
 
 A ticket is claimed permanently by the first registration mined. Only the native
 `standard` variant is built in; C960 and every other token consume a ticket
-(C960 uses `0960` in the shipped genesis). Check the current list before choosing
-a number:
+(C960 uses the short `0960` in the shipped genesis). Check the current list
+before choosing a ticket:
 
 ```bash
 sccp dex tokens --node "$NODE"
@@ -115,7 +121,7 @@ token with a limited supply:
 
 | Flag | Example | Meaning |
 | --- | --- | --- |
-| `--ticket` | `0042` | Unique four-digit registration serial. Immutable and retired forever. |
+| `--ticket` | `0042` | Unique registration serial. Use 16 lowercase hex for a new token; omit it to generate one. Immutable and retired forever. |
 | `--name` | `Gold Coin` | Display name. Another token may use the same one. |
 | `--ticker` | `GOLD` | Printable ticker. Display metadata; another token may use the same one. |
 | `--ruleset` | `standard` | Existing rules that settle its games. |
@@ -233,7 +239,10 @@ uses it.
 ## 3. Register the token
 
 The command builds the transaction from the node's account view, signs it with
-the keyfile, and submits it. Nothing secret leaves the machine.
+the keyfile, and submits it. Nothing secret leaves the machine. The example passes
+the short ticket `0042` to keep the output readable; omit `--ticket` to have the
+CLI generate a random 16-hex serial, which is what a new token should normally
+use.
 
 ```bash
 sccp dex register-token \
@@ -319,7 +328,7 @@ built. The common refusals are:
 
 | Message | Cause |
 | --- | --- |
-| `ticket '42' must be exactly four digits` | Tickets are quoted four-digit strings such as `0042`; leading zeroes are significant. |
+| `token ticket must be four digits or 16 lowercase hex characters` | Tickets are 16-hex strings such as `7f3a9c2e5b1d4068`, or short four-digit strings such as `0042`; leading zeroes are significant. |
 | `ticket 0042 is already registered` | Another token claimed that ticket. Tickets are permanent. |
 | `a ticketed token needs a display name and a ticker` | Pass both `--name` and `--ticker`; neither is derived from the ticket. |
 | `asset id ... is already registered` | The ticket, decimals and ruleset hash to an existing token. Register a different ticket. |
@@ -579,8 +588,8 @@ include miners whose on-chain registration names the new variant.
 
 Before you submit a registration on a network you care about:
 
-- **Ticket**: the four-digit registration serial and its internal variant are
-  reserved forever, even if the token is never used.
+- **Ticket**: the registration serial and its internal variant are reserved
+  forever, even if the token is never used.
 - **Ruleset**: `standard` and `chess960` play differently; a token cannot switch.
 - **Name, ticker and decimals**: the display name and ticker are fixed on this
   record (another token may reuse them), and the decimals are part of the asset

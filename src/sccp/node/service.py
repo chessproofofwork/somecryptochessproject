@@ -725,7 +725,7 @@ class NodeService:
     def token(self, reference: str) -> TokenView:
         """One token by ticket, token id, internal variant name, name or ticker.
 
-        The four-digit ticket and the network-assigned token id are unique by
+        The registration ticket and the network-assigned token id are unique by
         construction, which is what makes the manual lookup in a wallet
         deterministic. Display names and tickers are not unique; a repeated
         name or ticker resolves only when exactly one token on the chain carries

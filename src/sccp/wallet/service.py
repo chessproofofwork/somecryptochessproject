@@ -792,11 +792,12 @@ class WalletService:
     ) -> Transaction:
         """Build and sign a permissionless ``register_token`` transaction.
 
-        A new token is identified by a unique four-digit ``ticket`` and the
-        ruleset that settles its games. The ticket derives the internal variant
-        name ``token-<ticket>`` and salts the token id; ``display_name`` and
-        ``symbol`` are the user's chosen name and ticker. Neither is identity,
-        so another registration may reuse them and only the token id
+        A new token is identified by a unique ``ticket`` and the ruleset that
+        settles its games. A ticket is 16 lowercase hex characters (recommended)
+        or a short four-digit registration serial. It derives the internal
+        variant name ``token-<ticket>`` and salts the token id; ``display_name``
+        and ``symbol`` are the user's chosen name and ticker. Neither is
+        identity, so another registration may reuse them and only the token id
         (the network-assigned asset id) distinguishes the two. The legacy
         ``name``/``symbol``/``display_name`` form is kept for pre-ticket chains.
 

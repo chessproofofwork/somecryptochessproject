@@ -542,11 +542,11 @@ class TokenRecord:
     """A chain-registered variant token and the ruleset it settles under.
 
     Registration is permissionless: any funded account can claim an unused
-    four-digit ticket, choose display metadata, name a ruleset the verifier
-    already knows, and fix the token's issuance and clock parameters. The record
-    is consensus state (it is committed in :meth:`State.state_root` and in
-    snapshots) and immutable once created. Display names and tickers are not
-    unique; ``token_id`` is the identity.
+    ticket, choose display metadata, name a ruleset the verifier already knows,
+    and fix the token's issuance and clock parameters. The record is consensus
+    state (it is committed in :meth:`State.state_root` and in snapshots) and
+    immutable once created. Display names and tickers are not unique;
+    ``token_id`` is the identity.
     """
 
     name: str
@@ -557,7 +557,7 @@ class TokenRecord:
 
     @property
     def ticket(self) -> str | None:
-        """The four-digit registration serial this token was registered under."""
+        """The registration serial this token was registered under."""
         return self.variant.ticket
 
     @property
@@ -910,7 +910,7 @@ class State:
         )
 
     def token_tickets(self) -> frozenset[str]:
-        """Every four-digit ticket already claimed on this chain."""
+        """Every ticket already claimed on this chain."""
         return frozenset(
             token.variant.ticket
             for token in self.tokens.values()
@@ -918,7 +918,7 @@ class State:
         )
 
     def token_by_ticket(self, ticket: str) -> TokenRecord | None:
-        """Resolve a registered token by its four-digit ticket."""
+        """Resolve a registered token by its registration ticket."""
         for token in self.tokens.values():
             if token.variant.ticket == ticket:
                 return token

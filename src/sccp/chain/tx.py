@@ -504,10 +504,13 @@ def _validate_register(params: NetworkParams, state: State, tx: Transaction, hei
 
 
 def _field_ticket(payload: Mapping[str, object]) -> str:
-    """A ticket is exactly four digits and is a unique registration serial."""
+    """A ticket is a unique registration serial: 16-hex or a short four-digit id."""
     ticket = payload.get("ticket")
     if not isinstance(ticket, str) or re.fullmatch(TOKEN_TICKET_PATTERN, ticket) is None:
-        _fail(TxFailure.SCHEMA, "payload field 'ticket' must be exactly four digits")
+        _fail(
+            TxFailure.SCHEMA,
+            "payload field 'ticket' must be four digits or 16 lowercase hex characters",
+        )
     return ticket
 
 

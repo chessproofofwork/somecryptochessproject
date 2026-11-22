@@ -1355,7 +1355,8 @@ C960 still needs a little native coin to spend it.
 
 Every non-native asset is registered the same way. Any account may pay a fee and
 submit `register_token`, which adds one variant to the chain's registry. A
-registration claims a unique four-digit `ticket` and an existing ruleset —
+registration claims a unique `ticket` (16 lowercase hex characters, or a short
+four-digit serial) and an existing ruleset —
 `standard`, `chess960`, or one of the python-chess variants `antichess`, `atomic`,
 `crazyhouse`, `giveaway`, `horde`, `kingofthehill`, `racingkings`, `suicide` and
 `threecheck` — and chooses a display name and printable ticker. The ticket

@@ -390,10 +390,12 @@ Workstream B shipped with **no `create_asset` transaction**: the asset set was
 fixed by `NetworkParams`, which made a variant token a claim on a game corpus
 rather than a promise by an issuer, and removed lookalike and spam assets by
 construction. Registration now closes that gap without reopening it. Any funded
-account may submit `register_token` with an unused four-digit `ticket`; the
-payload claims a unique registration serial, chooses display metadata, names an
-existing ruleset, and fixes every issuance and clock parameter in the same
-transaction. The ticket derives the internal variant `token-<ticket>` and salts
+account may submit `register_token` with an unused `ticket`; the payload claims
+a unique registration serial, chooses display metadata, names an existing
+ruleset, and fixes every issuance and clock parameter in the same transaction.
+A ticket is 16 lowercase hex characters, so eight random bytes give a 2^64
+namespace; the four-digit form is retained for C960 and pre-existing
+registrations. The ticket derives the internal variant `token-<ticket>` and salts
 the asset id; the name and ticker are display only and may repeat, so two
 tokens can share them and still be distinct assets. No issuer key or mutable
 metadata exists to trust afterwards. The registering key receives
@@ -411,7 +413,7 @@ standard chess is native. Every other variant, C960 included, is a
 @dataclass(frozen=True)
 class VariantParams:
     name: str                 # "standard" or a token's "token-0042"
-    ticket: str | None        # four-digit registration serial; None for standard
+    ticket: str | None        # 16-hex or four-digit serial; None for standard
     rules: str                # PGN Rules tag; validated against the ruleset
     ruleset: str | None       # registered ruleset; None means the variant's own
     asset: str | None         # asset id hex; None for standard, which mints ZQWX

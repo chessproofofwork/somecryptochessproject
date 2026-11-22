@@ -492,7 +492,7 @@ class TokenView(ProtocolModel):
     name: str = Field(min_length=1)
     """The internal variant name (``token-<ticket>``), not the display name."""
     ticket: str | None = Field(default=None, pattern=r"^[0-9]{4}$")
-    """The four-digit registration serial the token claimed; absent on legacy tokens."""
+    """The registration serial the token claimed; absent on legacy tokens."""
     network: str = Field(min_length=1)
     asset: str = Field(pattern=r"^[0-9a-f]{64}$")
     token_id: str = Field(pattern=r"^[0-9a-f]{64}$")

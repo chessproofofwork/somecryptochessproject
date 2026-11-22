@@ -48,15 +48,24 @@ def test_c960_is_a_custom_token_not_a_builtin_variant() -> None:
 def test_a_ticket_is_a_registration_serial_not_a_ticker() -> None:
     """The ticket derives an internal key; the name and ticker stay metadata."""
     assert token_variant_name("0042") == "token-0042"
-    with pytest.raises(ConfigError, match="exactly four digits"):
+    long_ticket = "7f3a9c2e5b1d4068"
+    assert token_variant_name(long_ticket) == f"token-{long_ticket}"
+    with pytest.raises(ConfigError, match="four digits or 16 lowercase hex"):
         token_variant_name("42")
-    with pytest.raises(ConfigError, match="exactly four digits"):
+    with pytest.raises(ConfigError, match="four digits or 16 lowercase hex"):
+        token_variant_name("7f3a9c2e5b1d406")
+    with pytest.raises(ConfigError, match="four digits or 16 lowercase hex"):
+        token_variant_name("7F3A9C2E5B1D4068")
+    with pytest.raises(ConfigError, match="four digits or 16 lowercase hex"):
         derive_token_asset_id("004a", 8, "standard")
 
     first = derive_token_asset_id("0042", 8, "standard")
     second = derive_token_asset_id("0043", 8, "standard")
+    long_first = derive_token_asset_id(long_ticket, 8, "standard")
     assert first == derive_token_asset_id("0042", 8, "standard")
     assert first != second
+    assert long_first == derive_token_asset_id(long_ticket, 8, "standard")
+    assert long_first != first
 
     variant = VariantParams(
         name="token-0042",

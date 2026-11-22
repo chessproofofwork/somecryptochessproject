@@ -15,7 +15,7 @@
 
 export interface ApprovedToken {
   network: string;
-  /** Four-digit registration serial, or `null` for a token registered before tickets. */
+  /** Registration serial, or `null` for a token registered before tickets. */
   ticket: string | null;
   /** The network-assigned token id (the asset id). */
   tokenId: string;

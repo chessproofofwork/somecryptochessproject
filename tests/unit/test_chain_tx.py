@@ -471,6 +471,30 @@ def test_a_ticketed_registration_keeps_its_name_and_ticker_as_metadata(
     assert _reason(mixed, ledger, height=HEIGHT + 1) is TxFailure.SCHEMA
 
 
+def test_a_token_ticket_can_use_the_64_bit_registration_namespace(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """A 16-hex ticket is a normal registration serial, not a four-digit cap."""
+    alice = protocol_accounts["alice"]
+    ticket = "7f3a9c2e5b1d4068"
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        ticket=ticket,
+        display_name="Long Ticket Coin",
+        symbol="LONG",
+        ruleset="standard",
+        subsidy=COINS,
+    )
+    assert tx.payload["ticket"] == ticket
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+
+    record = ledger.tokens[f"token-{ticket}"]
+    assert record.ticket == ticket
+    assert record.token_id == derive_token_asset_id(ticket, 8, "standard")
+    assert ledger.token_by_ticket(ticket) == record
+
+
 def test_two_tokens_may_share_a_name_and_ticker(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:
