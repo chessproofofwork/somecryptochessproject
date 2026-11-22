@@ -1094,7 +1094,9 @@ class EngineMiner:
         self.transcripts[state.match_id] = transcript
         state.finished = True
         if self._winner_seat(result.result) == state.seat:
-            proof = proof_from_transcript(transcript, params=self.config.params)
+            proof = proof_from_transcript(
+                transcript, params=self.config.params, variants=self.variants
+            )
             self.proofs[proof.proof_id] = proof
             proofs.append(proof.proof_id)
             self._announce_proof(proof)

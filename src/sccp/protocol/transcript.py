@@ -732,11 +732,14 @@ def proof_from_transcript(
     clock_evidence: ClockEvidence | None = None,
     move_evidence: MoveEvidence | None = None,
     timeout_claim_id: str | None = None,
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> WinProof:
     """Wrap an already co-signed transcript into a proof.
 
     A co-signed ``time_forfeit`` still needs its clock evidence; the refused
     paths supply the same optional evidence arguments as :func:`build_win_proof`.
+    ``variants`` extends the network's built-ins with chain-registered tokens,
+    exactly as it does for :func:`build_win_proof`.
     """
     return build_win_proof(
         transcript.certificate,
@@ -746,6 +749,7 @@ def proof_from_transcript(
         clock_evidence=clock_evidence,
         move_evidence=move_evidence,
         timeout_claim_id=timeout_claim_id,
+        variants=variants,
     )
 
 
