@@ -669,8 +669,9 @@ uses.
 
 ### 8.4 Minimum length and time-forfeit nuance
 
-A proof must have at least `min_plies` half-moves (20 on testnet, 30 on
-mainnet). A game that ends earlier gets `low_ply = True`. `validate_pgn` with
+A proof must have at least the settled variant's `min_plies` half-moves (20 for
+Chess960 and testnet standard play, 30 for mainnet ZQWX). A game that ends
+earlier gets `low_ply = True`. `validate_pgn` with
 `require_win=True` rejects a low-ply game unless its termination is
 `time_forfeit`. The block layer only requires that `low_ply` be truthful, so a
 short game cannot masquerade as a normal checkmate win. It is an explicit,
@@ -1230,6 +1231,7 @@ block chain.
 | --- | --- |
 | `transfer` | Move spendable balance; an optional `asset` field names a variant token instead of ZQWX |
 | `register` | Register a miner, lock the registration bond and choose a chess variant |
+| `register_token` | Permissionlessly create a variant token and fix its immutable asset, ruleset and issuance |
 | `register_witness` | Register a bonded clock witness |
 | `update_registration` | Change metadata, extend registration, adjust bond |
 | `unregister` | Begin unbonding |
@@ -1310,7 +1312,7 @@ roster:
 | `standard` | `chess` | native ZQWX (`asset` is `None`) | `ZQWX` | the network's own subsidy, halving and cap |
 | `chess960` | `chess960` | a derived asset id | `C960` | 50 per block, halving every 210,000 blocks, 21,000,000 cap |
 
-The asset id is not assigned by an issuer. It is
+The asset id is not assigned by an issuer. For a built-in it is
 `H("sccp/v1/asset", {symbol, name, decimals, variant})`, so two nodes that agree
 on those parameters cannot disagree about which asset a transfer names, and
 nobody can mint a second C960 under a different id. It is pinned in `config.py`
@@ -1335,6 +1337,24 @@ Chess960 has no opening book: the shuffled start position is the point of the
 variant, so its book is `none` and a proof's PGN starts there instead of from a
 book line. Fees are always paid in ZQWX, which is why a miner that earns only
 C960 still needs a little native coin to spend it.
+
+Registration is not limited to the two built-ins. Any account may pay a fee and
+submit `register_token`, which adds one variant to the chain's registry and
+mints an asset under the same rules as Chess960: the token's name joins the
+roster vocabulary, its games settle as proofs of that variant, and a block pays
+its `subsidy` (halved on its own `halving_interval`, capped by
+`max_supply * 10^decimals` base units) at most once per block. The payload fixes
+`ruleset`, `symbol`, `decimals`,
+`initial_supply`, `min_plies`, `max_games_per_block`, `opening_book` and both
+time-control values; an omitted `opening_book` defaults to the network's own
+`book_version`. The asset id is derived as
+`H("sccp/v1/asset", {variant, symbol, decimals, ruleset})` from the name, symbol,
+decimals and ruleset, so it is immutable and needs no issuer key. Built-in
+variant names may not be reused, and the registering key receives
+`initial_supply` base units, which are minted and count against the cap exactly
+like a mined reward.
+`GET /v1/tokens` publishes the registry, including the total
+minted, so a wallet or pool can quote a token without replaying the chain.
 
 ### 13.7 Liquidity pools
 
@@ -1653,6 +1673,8 @@ contract (snapshotted in `tests/fixtures/openapi.json`):
 | `GET /v1/ratings/{address}` | One miner's rating, record and per-epoch history |
 | `GET /v1/pools` | Every DEX pool: reserves, total shares, fee, LP positions |
 | `GET /v1/pools/{pool_id}` | One DEX pool |
+| `GET /v1/tokens` | Every registered variant token and its minted supply |
+| `GET /v1/tokens/{reference}` | One token by variant name, symbol or asset id |
 | `GET /v1/bridge` | The Ethereum deployment facts for this network |
 | `GET /v1/htlcs` | SCCP hash locks, filtered by address or hashlock |
 | `GET /v1/htlcs/{htlc_id}` | One lock, its status and the preimage once claimed |
@@ -2277,7 +2299,7 @@ the engine-marked tests.
 
 | Term | Meaning |
 | --- | --- |
-| **Asset id** | `H("sccp/v1/asset", {symbol, name, decimals, variant})`: a variant token's immutable id, derived rather than issued |
+| **Asset id** | A domain hash of a token's immutable identity: `H("sccp/v1/asset", {symbol, name, decimals, variant})` for a built-in variant, `{variant, symbol, decimals, ruleset}` for a registered token; derived rather than issued |
 | **Availability** | A bonded commitment to be matchable in a future epoch |
 | **Beacon** | Public epoch randomness derived from reveals (and optionally drand) |
 | **Block** | Header plus coinbase, transactions and win proofs |
@@ -2296,7 +2318,7 @@ the engine-marked tests.
 | **Hybrid key** | Ed25519 and ML-DSA-65 keypair sharing one seed; scheme byte `0x01` prefixes both key and signature |
 | **k / wins_required** | Number of valid proofs a block must carry |
 | **LP share** | A pool's proportional claim on both reserves: minted on deposit, burned on redemption |
-| **Low ply** | A game shorter than the network's `min_plies` |
+| **Low ply** | A game shorter than its variant's `min_plies` |
 | **MTP** | Median time past of the previous 11 block timestamps |
 | **Opening hash** | Commitment to the book version, line id and move list |
 | **Order / take** | Off-consensus, signed ETH/ZQWX book entries: a maker's sell promise and a taker's announcement that the ETH leg is locked |

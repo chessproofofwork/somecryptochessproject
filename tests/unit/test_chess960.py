@@ -26,7 +26,10 @@ from sccp.config import (
     CHESS960_VARIANT,
     DEVNET,
     STANDARD_VARIANT,
+    UNITS_PER_COIN,
     NetworkParams,
+    VariantParams,
+    derive_variant_asset_id,
 )
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
@@ -257,6 +260,41 @@ def test_chess960_proofs_mint_c960_not_sccp() -> None:
         minted_assets={},
     )
     assert rewards == {CHESS960_ASSET_ID: DEVNET.variant(CHESS960_VARIANT).subsidy}
+
+
+def test_a_registered_variant_mints_its_own_asset_once_per_block() -> None:
+    asset = derive_variant_asset_id("dragonchess", "DRG", 8, "standard")
+    variant = VariantParams(
+        name="dragonchess",
+        rules="chess",
+        ruleset="standard",
+        asset=asset,
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=40,
+        halving_interval=10,
+        max_supply=100,
+        min_plies=1,
+    )
+    proof = SimpleNamespace(variant="dragonchess")
+    rewards = minted_variant_rewards(
+        DEVNET,
+        5,
+        proofs=[proof, proof],
+        minted_assets={},
+        variants={"dragonchess": variant},
+    )
+    assert rewards == {asset: 40}
+    assert (
+        minted_variant_rewards(
+            DEVNET,
+            5,
+            proofs=[proof],
+            minted_assets={asset: 100 * UNITS_PER_COIN},
+            variants={"dragonchess": variant},
+        )
+        == {}
+    )
 
 
 def test_c960_rewards_mature_like_native_coinbase() -> None:

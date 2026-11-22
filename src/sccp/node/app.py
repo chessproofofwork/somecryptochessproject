@@ -58,6 +58,8 @@ from sccp.node.models import (
     ProofAccepted,
     RatingsView,
     TakeAccepted,
+    TokenList,
+    TokenView,
     TransactionRecord,
     TxAccepted,
 )
@@ -377,6 +379,27 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
         shares and the fee in basis points. An unknown pool id is a ``404``.
         """
         return service.pool(pool_id)
+
+    @app.get("/v1/tokens", response_model=TokenList, tags=["defi"])
+    def tokens() -> TokenList:
+        """List every variant token registered on this chain.
+
+        Registration is permissionless and immutable: each row carries the
+        asset id, ruleset, issuance schedule and clock the token's
+        ``register_token`` transaction fixed, plus the total ever minted. A
+        client can open a pool or read a balance from this response alone.
+        """
+        return service.tokens()
+
+    @app.get("/v1/tokens/{reference}", response_model=TokenView, tags=["defi"])
+    def token(reference: str) -> TokenView:
+        """Return one registered token by variant name, symbol or asset id.
+
+        A variant name and an asset id are unique. A symbol is display metadata
+        and may be shared, so it resolves only when exactly one token uses it;
+        an unknown or ambiguous reference is a ``404``.
+        """
+        return service.token(reference)
 
     @app.get("/v1/epochs/{epoch}", response_model=EpochView, tags=["chain"])
     def epoch(epoch: int) -> EpochView:

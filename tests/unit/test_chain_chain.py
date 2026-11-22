@@ -9,9 +9,10 @@ import pytest
 from sccp.chain.chain import Chain, Reorg, new_chain_from_document
 from sccp.chain.genesis import block_hash, genesis_document
 from sccp.chain.mempool import Mempool
-from sccp.config import DEVNET
+from sccp.config import DEVNET, derive_variant_asset_id
 from sccp.errors import ChainError
 from sccp.miner.block_builder import BlockBuilder
+from sccp.wallet.service import WalletService
 
 
 def _mine(chain: Chain, keypair: Any, *, offset: int = 0) -> Any:
@@ -207,6 +208,46 @@ def test_add_blocks_reports_every_reorg(devnet_chain: Chain, protocol_accounts: 
     assert reorgs
     assert reorgs[-1].new_tip == chain.tip_hash == block_hash(blocks[-1].header)
     assert chain.height == 2
+
+
+def test_a_registered_token_survives_a_block_and_a_snapshot(
+    live_chain: Any, mine_block: Any
+) -> None:
+    """``register_token`` is ordinary consensus state, not a node-only view."""
+    chain = live_chain.chain
+    alice = live_chain.accounts["alice"]
+    before = chain.state.account(alice.address).balance
+    asset = derive_variant_asset_id("dragonchess", "DRG", 6, "standard")
+    initial_supply = 250_000_000
+    tx = WalletService(chain.params, chain.state).build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=25_000_000,
+        initial_supply=initial_supply,
+        decimals=6,
+        halving_interval=100,
+        max_supply=1_000,
+        min_plies=1,
+    )
+
+    block = mine_block(chain, live_chain.accounts["carol"].keypair, txs=[tx])
+    state = chain.state
+    assert block.header.height == 4
+    assert state.tokens["dragonchess"].owner == alice.address
+    assert state.tokens["dragonchess"].variant.asset == asset
+    assert state.variant("dragonchess").decimals == 6
+    assert state.variant_for_asset(asset).name == "dragonchess"
+    assert state.asset_balance(alice.address, asset) == initial_supply
+    assert state.minted_assets[asset] == initial_supply
+    assert state.account(alice.address).balance == before - tx.fee
+
+    restored = state.copy()
+    assert restored.tokens == state.tokens
+    assert restored.minted_assets == state.minted_assets
+    assert restored.state_root() == state.state_root()
 
 
 def test_new_chain_from_document_and_file() -> None:

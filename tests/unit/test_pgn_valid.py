@@ -16,7 +16,7 @@ from sccp.chess.pgn import (
     validate_pgn,
     validate_pgn_file,
 )
-from sccp.config import TESTNET, NetworkParams, VariantParams
+from sccp.config import TESTNET, NetworkParams, VariantParams, derive_variant_asset_id
 from sccp.errors import PgnValidationError
 
 FOOLS_MATE = "1. f3 e5 2. g4 Qh4# 0-1"
@@ -206,6 +206,58 @@ def test_pgn_time_control_must_match_the_token(
     assert validate_pgn(make_pgn(FOOLS_MATE, tags), params=params).time_control == "180+2"
     with pytest.raises(PgnValidationError, match="declares"):
         validate_pgn(make_pgn(FOOLS_MATE, match_tags), params=params)
+
+
+def test_a_registered_variant_may_share_the_chess_rules_tag(
+    make_pgn: Callable[[str, Mapping[str, str]], str],
+    match_tags: dict[str, str],
+    expectations: GameExpectations,
+) -> None:
+    token = VariantParams(
+        name="dragonchess",
+        rules="chess",
+        ruleset="standard",
+        asset=derive_variant_asset_id("dragonchess", "DRG", 8, "standard"),
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=TESTNET.subsidy,
+        min_plies=1,
+    )
+    expected = replace(expectations, variant="dragonchess")
+    parsed = validate_pgn(
+        make_pgn(FOOLS_MATE, match_tags),
+        params=TESTNET,
+        expected=expected,
+        variants={"dragonchess": token},
+    )
+    assert parsed.plies == 4
+    assert parsed.tags["Rules"] == "chess"
+
+    slower = token.model_copy(update={"min_plies": 10})
+    short = validate_pgn(
+        make_pgn(FOOLS_MATE, match_tags),
+        params=TESTNET,
+        expected=expected,
+        variants={"dragonchess": slower},
+    )
+    assert short.low_ply is True
+    with pytest.raises(PgnValidationError, match="at least 10"):
+        validate_pgn(
+            make_pgn(FOOLS_MATE, match_tags),
+            params=TESTNET,
+            expected=expected,
+            require_win=True,
+            variants={"dragonchess": slower},
+        )
+
+    with pytest.raises(PgnValidationError, match="unknown variant"):
+        other = replace(expectations, variant="anothervariant")
+        validate_pgn(
+            make_pgn(FOOLS_MATE, match_tags),
+            params=TESTNET,
+            expected=other,
+            variants={"dragonchess": token},
+        )
 
 
 def test_max_plies_is_enforced(

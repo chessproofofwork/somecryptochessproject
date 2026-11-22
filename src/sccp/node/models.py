@@ -478,6 +478,45 @@ class PoolList(ProtocolModel):
     pools: tuple[PoolView, ...] = ()
 
 
+class TokenView(ProtocolModel):
+    """One chain-registered variant token, as ``GET /v1/tokens`` reports it.
+
+    ``asset`` is the immutable 64-hex id the token's ``register_token``
+    transaction derived, and every consensus parameter that transaction fixed
+    is echoed here so a client can quote a game, check a subsidy or build a pool
+    without replaying the chain. ``minted`` is every base unit ever created for
+    the asset, including ``initial_supply``.
+    """
+
+    name: str = Field(min_length=1)
+    network: str = Field(min_length=1)
+    asset: str = Field(pattern=r"^[0-9a-f]{64}$")
+    symbol: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    rules: str = Field(min_length=1)
+    ruleset: str | None = None
+    decimals: int = Field(ge=0, le=18)
+    subsidy: int = Field(gt=0)
+    initial_supply: int = Field(ge=0)
+    halving_interval: int | None = Field(default=None, ge=1)
+    max_supply: int | None = Field(default=None, ge=1)
+    min_plies: int = Field(ge=1)
+    max_games_per_block: int = Field(ge=1)
+    opening_book: str = Field(min_length=1)
+    time_control_initial_ms: int = Field(ge=1)
+    time_control_increment_ms: int = Field(ge=0)
+    owner: str = Field(min_length=1)
+    registered_at_height: int = Field(ge=0)
+    minted: int = Field(ge=0)
+
+
+class TokenList(ProtocolModel):
+    """``GET /v1/tokens``: every token registered on the adopted branch."""
+
+    network: str = Field(min_length=1)
+    tokens: tuple[TokenView, ...] = ()
+
+
 __all__ = [
     "AccountView",
     "BlockIngest",
@@ -517,6 +556,8 @@ __all__ = [
     "SyncReport",
     "TakeAccepted",
     "TakeView",
+    "TokenList",
+    "TokenView",
     "TransactionRecord",
     "TxAccepted",
 ]

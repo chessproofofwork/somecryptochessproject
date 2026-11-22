@@ -33,11 +33,9 @@ from sccp.chess.rulesets import (
     supported_rules,
 )
 from sccp.chess.variants import (
-    board_for_variant,
-    normalise_start_fen,
     variant_rules,
 )
-from sccp.config import NetworkParams
+from sccp.config import NetworkParams, VariantParams
 from sccp.errors import ConfigError, PgnValidationError
 from sccp.protocol.models import MAX_CLOCK_MS, MAX_PLIES_LIMIT
 from sccp.serialization import Domain, domain_hex
@@ -249,7 +247,9 @@ def _read_single_game(text: str) -> chess.pgn.Game:
 
 
 def _require_tags(
-    game: chess.pgn.Game, expected_variant: str | None = None
+    game: chess.pgn.Game,
+    expected_variant: str | None = None,
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> tuple[dict[str, str], VariantRules]:
     """Collect the headers and resolve the ruleset the PGN claims.
 
@@ -266,7 +266,12 @@ def _require_tags(
     rules_value = tags["Rules"]
     try:
         if expected_variant is not None:
-            ruleset = ruleset_for(expected_variant)
+            registered = (variants or {}).get(expected_variant)
+            ruleset = ruleset_for(
+                registered.ruleset or registered.name
+                if registered is not None
+                else expected_variant
+            )
             if ruleset.pgn_rules != rules_value:
                 raise PgnValidationError(
                     f"tag Rules is {rules_value!r}, but variant {expected_variant!r} "
@@ -325,12 +330,13 @@ def _check_expectations(
     time_control: str | None,
     *,
     start_fen: str,
+    rules: str | None = None,
 ) -> None:
     """Compare the PGN against the certificate it claims to belong to."""
-    if tags["Rules"] != variant_rules(expected.variant):
+    expected_rules = rules if rules is not None else variant_rules(expected.variant)
+    if tags["Rules"] != expected_rules:
         raise PgnValidationError(
-            f"tag Rules is {tags['Rules']!r}, but the certificate says "
-            f"{variant_rules(expected.variant)!r}"
+            f"tag Rules is {tags['Rules']!r}, but the certificate says {expected_rules!r}"
         )
     if start_fen != expected.start_fen:
         raise PgnValidationError(
@@ -383,14 +389,14 @@ def _replay(
     params: NetworkParams,
     *,
     start_fen: str,
-    variant: str,
+    rules: VariantRules,
 ) -> tuple[list[str], chess.Board]:
     """Replay the mainline, returning the canonical SAN list and final board.
 
     ``board.push`` happily accepts illegal moves, so legality is checked with
     ``is_legal`` before every push and SAN is generated from the live board.
     """
-    board = board_for_variant(variant, start_fen)
+    board = rules.board(start_fen)
     san_moves: list[str] = []
     try:
         for move in game.mainline_moves():
@@ -464,13 +470,14 @@ def validate_pgn(
     require_win: bool = False,
     resignation_check: Callable[[chess.Board], bool] | None = None,
     clock_evidence: object | None = None,
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> ParsedGame:
     """Validate untrusted PGN text and return a :class:`ParsedGame`.
 
     The steps mirror ``docs/design/PROTOCOL.md`` section 3: size and encoding, exactly
     one game, parser errors, required and certificate tags, legality of every
     move, the opening prefix, result/termination agreement, and -- for a proof --
-    a decisive result of at least ``params.min_plies``.
+    a decisive result of at least the variant's ``min_plies``.
 
     ``resignation_check`` is an optional hook: it receives the final board and
     must return ``True`` when the resigning side is lost. It is only called for
@@ -498,14 +505,15 @@ def validate_pgn(
         raise PgnValidationError(f"PGN parse errors: {details}")
 
     expected_variant = expected.variant if expected is not None else None
-    tags, ruleset = _require_tags(game, expected_variant)
-    variant = ruleset.name
+    tags, ruleset = _require_tags(game, expected_variant, variants)
+    variant = expected_variant if expected_variant is not None else ruleset.name
     try:
-        variant_params = params.variant(variant)
+        registered = (variants or {}).get(variant)
+        variant_params = registered if registered is not None else params.variant(variant)
     except ConfigError as exc:
         raise PgnValidationError(str(exc)) from None
     try:
-        start_fen = normalise_start_fen(game.headers.get("FEN"), variant)
+        start_fen = ruleset.normalise_start_fen(game.headers.get("FEN"))
     except ConfigError as exc:
         raise PgnValidationError(str(exc)) from None
     if not ruleset.requires_start_fen and game.headers.get("SetUp") is not None:
@@ -537,7 +545,14 @@ def validate_pgn(
     if expected is not None:
         if _has_variations(game):
             raise PgnValidationError("variations are not allowed in a proof")
-        _check_expectations(tags, expected, numbers, time_control, start_fen=start_fen)
+        _check_expectations(
+            tags,
+            expected,
+            numbers,
+            time_control,
+            start_fen=start_fen,
+            rules=variant_params.rules,
+        )
 
     result = GameResult.parse(tags["Result"])
     if result is GameResult.UNFINISHED:
@@ -553,7 +568,7 @@ def validate_pgn(
     if clock_evidence is not None and not time_forfeit:
         raise PgnValidationError("clock_evidence is only valid for termination 'time_forfeit'")
 
-    san_moves, final_board = _replay(game, params, start_fen=start_fen, variant=variant)
+    san_moves, final_board = _replay(game, params, start_fen=start_fen, rules=ruleset)
     if time_forfeit and not san_moves:
         raise PgnValidationError("a flag at ply 0 is a no-show, not a win")
 
@@ -567,19 +582,16 @@ def validate_pgn(
 
     _check_outcome(final_board, result, termination, resignation_check)
 
-    low_ply = len(san_moves) < params.min_plies
+    low_ply = len(san_moves) < variant_params.min_plies
     if require_win:
         if not result.is_decisive:
             raise PgnValidationError("draws are valid PGNs, but a proof needs a win")
         if low_ply and not time_forfeit:
             raise PgnValidationError(
-                f"game has {len(san_moves)} plies; a proof needs at least {params.min_plies}"
+                f"game has {len(san_moves)} plies; a proof needs at least "
+                f"{variant_params.min_plies}"
             )
 
-    try:
-        params.variant(variant)
-    except ConfigError as exc:
-        raise PgnValidationError(str(exc)) from None
     return ParsedGame(
         game_hash=canonical_game_hash(
             params.network_id,

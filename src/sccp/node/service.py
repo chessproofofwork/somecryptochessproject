@@ -85,6 +85,8 @@ from sccp.node.models import (
     SyncReport,
     TakeAccepted,
     TakeView,
+    TokenList,
+    TokenView,
     TransactionRecord,
     TxAccepted,
 )
@@ -655,6 +657,64 @@ class NodeService:
         if pool_id not in self.chain.state.pools:
             raise NotFoundError(f"unknown pool {pool_id!r}")
         return self._pool_view(pool_id)
+
+    def _token_view(self, name: str) -> TokenView:
+        """Project one registered token and its minted supply onto the API shape."""
+        record = self.chain.state.tokens[name]
+        variant = record.variant
+        assert variant.asset is not None
+        return TokenView(
+            name=record.name,
+            network=self.params.network_id,
+            asset=variant.asset,
+            symbol=variant.symbol,
+            display_name=variant.display_name,
+            rules=variant.rules,
+            ruleset=variant.ruleset,
+            decimals=variant.decimals,
+            subsidy=variant.subsidy,
+            initial_supply=record.initial_supply,
+            halving_interval=variant.halving_interval,
+            max_supply=variant.max_supply,
+            min_plies=variant.min_plies,
+            max_games_per_block=variant.max_games_per_block,
+            opening_book=variant.opening_book,
+            time_control_initial_ms=variant.time_control_initial_ms,
+            time_control_increment_ms=variant.time_control_increment_ms,
+            owner=record.owner,
+            registered_at_height=record.registered_at_height,
+            minted=self.chain.state.minted_assets.get(variant.asset, 0),
+        )
+
+    def tokens(self) -> TokenList:
+        """Every chain-registered token, ordered by variant name."""
+        return TokenList(
+            network=self.params.network_id,
+            tokens=tuple(self._token_view(name) for name in sorted(self.chain.state.tokens)),
+        )
+
+    def token(self, reference: str) -> TokenView:
+        """One token by variant name, symbol or asset id; 404 when unknown.
+
+        Name and asset are unique by construction. A symbol is discovery
+        metadata that two registrations may share, so it resolves only when one
+        token on the chain carries it.
+        """
+        registry = self.chain.state.tokens
+        if reference in registry:
+            return self._token_view(reference)
+        matches = [
+            name
+            for name, record in registry.items()
+            if record.variant.asset == reference or record.variant.symbol == reference
+        ]
+        if len(matches) == 1:
+            return self._token_view(matches[0])
+        if len(matches) > 1:
+            raise NotFoundError(
+                f"token reference {reference!r} is ambiguous; use a variant name or asset id"
+            )
+        raise NotFoundError(f"unknown token {reference!r}")
 
     def epoch(self, epoch: int) -> EpochView:
         """The beacon, roster and reveals the chain recorded for ``epoch``.

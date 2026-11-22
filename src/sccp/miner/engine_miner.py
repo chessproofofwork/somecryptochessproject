@@ -32,7 +32,7 @@ from sccp.chain.state import State
 from sccp.chess.engines import Engine
 from sccp.chess.pgn import validate_pgn
 from sccp.chess.variants import board_for_variant
-from sccp.config import NetworkParams, get_network
+from sccp.config import NetworkParams, VariantParams, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair, hybrid_sign_domain, require_pq
 from sccp.errors import (
@@ -113,6 +113,14 @@ class MinerConfig:
     max_games_per_epoch: int = 1
     variant: str = "standard"
     """The variant this miner registered for; it refuses other matches."""
+    variants: Mapping[str, VariantParams] | None = None
+    """Chain-registered tokens this miner may play, keyed by variant name.
+
+    ``None`` means only the network's built-in variants. A miner that registered
+    for a token must be given its :class:`~sccp.config.VariantParams`, because
+    the token's ruleset, minimum plies and clock live in chain state, not in the
+    static network config.
+    """
     nonce_secret: str | None = None
     """The 32-byte hex nonce that availability commitments are built from.
 
@@ -188,12 +196,14 @@ class MinerConfig:
         witness_urls: Sequence[str] = (),
         resign_after_plies: int | None = None,
         variant: str = "standard",
+        variants: Mapping[str, VariantParams] | None = None,
         move_delay_seconds: float = 0.0,
         submit_timeout_claims: bool = True,
     ) -> MinerConfig:
         """Build a config from a network id and a wallet keypair."""
         params = get_network(network)
-        params.variant(variant)
+        if variants is None or variant not in variants:
+            params.variant(variant)
         return cls(
             params=params,
             keypair=keypair,
@@ -203,6 +213,7 @@ class MinerConfig:
             depth=depth,
             max_games_per_epoch=max_games_per_epoch,
             variant=variant,
+            variants=variants,
             nonce_secret=nonce_secret,
             resign_after_plies=resign_after_plies,
             witness_keys=tuple(witness_keys),
@@ -438,6 +449,13 @@ class NodeClient:
             raise RelayError("node /v1/epochs did not return an object")
         return document
 
+    def tokens(self) -> Mapping[str, object]:
+        """The node's list of chain-registered variant tokens."""
+        document = self._http.get("/v1/tokens")
+        if not isinstance(document, Mapping):
+            raise RelayError("node /v1/tokens did not return an object")
+        return document
+
     def submit_transaction(self, tx: Transaction) -> Mapping[str, object]:
         """Announce a signed transaction."""
         document = self._http.post("/v1/tx", tx.model_dump(mode="json", by_alias=True))
@@ -575,6 +593,11 @@ class EngineMiner:
         else:
             self.pipeline = None
         self.clock_ms = clock_ms
+        self.variants: dict[str, VariantParams] = {
+            item.name: item for item in config.params.variants
+        }
+        if config.variants is not None:
+            self.variants.update(config.variants)
         self.matches: dict[str, MatchState] = {}
         self.transcripts: dict[str, Transcript] = {}
         self.proofs: dict[str, WinProof] = {}
@@ -789,6 +812,18 @@ class EngineMiner:
         self.relay.resign(state.match_id, seat=self.address)
         return True
 
+    def _ruleset_name(self, variant: str) -> str:
+        """The registered ruleset that plays ``variant``.
+
+        A built-in variant is its own ruleset. A chain-registered token names one
+        (usually ``standard`` or ``chess960``), because consensus validates its
+        games with that ruleset rather than with code from a transaction.
+        """
+        registered = self.variants.get(variant)
+        if registered is None:
+            return variant
+        return registered.ruleset or registered.name
+
     def _open_match(self, view: MatchView, seat: Color) -> MatchState:
         certificate = view.certificate
         if certificate.network != self.config.network:
@@ -813,7 +848,10 @@ class EngineMiner:
         if certificate.opening.variant != certificate.variant:
             raise MinerError("certificate opening is for another variant")
         try:
-            board = board_for_variant(certificate.variant, certificate.opening.start_fen)
+            board = board_for_variant(
+                self._ruleset_name(certificate.variant),
+                certificate.opening.start_fen,
+            )
         except ConfigError as exc:
             raise MinerError(f"certificate has an invalid start position: {exc}") from exc
         opening = list(certificate.opening.moves)
@@ -1359,6 +1397,7 @@ class EngineMiner:
                 state.board,
                 result=result,
                 termination="time_forfeit",
+                variants=self.variants,
             )
             parsed = validate_pgn(
                 pgn,
@@ -1366,6 +1405,7 @@ class EngineMiner:
                 expected=expected_from_certificate(certificate),
                 require_win=True,
                 clock_evidence=claim.clock_evidence,
+                variants=self.variants,
             )
             unsigned = create_result(certificate, parsed)
             signed = sign_result(unsigned, certificate, winner_seat, self.config.keypair)
@@ -1376,6 +1416,7 @@ class EngineMiner:
                 params=self.config.params,
                 clock_evidence=claim.clock_evidence,
                 timeout_claim_id=claim_id,
+                variants=self.variants,
             )
         except (SccpError, ValueError) as exc:
             self._refuse(f"{claim.match_id}: cannot build the timeout proof: {exc}")

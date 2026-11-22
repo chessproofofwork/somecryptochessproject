@@ -25,8 +25,8 @@ from enum import StrEnum
 from typing import Final
 
 from sccp.chain.difficulty import Difficulty, initial_difficulty
-from sccp.config import NetworkParams
-from sccp.errors import StateError
+from sccp.config import NetworkParams, VariantParams
+from sccp.errors import ConfigError, StateError
 from sccp.protocol.models import (
     Availability,
     Beacon,
@@ -537,6 +537,71 @@ class WitnessRecord:
     until_epoch: int
 
 
+@dataclass(slots=True)
+class TokenRecord:
+    """A chain-registered variant token and the ruleset it settles under.
+
+    Registration is permissionless: any funded account can name a new variant,
+    choose a ruleset the verifier already knows, and fix the token's issuance and
+    clock parameters. The record is consensus state (it is committed in
+    :meth:`State.state_root` and in snapshots) and immutable once created.
+    """
+
+    name: str
+    variant: VariantParams
+    owner: str
+    registered_at_height: int
+    initial_supply: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name:
+            raise StateError("a token needs a variant name")
+        if self.variant.name != self.name:
+            raise StateError("a token record's variant name must match its key")
+        if self.variant.native:
+            raise StateError("a registered token needs a derived asset id")
+        if not isinstance(self.owner, str) or not self.owner:
+            raise StateError("a token needs an owner address")
+        for label in ("registered_at_height", "initial_supply"):
+            value = getattr(self, label)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise StateError(f"token {label} must be a non-negative integer")
+
+    def as_dict(self) -> dict[str, object]:
+        """Canonical mapping committed by ``state_root`` and snapshots."""
+        return {
+            "name": self.name,
+            "variant": self.variant.model_dump(mode="json"),
+            "owner": self.owner,
+            "registered_at_height": self.registered_at_height,
+            "initial_supply": self.initial_supply,
+        }
+
+    @classmethod
+    def from_dict(cls, document: Mapping[str, object]) -> TokenRecord:
+        """Rebuild a token record from :meth:`as_dict` output."""
+        name = document.get("name")
+        variant = document.get("variant")
+        owner = document.get("owner")
+        if not isinstance(name, str) or not isinstance(owner, str):
+            raise StateError("token record name and owner must be text")
+        if not isinstance(variant, Mapping):
+            raise StateError("token record variant must be an object")
+        try:
+            params = VariantParams.model_validate(variant)
+        except ValueError as exc:
+            raise StateError(f"token record variant is invalid: {exc}") from None
+        return cls(
+            name=name,
+            variant=params,
+            owner=owner,
+            registered_at_height=_as_int(
+                document.get("registered_at_height"), "registered_at_height"
+            ),
+            initial_supply=_as_int(document.get("initial_supply", 0), "initial_supply"),
+        )
+
+
 def _as_int(value: object, name: str) -> int:
     """Coerce a snapshot field to ``int`` or raise :class:`StateError`.
 
@@ -746,6 +811,8 @@ class State:
     """``pool_id -> Pool`` for every DEX pair the chain has created."""
     htlcs: dict[str, HtlcRecord] = field(default_factory=dict)
     """``htlc_id -> HtlcRecord`` for every hash lock, open or closed."""
+    tokens: dict[str, TokenRecord] = field(default_factory=dict)
+    """``variant name -> TokenRecord`` for every chain-registered token."""
 
     def __post_init__(self) -> None:
         if self.difficulty is None:
@@ -767,6 +834,22 @@ class State:
         for htlc_id, htlc in self.htlcs.items():
             if not isinstance(htlc_id, str) or htlc_id != htlc.htlc_id:
                 raise StateError("htlcs must be keyed by their htlc id")
+        for name, token in self.tokens.items():
+            if not isinstance(name, str) or name != token.name:
+                raise StateError("tokens must be keyed by their variant name")
+        built_in = set(self.params.variant_names())
+        reserved_assets = {
+            candidate.asset for candidate in self.params.variants if candidate.asset is not None
+        }
+        for name, token in self.tokens.items():
+            if name in built_in:
+                raise StateError(f"a registered token cannot redefine built-in variant {name!r}")
+            token_asset = token.variant.asset
+            if token_asset is None:
+                raise StateError(f"registered token {name!r} has no asset id")
+            if token_asset in reserved_assets:
+                raise StateError(f"registered token {name!r} reuses asset id {token_asset}")
+            reserved_assets.add(token_asset)
 
     # -- accessors ----------------------------------------------------------
 
@@ -786,6 +869,47 @@ class State:
             existing = Account()
             self.accounts[address] = existing
         return existing
+
+    def variant(self, name: str) -> VariantParams:
+        """Resolve a variant by name, including chain-registered tokens.
+
+        Built-in variants win a name collision. Registration validation rejects a
+        token whose name is already built in, so the order only matters for a
+        snapshot written by a buggy node.
+        """
+        try:
+            return self.params.variant(name)
+        except ConfigError:
+            token = self.tokens.get(name)
+            if token is not None:
+                return token.variant
+            known = ", ".join(self.variant_names())
+            raise ConfigError(f"unknown variant {name!r}; this chain has: {known}") from None
+
+    def variant_names(self) -> tuple[str, ...]:
+        """Every variant this chain settles: built-ins first, then tokens."""
+        return self.params.variant_names() + tuple(
+            name for name in sorted(self.tokens) if name not in self.params.variant_names()
+        )
+
+    def variant_for_asset(self, asset: str) -> VariantParams:
+        """Resolve the variant that mints ``asset`` (native ZQWX is standard)."""
+        if asset == "ZQWX":
+            return self.params.variant("standard")
+        for candidate in self.params.variants:
+            if candidate.asset == asset:
+                return candidate
+        for token in self.tokens.values():
+            if token.variant.asset == asset:
+                return token.variant
+        raise ConfigError(f"unknown asset id {asset!r}")
+
+    def variant_params(self) -> dict[str, VariantParams]:
+        """``name -> VariantParams`` for every built-in variant and token."""
+        resolved = {candidate.name: candidate for candidate in self.params.variants}
+        for name, token in self.tokens.items():
+            resolved.setdefault(name, token.variant)
+        return resolved
 
     def stats(self, address: str) -> MinerStats:
         """The miner counters for ``address``, created on first use."""
@@ -864,12 +988,12 @@ class State:
     # -- commitments --------------------------------------------------------
 
     def state_root(self) -> str:
-        """Merkle root over account, DEX-pool and HTLC leaves.
+        """Merkle root over account, DEX-pool, HTLC and token leaves.
 
-        Account keys are bech32 addresses; pools and hash locks are prefixed with
-        ``pool:`` and ``htlc:`` so the namespaces cannot collide. A chain with no
-        pools or locks produces the same all-account root as before either
-        existed.
+        Account keys are bech32 addresses; pools, hash locks and registered
+        tokens are prefixed with ``pool:``, ``htlc:`` and ``token:`` so the
+        namespaces cannot collide. A chain with none of those produces the same
+        all-account root as before they existed.
         """
         leaves: dict[str, object] = {
             address: account.as_dict() for address, account in self.accounts.items()
@@ -878,6 +1002,8 @@ class State:
             leaves[f"pool:{pool_id}"] = pool.as_dict()
         for htlc_id, htlc in self.htlcs.items():
             leaves[f"htlc:{htlc_id}"] = htlc.as_dict()
+        for name, token in self.tokens.items():
+            leaves[f"token:{name}"] = token.as_dict()
         return merkle_root_hex(leaves)
 
     @staticmethod
@@ -1123,6 +1249,11 @@ class State:
                 if self.htlcs
                 else {}
             ),
+            **(
+                {"tokens": {name: token.as_dict() for name, token in sorted(self.tokens.items())}}
+                if self.tokens
+                else {}
+            ),
         }
 
     @classmethod
@@ -1145,6 +1276,7 @@ class State:
         claims_raw = _as_mapping(document.get("timeout_claims"), "timeout_claims")
         pools_raw = _as_mapping(document.get("pools", {}), "pools")
         htlcs_raw = _as_mapping(document.get("htlcs", {}), "htlcs")
+        tokens_raw = _as_mapping(document.get("tokens", {}), "tokens")
 
         accounts = {
             str(address): Account.from_dict(_as_mapping(entry, "account"))
@@ -1225,6 +1357,10 @@ class State:
             str(htlc_id): HtlcRecord.from_dict(str(htlc_id), _as_mapping(entry, "htlc"))
             for htlc_id, entry in htlcs_raw.items()
         }
+        tokens = {
+            str(name): TokenRecord.from_dict(_as_mapping(entry, "token"))
+            for name, entry in tokens_raw.items()
+        }
         difficulty = None
         if document.get("difficulty") is not None:
             item = _as_mapping(document.get("difficulty"), "difficulty")
@@ -1261,6 +1397,7 @@ class State:
             minted_assets=_asset_totals(document.get("minted_assets")),
             pools=pools,
             htlcs=htlcs,
+            tokens=tokens,
         )
 
     def copy(self) -> State:
@@ -1304,6 +1441,7 @@ __all__ = [
     "ProofRecord",
     "State",
     "TimeoutClaimRecord",
+    "TokenRecord",
     "WitnessRecord",
     "epoch_end_height",
     "epoch_of",

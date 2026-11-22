@@ -186,7 +186,24 @@ class Mempool:
             raise MempoolError(f"proof {proof.proof_id} is already in the mempool")
         if proof.game_hash in self._game_hashes:
             raise MempoolError(f"game {proof.game_hash} already has a pending proof")
-        state = self.tip_state
+        # A block applies its transactions before its proofs, so a token
+        # registered by a pending transaction is already part of the state a
+        # proof in the same block is checked against. Mirror that here: using
+        # the bare tip state would reject a proof for a variant whose
+        # ``register_token`` is waiting in this pool.
+        self._check_proof(proof, self.projection)
+        self.proofs[proof.proof_id] = proof
+        self._game_hashes.add(proof.game_hash)
+        return proof.proof_id
+
+    def _check_proof(self, proof: WinProof, state: State) -> None:
+        """Run the block's proof checklist against ``state``.
+
+        Admission uses the projection; maintenance uses it after a removal has
+        rebuilt the projection, which is how a proof that depended on an evicted
+        transaction (a token registration, say) leaves the pool instead of
+        reaching a block that can no longer settle it.
+        """
         if proof.network != self.params.network_id:
             raise MempoolError(f"proof is for {proof.network!r}")
         next_height = state.height + 1
@@ -222,22 +239,21 @@ class Mempool:
             seal_nonce=0,
             miner=proof.winner,
         )
+        others = [item for item in self.proofs.values() if item.proof_id != proof.proof_id]
         try:
             check_proof(
                 state,
                 self.params,
                 synthetic,
                 proof,
-                opponents=frozenset(item.loser for item in self.proofs.values()),
-                game_hashes=state.known_game_hashes() | frozenset(self._game_hashes),
-                proof_ids=state.known_proof_ids() | frozenset(self.proofs),
+                opponents=frozenset(item.loser for item in others),
+                game_hashes=state.known_game_hashes()
+                | frozenset(item.game_hash for item in others),
+                proof_ids=state.known_proof_ids() | frozenset(item.proof_id for item in others),
                 book=self.book,
             )
         except LedgerError as exc:
             raise MempoolError(f"proof rejected: {exc}") from exc
-        self.proofs[proof.proof_id] = proof
-        self._game_hashes.add(proof.game_hash)
-        return proof.proof_id
 
     def remove_proof(self, proof_id: str) -> None:
         """Drop a proof by id."""
@@ -450,6 +466,16 @@ class Mempool:
                 if self._nonces.get(key) == entry.txid:
                     self._nonces.pop(key, None)
         self._projection = projection
+        # A pending transaction can be the only reason a proof was admissible
+        # (a token registration, for instance). Re-run the proof checklist after
+        # a reprojection so the pool never offers a block a proof it cannot
+        # settle.
+        for proof_id, proof in list(self.proofs.items()):
+            try:
+                self._check_proof(proof, projection)
+            except MempoolError:
+                self.proofs.pop(proof_id, None)
+                self._game_hashes.discard(proof.game_hash)
 
 
 __all__ = ["Mempool", "MempoolEntry"]

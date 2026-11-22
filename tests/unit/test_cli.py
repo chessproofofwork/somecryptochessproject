@@ -2092,7 +2092,15 @@ def test_devnet_up_accepts_only_mock_engines() -> None:
 def test_dex_and_bridge_series_are_available_from_the_cli() -> None:
     dex = runner.invoke(app, ["dex", "--help"])
     assert dex.exit_code == 0, dex.output
-    for command in ("create-pool", "add-liquidity", "remove-liquidity", "swap", "quote"):
+    for command in (
+        "create-pool",
+        "add-liquidity",
+        "remove-liquidity",
+        "swap",
+        "quote",
+        "tokens",
+        "register-token",
+    ):
         assert command in dex.stdout
 
     bridge = runner.invoke(app, ["bridge", "--help"])
@@ -2173,6 +2181,71 @@ def test_dex_create_pool_builds_a_signed_transaction_from_the_node_account(
     assert tx.payload["asset_b"] == CHESS960_ASSET_ID
     assert tx.payload["amount_a"] == 50 * UNITS_PER_COIN
     assert tx.payload["amount_b"] == 50 * UNITS_PER_COIN
+
+
+def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    from sccp.config import derive_variant_asset_id
+
+    key = tmp_path / "issuer.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    node_accounts[address] = account_document(address, spendable=200 * UNITS_PER_COIN, nonce=7)
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(tmp_path / "no-chain"),
+            "dex",
+            "register-token",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--name",
+            "dragonchess",
+            "--ruleset",
+            "standard",
+            "--symbol",
+            "DRG",
+            "--display-name",
+            "Dragon Chess",
+            "--subsidy",
+            "50",
+            "--initial-supply",
+            "100",
+            "--max-supply",
+            "21000000",
+            "--halving-interval",
+            "210000",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    expected = derive_variant_asset_id("dragonchess", "DRG", 8, "standard")
+    assert payload["variant"] == "dragonchess"
+    assert payload["asset"] == expected
+    assert payload["type"] == "register_token"
+    assert len(recorded_node) == 1
+    tx = recorded_node[0]
+    assert tx.nonce == 7
+    assert tx.payload["variant"] == "dragonchess"
+    assert tx.payload["subsidy"] == 50 * UNITS_PER_COIN
+    assert tx.payload["initial_supply"] == 100 * UNITS_PER_COIN
+    assert tx.payload["max_supply"] == 21_000_000
+    assert tx.payload["halving_interval"] == 210_000
 
 
 def test_bridge_secret_prints_a_matching_pair() -> None:

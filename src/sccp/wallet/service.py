@@ -25,8 +25,18 @@ from dataclasses import dataclass
 from sccp.chain import dex
 from sccp.chain.chain import Chain
 from sccp.chain.state import Account, HtlcRecord, State, epoch_of
-from sccp.chain.tx import sign_transaction, txid
-from sccp.config import NetworkParams, format_coins, get_network
+from sccp.chain.tx import MAX_TOKEN_AMOUNT, sign_transaction, txid
+from sccp.chess.rulesets import ruleset_for
+from sccp.config import (
+    DEFAULT_TIME_CONTROL_INCREMENT_MS,
+    DEFAULT_TIME_CONTROL_INITIAL_MS,
+    NetworkParams,
+    VariantParams,
+    derive_variant_asset_id,
+    format_coins,
+    get_network,
+    units_per_coin,
+)
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import HybridKeypair
 from sccp.errors import ConfigError, StateError, WalletServiceError
@@ -228,25 +238,14 @@ class WalletService:
             raise WalletServiceError("a transfer amount must be positive")
         if to == sender:
             raise WalletServiceError("a transfer must name a different recipient")
-        selected = None
-        if asset is not None:
-            selected = next(
-                (
-                    variant
-                    for variant in self.params.variants
-                    if asset in (variant.asset, variant.name, variant.symbol)
-                ),
-                None,
-            )
-            if selected is None:
-                raise WalletServiceError(f"unknown asset {asset!r}")
+        resolved_asset = self._resolve_asset_name(asset) if asset is not None else None
         resolved_fee = self.required_fee(fee)
-        if selected is not None and not selected.native:
-            if self.state.asset_balance(sender, selected.asset or "") < amount:
+        if resolved_asset is not None:
+            available = self.state.asset_balance(sender, resolved_asset)
+            if available < amount:
+                label = self._asset_label(resolved_asset)
                 raise WalletServiceError(
-                    f"{sender} has "
-                    f"{self.state.asset_balance(sender, selected.asset or '')} "
-                    f"{selected.symbol}, the transfer needs {amount}"
+                    f"{sender} has {available} {label}, the transfer needs {amount}"
                 )
             if self.state.spendable(sender) < resolved_fee:
                 raise WalletServiceError(
@@ -266,8 +265,8 @@ class WalletService:
             "amount": amount,
             "public_key": keypair.public_key_hex,
         }
-        if selected is not None and not selected.native:
-            payload["asset"] = selected.asset
+        if resolved_asset is not None:
+            payload["asset"] = resolved_asset
         tx = Transaction(
             network=self.params.network_id,
             type=TxType.TRANSFER,
@@ -524,13 +523,36 @@ class WalletService:
         return sign_transaction(keypair, tx)
 
     def _resolve_asset_name(self, asset: str | None) -> str | None:
-        """Resolve an asset id, variant name or symbol to an id (native is None)."""
-        if asset is None:
+        """Resolve an asset id, variant name or symbol to an id (native is None).
+
+        Built-in variants and chain-registered tokens both resolve. A literal
+        64-hex id is accepted as well, which is what a wallet built from a
+        node's account view needs: that view names balances by asset id but does
+        not carry the chain's token registry.
+        """
+        if asset is None or asset == "ZQWX":
             return None
-        for variant in self.params.variants:
-            if asset in (variant.asset, variant.name, variant.symbol):
+        variants = tuple(self.state.variant_params().values())
+        for variant in variants:
+            if asset in (variant.asset, variant.name):
                 return variant.asset
+        symbols = [variant.asset for variant in variants if variant.symbol == asset]
+        if len(symbols) == 1:
+            return symbols[0]
+        if len(symbols) > 1:
+            raise WalletServiceError(
+                f"asset symbol {asset!r} is ambiguous; use a variant name or asset id"
+            )
+        if len(asset) == 64 and all(character in "0123456789abcdef" for character in asset):
+            return asset
         raise WalletServiceError(f"unknown asset {asset!r}")
+
+    def _asset_label(self, asset: str) -> str:
+        """A token's symbol when this state knows it, else a shortened asset id."""
+        try:
+            return self.state.variant_for_asset(asset).symbol
+        except ConfigError:
+            return f"{asset[:8]}…"
 
     def build_htlc_lock(
         self,
@@ -706,7 +728,7 @@ class WalletService:
         """
         sender = self.address_for(keypair)
         try:
-            selected = self.params.variant(variant)
+            selected = self.state.variant(variant)
         except ConfigError as exc:
             raise WalletServiceError(str(exc)) from None
         resolved_bond = self.params.min_bond if bond is None else bond
@@ -731,6 +753,129 @@ class WalletService:
         tx = Transaction(
             network=self.params.network_id,
             type=TxType.REGISTER,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload=payload,
+        )
+        return sign_transaction(keypair, tx)
+
+    def build_register_token(
+        self,
+        keypair: HybridKeypair,
+        *,
+        name: str,
+        ruleset: str,
+        symbol: str,
+        display_name: str,
+        subsidy: int,
+        initial_supply: int = 0,
+        decimals: int = 8,
+        halving_interval: int | None = None,
+        max_supply: int | None = None,
+        min_plies: int | None = None,
+        max_games_per_block: int = 1,
+        opening_book: str | None = None,
+        time_control_initial_ms: int = DEFAULT_TIME_CONTROL_INITIAL_MS,
+        time_control_increment_ms: int = DEFAULT_TIME_CONTROL_INCREMENT_MS,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign a permissionless ``register_token`` transaction.
+
+        ``name`` becomes a new variant in the chain's registry, settled by the
+        existing ``ruleset`` (``standard`` or ``chess960``). The asset id is
+        derived from ``name``, ``symbol``, ``decimals`` and ``ruleset`` and is
+        never changeable afterwards. ``initial_supply`` is credited to the
+        sender in base units and counts against ``max_supply`` exactly like a
+        mined reward.
+
+        The local state is checked for a duplicate variant or asset id and the
+        parameters are built into a :class:`VariantParams`, so an impossible
+        combination fails here instead of after paying a fee; the chain repeats
+        every check.
+        """
+        sender = self.address_for(keypair)
+        resolved_min_plies = self.params.min_plies if min_plies is None else min_plies
+        resolved_opening_book = opening_book or self.params.book_version
+        if initial_supply < 0:
+            raise WalletServiceError("initial_supply cannot be negative")
+        for label, value in (
+            ("initial_supply", initial_supply),
+            ("subsidy", subsidy),
+            ("max_supply", max_supply),
+        ):
+            if value is not None and value > MAX_TOKEN_AMOUNT:
+                raise WalletServiceError(f"{label} exceeds the {MAX_TOKEN_AMOUNT}-unit ceiling")
+        if resolved_min_plies > self.params.max_plies:
+            raise WalletServiceError(
+                f"min_plies {resolved_min_plies} exceeds the network's max_plies "
+                f"{self.params.max_plies}"
+            )
+        if (
+            initial_supply
+            and max_supply is not None
+            and initial_supply > max_supply * units_per_coin(decimals)
+        ):
+            raise WalletServiceError(
+                f"initial_supply {initial_supply} exceeds the {max_supply}-coin supply cap"
+            )
+        if name in self.state.variant_names():
+            raise WalletServiceError(
+                f"variant {name!r} is already known; a token's variant name must be new"
+            )
+        try:
+            selected_ruleset = ruleset_for(ruleset)
+            token = VariantParams(
+                name=name,
+                rules=selected_ruleset.pgn_rules,
+                ruleset=ruleset,
+                asset=derive_variant_asset_id(name, symbol, decimals, ruleset),
+                symbol=symbol,
+                display_name=display_name,
+                decimals=decimals,
+                subsidy=subsidy,
+                halving_interval=halving_interval,
+                max_supply=max_supply,
+                min_plies=resolved_min_plies,
+                max_games_per_block=max_games_per_block,
+                opening_book=resolved_opening_book,
+                time_control_initial_ms=time_control_initial_ms,
+                time_control_increment_ms=time_control_increment_ms,
+            )
+        except ValueError as exc:
+            raise WalletServiceError(f"invalid token parameters: {exc}") from None
+        assert token.asset is not None
+        known_variants = self.state.variant_params().values()
+        if any(candidate.asset == token.asset for candidate in known_variants):
+            raise WalletServiceError(f"asset id {token.asset} is already registered")
+        resolved_fee = self.required_fee(fee)
+        if self.state.spendable(sender) < resolved_fee:
+            raise WalletServiceError(
+                f"{sender} cannot pay the {format_coins(resolved_fee)} ZQWX fee"
+            )
+        payload: dict[str, object] = {
+            "variant": name,
+            "ruleset": ruleset,
+            "symbol": symbol,
+            "display_name": display_name,
+            "decimals": decimals,
+            "initial_supply": initial_supply,
+            "subsidy": subsidy,
+            "min_plies": resolved_min_plies,
+            "max_games_per_block": max_games_per_block,
+            "opening_book": resolved_opening_book,
+            "time_control_initial_ms": time_control_initial_ms,
+            "time_control_increment_ms": time_control_increment_ms,
+            "public_key": keypair.public_key_hex,
+        }
+        if halving_interval is not None:
+            payload["halving_interval"] = halving_interval
+        if max_supply is not None:
+            payload["max_supply"] = max_supply
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.REGISTER_TOKEN,
             sender=sender,
             nonce=self._resolve_nonce(sender, nonce),
             fee=resolved_fee,

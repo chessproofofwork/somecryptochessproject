@@ -127,8 +127,8 @@ second, and the worst case `initial_ms + increment_ms * max_plies` may not excee
   FEN for Chess960 with `Board(fen, chess960=True)`. Every mainline move must
   satisfy `Board.is_legal(move)` **before** it is pushed; `Board.push()` does not
   validate and must never be trusted as a gate.
-- The game may not exceed `max_plies`; a proof also requires at least
-  `min_plies` half-moves.
+- The game may not exceed `max_plies`; a proof also requires at least the
+  settled variant's `min_plies` half-moves.
 - Variations are ignored for hashing. When a certificate is supplied (the proof
   path) a PGN containing any variation is rejected; the offline verifier
   (`sccp verify pgn`) accepts them.
@@ -815,6 +815,7 @@ the one scheme, not a second way to spend.
 | --- | --- | --- |
 | `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
 | `register` | `public_key`, `endpoint`, `engine`, `bond`, `variant`? | locks `bond >= min_bond`, stores key/endpoint/engine and the chosen variant (`standard` when omitted), sets `registered_until_epoch = epoch + registration_epochs`; refused while banned, and a miner already registered for a different variant must unregister first |
+| `register_token` | `variant`, `ruleset`, `symbol`, `display_name`, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `public_key`* | adds an immutable variant token; `variant` must be a new lowercase slug, `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {variant, symbol, decimals, ruleset})` must be unused; an omitted `opening_book` defaults to the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval` |
 | `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
 | `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
 | `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |
@@ -857,8 +858,10 @@ non-standard variant, the payload also carries
 proof. Its authorisation is the block seal, not a signature, so it is never
 applied as an ordinary transaction and consumes no nonce.
 `native_subsidy = params.subsidy >> (height // halving_interval)`, clamped so
-minted supply never exceeds `max_supply`; each variant has the same schedule on
-its own asset. The credited amounts mature after `coinbase_maturity` blocks
+minted supply never exceeds `max_supply`. Each variant has the same schedule on
+its own asset, with `minted_assets[asset]` (which includes the registration's
+`initial_supply`) capped at `max_supply * 10**decimals` base units. The credited
+amounts mature after `coinbase_maturity` blocks
 (`immature` becomes spendable) and a body transaction may not imitate a coinbase.
 
 ### 10.4 Bonded timeout settlement
@@ -1143,7 +1146,7 @@ chain and not repeated in the block; sit inside
 next epoch until the claim window closes; respect the `opponent_cooldown` against
 the winner's previous games (a cooldown of `0` disables the rule, which is how
 testnet and devnet let a small roster settle every game it plays; mainnet keeps
-`4`); declare `low_ply` as `plies < min_plies`; and carry
+`4`); declare `low_ply` as `plies < variant.min_plies`; and carry
 `move_evidence` only for `checkmate` and `clock_evidence` for `time_forfeit`.
 Proofs are ordered by `proof_id`, which makes the body canonical.
 
@@ -1324,6 +1327,8 @@ an orphan block on `POST /v1/blocks` → 202.
 | POST | `/v1/faucet` | `FaucetRequest {address, amount?}` → `FaucetView {network, address, amount, txid}`: the node spends from the published faucet key and admits the transfer; 429 when the address or client is over a limit |
 | GET | `/v1/pools` | `PoolList`: every DEX pool with reserves, total shares, fee, and each LP address's shares |
 | GET | `/v1/pools/{pool_id}` | `PoolView`: one DEX pool (404 when the chain has not created it) |
+| GET | `/v1/tokens` | `TokenList`: every registered variant token with its immutable parameters and minted supply |
+| GET | `/v1/tokens/{reference}` | `TokenView`: one token by variant name, symbol or asset id (404 when unknown or ambiguous) |
 | GET | `/v1/bridge` | `BridgeView`: the Ethereum chain id/name, HTLC contract, confirmation depth and SCCP margin for this network |
 | GET | `/v1/htlcs` | `HtlcList`: SCCP hash locks filtered by `?address=` or `?hashlock=` |
 | GET | `/v1/htlcs/{htlc_id}` | `HtlcView`: one lock, its status and the preimage once claimed |

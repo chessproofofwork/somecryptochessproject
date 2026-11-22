@@ -6,8 +6,9 @@ from typing import Any
 
 import pytest
 
+from sccp.chain.state import TokenRecord
 from sccp.chain.tx import validate_transaction
-from sccp.config import DEVNET, format_coins
+from sccp.config import DEVNET, VariantParams, derive_variant_asset_id, format_coins
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import WalletServiceError
@@ -110,6 +111,134 @@ def test_register_respects_the_minimum_bond(live_chain: Any) -> None:
     assert tx.type is TxType.REGISTER
     with pytest.raises(WalletServiceError, match="below the minimum"):
         wallet.build_register(alice.keypair, endpoint="tcp://a", engine="mock-v1", bond=999)
+
+
+def test_register_token_builds_a_signed_variant_registration(live_chain: Any) -> None:
+    chain = live_chain.chain
+    wallet = WalletService(DEVNET, chain.state, chain=chain)
+    alice = live_chain.accounts["alice"]
+    tx = wallet.build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="chess960",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=50 * COINS,
+        initial_supply=COINS,
+        max_supply=21_000_000,
+        halving_interval=210_000,
+    )
+    assert tx.type is TxType.REGISTER_TOKEN
+    assert tx.payload["variant"] == "dragonchess"
+    assert tx.payload["ruleset"] == "chess960"
+    assert tx.payload["initial_supply"] == COINS
+    # A token omitted from the CLI must play the network's own book, not a
+    # placeholder label the relay cannot load.
+    assert tx.payload["opening_book"] == DEVNET.book_version
+    assert tx.signature is not None
+    validate_transaction(tx, DEVNET, chain.state, height=chain.height + 1)
+
+    with pytest.raises(WalletServiceError, match="already known"):
+        wallet.build_register_token(
+            alice.keypair,
+            name="chess960",
+            ruleset="chess960",
+            symbol="C960",
+            display_name="Chess960",
+            subsidy=COINS,
+        )
+    with pytest.raises(WalletServiceError, match="cannot be negative"):
+        wallet.build_register_token(
+            alice.keypair,
+            name="dragonchess",
+            ruleset="standard",
+            symbol="DRG",
+            display_name="Dragon Chess",
+            subsidy=COINS,
+            initial_supply=-1,
+        )
+    with pytest.raises(WalletServiceError, match="max_plies"):
+        wallet.build_register_token(
+            alice.keypair,
+            name="dragonchess",
+            ruleset="standard",
+            symbol="DRG",
+            display_name="Dragon Chess",
+            subsidy=COINS,
+            min_plies=DEVNET.max_plies + 1,
+        )
+    with pytest.raises(WalletServiceError, match="supply cap"):
+        wallet.build_register_token(
+            alice.keypair,
+            name="dragonchess",
+            ruleset="standard",
+            symbol="DRG",
+            display_name="Dragon Chess",
+            subsidy=COINS,
+            initial_supply=2 * COINS,
+            max_supply=1,
+            halving_interval=1,
+        )
+    scaled = wallet.build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=1,
+        decimals=2,
+        initial_supply=100,
+        max_supply=1,
+        halving_interval=1,
+    )
+    assert scaled.payload["initial_supply"] == 100
+    validate_transaction(scaled, DEVNET, chain.state, height=chain.height + 1)
+    with pytest.raises(WalletServiceError, match="supply cap"):
+        wallet.build_register_token(
+            alice.keypair,
+            name="dragonchess",
+            ruleset="standard",
+            symbol="DRG",
+            display_name="Dragon Chess",
+            subsidy=1,
+            decimals=2,
+            initial_supply=101,
+            max_supply=1,
+            halving_interval=1,
+        )
+
+
+def test_transfer_refuses_a_symbol_shared_by_two_tokens(live_chain: Any) -> None:
+    chain = live_chain.chain
+    wallet = WalletService(DEVNET, chain.state, chain=chain)
+    alice = live_chain.accounts["alice"]
+    bob = live_chain.accounts["bob"]
+    for name in ("alpha", "beta"):
+        asset = derive_variant_asset_id(name, "SAME", 8, "standard")
+        variant = VariantParams(
+            name=name,
+            rules="chess",
+            ruleset="standard",
+            asset=asset,
+            symbol="SAME",
+            display_name=name.title(),
+            subsidy=COINS,
+            min_plies=DEVNET.min_plies,
+        )
+        chain.state.tokens[name] = TokenRecord(
+            name=name,
+            variant=variant,
+            owner=alice.address,
+            registered_at_height=0,
+        )
+    with pytest.raises(WalletServiceError, match="ambiguous"):
+        wallet.build_transfer(alice.keypair, bob.address, 1, asset="SAME")
+    alpha = derive_variant_asset_id("alpha", "SAME", 8, "standard")
+    chain.state.credit_asset(alice.address, alpha, 1)
+    assert (
+        wallet.build_transfer(alice.keypair, bob.address, 1, asset="alpha").payload["asset"]
+        == alpha
+    )
 
 
 def test_availability_and_reveal_target_the_next_block_epoch(live_chain: Any) -> None:

@@ -7,12 +7,13 @@ import pytest
 from sccp.chain.state import (
     Account,
     State,
+    TokenRecord,
     epoch_end_height,
     epoch_of,
     epoch_start_height,
     first_matchable_epoch,
 )
-from sccp.config import DEVNET, MAINNET
+from sccp.config import DEVNET, MAINNET, VariantParams, derive_variant_asset_id
 from sccp.errors import StateError
 from sccp.protocol.models import RosterMember
 
@@ -189,6 +190,108 @@ def test_the_burn_counter_is_not_a_state_root_leaf() -> None:
     before = state.state_root()
     state.burned = 9
     assert state.state_root() == before
+
+
+def _token_record() -> TokenRecord:
+    asset = derive_variant_asset_id("dragonchess", "DRG", 8, "standard")
+    variant = VariantParams(
+        name="dragonchess",
+        rules="chess",
+        ruleset="standard",
+        asset=asset,
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=40,
+        halving_interval=10,
+        max_supply=100,
+        min_plies=1,
+    )
+    return TokenRecord(
+        name="dragonchess",
+        variant=variant,
+        owner=ALICE,
+        registered_at_height=7,
+        initial_supply=123,
+    )
+
+
+def test_registered_tokens_are_committed_and_survive_a_snapshot() -> None:
+    state = _state()
+    record = _token_record()
+    state.tokens[record.name] = record
+    asset = record.variant.asset
+    assert asset is not None
+    state.credit_asset(ALICE, asset, record.initial_supply)
+    before = state.state_root()
+
+    restored = State.from_snapshot(DEVNET, state.snapshot())
+    assert restored.state_root() == before
+    restored_record = restored.tokens["dragonchess"]
+    assert restored_record == record
+    assert restored.variant("dragonchess") == record.variant
+    assert restored.variant_for_asset(asset) == record.variant
+    assert restored.variant_params()["dragonchess"] == record.variant
+    assert "dragonchess" in restored.variant_names()
+    assert restored.asset_balance(ALICE, asset) == record.initial_supply
+
+
+def test_snapshot_without_tokens_restores_an_empty_registry() -> None:
+    state = _state()
+    document = state.snapshot()
+    document.pop("tokens", None)
+    restored = State.from_snapshot(DEVNET, document)
+    assert restored.tokens == {}
+
+
+def test_snapshot_rejects_a_token_that_shadows_a_built_in() -> None:
+    state = _state()
+    document = state.snapshot()
+    variant = VariantParams(
+        name="chess960",
+        rules="chess960",
+        ruleset="chess960",
+        asset=derive_variant_asset_id("chess960", "FAKE", 8, "chess960"),
+        symbol="FAKE",
+        display_name="Fake 960",
+        subsidy=1,
+        min_plies=1,
+        opening_book="none",
+    )
+    document["tokens"] = {
+        "chess960": TokenRecord(
+            name="chess960",
+            variant=variant,
+            owner=ALICE,
+            registered_at_height=1,
+        ).as_dict()
+    }
+    with pytest.raises(StateError, match="cannot redefine built-in variant"):
+        State.from_snapshot(DEVNET, document)
+
+
+def test_snapshot_rejects_two_tokens_with_the_same_asset_id() -> None:
+    state = _state()
+    document = state.snapshot()
+    first = _token_record()
+    second_variant = first.variant.model_copy(
+        update={
+            "name": "dragonchess2",
+            "symbol": "DRG2",
+            "display_name": "Dragon Chess 2",
+        }
+    )
+    second = TokenRecord(
+        name="dragonchess2",
+        variant=second_variant,
+        owner=ALICE,
+        registered_at_height=8,
+    )
+    document["tokens"] = {
+        first.name: first.as_dict(),
+        second.name: second.as_dict(),
+    }
+    with pytest.raises(StateError, match="reuses asset id"):
+        State.from_snapshot(DEVNET, document)
 
 
 def test_snapshot_without_a_burned_counter_restores_it_as_zero() -> None:

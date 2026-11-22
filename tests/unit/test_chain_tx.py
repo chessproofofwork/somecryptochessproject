@@ -359,6 +359,166 @@ def test_reveal_rejects_a_wrong_nonce_and_a_wrong_window(
     assert _reason(late, ledger) is TxFailure.WINDOW
 
 
+def test_register_token_adds_a_variant_and_credits_its_initial_supply(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    tx = wallet.build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=50 * COINS,
+        initial_supply=123,
+        max_supply=21_000_000,
+        halving_interval=210_000,
+        min_plies=4,
+    )
+    _check(tx, ledger)
+    before = ledger.account(alice.address).balance
+    apply_transaction(ledger, tx, height=HEIGHT)
+
+    record = ledger.tokens["dragonchess"]
+    asset = record.variant.asset
+    assert asset is not None
+    assert record.variant.rules == "chess"
+    assert record.variant.ruleset == "standard"
+    assert record.owner == alice.address
+    assert record.registered_at_height == HEIGHT
+    assert record.initial_supply == 123
+    assert ledger.variant("dragonchess") == record.variant
+    assert "dragonchess" in ledger.variant_names()
+    assert ledger.variant_for_asset(asset) == record.variant
+    assert ledger.account(alice.address).balance == before - DEVNET.min_fee
+    assert ledger.account(alice.address).assets[asset] == 123
+    assert ledger.minted_assets[asset] == 123
+
+    again = _resigned(tx.model_copy(update={"nonce": 1}), alice)
+    assert _reason(again, ledger) is TxFailure.TYPE
+
+
+def test_register_token_requires_its_fee_in_the_senders_balance(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=COINS,
+    )
+    ledger.account(alice.address).balance = DEVNET.min_fee - 1
+    assert _reason(tx, ledger) is TxFailure.BALANCE
+
+
+def test_register_token_scales_its_cap_by_the_token_decimals(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        name="centicoin",
+        ruleset="standard",
+        symbol="CENT",
+        display_name="Centicoin",
+        subsidy=1,
+        decimals=2,
+        initial_supply=100,
+        max_supply=1,
+        halving_interval=10,
+    )
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+    asset = ledger.tokens["centicoin"].variant.asset
+    assert asset is not None
+    assert ledger.account(alice.address).assets[asset] == 100
+    over_cap = _resigned(
+        tx.model_copy(
+            update={
+                "nonce": 1,
+                "payload": {
+                    **tx.payload,
+                    "variant": "overcap",
+                    "symbol": "OVER",
+                    "initial_supply": 101,
+                },
+            }
+        ),
+        alice,
+    )
+    assert _reason(over_cap, ledger, height=HEIGHT + 1) is TxFailure.TYPE
+
+
+def test_register_token_rejects_built_in_names_and_known_rulesets(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    tx = wallet.build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=COINS,
+    )
+    duplicate = _resigned(
+        tx.model_copy(
+            update={"payload": {**tx.payload, "variant": "chess960", "ruleset": "chess960"}}
+        ),
+        alice,
+    )
+    assert _reason(duplicate, ledger) is TxFailure.TYPE
+    standard = _resigned(
+        tx.model_copy(update={"payload": {**tx.payload, "variant": "standard"}}), alice
+    )
+    assert _reason(standard, ledger) is TxFailure.SCHEMA
+    unknown_ruleset = _resigned(
+        tx.model_copy(update={"payload": {**tx.payload, "ruleset": "nope"}}), alice
+    )
+    assert _reason(unknown_ruleset, ledger) is TxFailure.TYPE
+
+
+def test_register_token_rejects_a_bad_slug_and_an_impossible_issuance(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=COINS,
+    )
+    bad_slug = _resigned(
+        tx.model_copy(update={"payload": {**tx.payload, "variant": "Dragon Chess"}}), alice
+    )
+    assert _reason(bad_slug, ledger) is TxFailure.SCHEMA
+    over_cap = _resigned(
+        tx.model_copy(
+            update={
+                "payload": {
+                    **tx.payload,
+                    "initial_supply": 2 * COINS,
+                    "max_supply": 1,
+                    "halving_interval": 10,
+                }
+            }
+        ),
+        alice,
+    )
+    assert _reason(over_cap, ledger) is TxFailure.TYPE
+    no_halving = _resigned(
+        tx.model_copy(update={"payload": {**tx.payload, "max_supply": 10}}), alice
+    )
+    assert _reason(no_halving, ledger) is TxFailure.SCHEMA
+
+
 def test_txid_ignores_the_signature_and_tracks_the_body(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:

@@ -155,7 +155,9 @@ def validate_claim(state: State, tx: Transaction, height: int) -> TimeoutClaimRe
     if tx.sender not in (certificate.white, certificate.black):
         _fail(f"{tx.sender} is not a seat of match {claim.match_id}")
     try:
-        variant_params = params.variant(certificate.variant)
+        # A timeout claim can name a chain-registered token, whose clock the
+        # built-in registry does not know. State carries both.
+        variant_params = state.variant(certificate.variant)
         validate_time_control(
             certificate.time_control,
             max_plies=params.max_plies,

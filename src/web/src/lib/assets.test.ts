@@ -26,7 +26,7 @@ const params = {
       max_supply: null,
       min_plies: 1,
       max_games_per_block: 1,
-      opening_book: "standard",
+      opening_book: "v1",
       time_control_initial_ms: 600_000,
       time_control_increment_ms: 0,
     },

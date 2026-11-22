@@ -105,6 +105,7 @@ class TxType(StrEnum):
     HTLC_LOCK = "htlc_lock"
     HTLC_CLAIM = "htlc_claim"
     HTLC_REFUND = "htlc_refund"
+    REGISTER_TOKEN = "register_token"
 
 
 class Transaction(ProtocolModel):

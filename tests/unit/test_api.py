@@ -19,9 +19,15 @@ from sccp.chain.dex import NATIVE_ASSET
 from sccp.chain.dex import pool_id as derive_pool_id
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import Pool, ProofRecord
+from sccp.chain.state import Pool, ProofRecord, TokenRecord
 from sccp.chain.tx import txid
-from sccp.config import CHESS960_ASSET_ID, DEVNET, TESTNET
+from sccp.config import (
+    CHESS960_ASSET_ID,
+    DEVNET,
+    TESTNET,
+    VariantParams,
+    derive_variant_asset_id,
+)
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import MempoolError, ProtocolError
@@ -160,6 +166,59 @@ def test_pool_routes_report_reserves_and_positions() -> None:
     assert one["total_shares"] == 1_000
     assert one["fee_bps"] == DEVNET.dex_fee_bps
     assert one["shares"] == {FAUCET_ADDRESS: 1_000}
+    assert missing.status_code == 404
+    service.close()
+
+
+def _token_record(name: str, symbol: str) -> TokenRecord:
+    asset = derive_variant_asset_id(name, symbol, 8, "standard")
+    return TokenRecord(
+        name=name,
+        variant=VariantParams(
+            name=name,
+            rules="chess",
+            ruleset="standard",
+            asset=asset,
+            symbol=symbol,
+            display_name=f"{name.title()} Chess",
+            subsidy=50,
+            min_plies=1,
+        ),
+        owner=FAUCET_ADDRESS,
+        registered_at_height=4,
+        initial_supply=10,
+    )
+
+
+def test_token_routes_name_tokens_by_name_asset_and_unique_symbol() -> None:
+    service = _node()
+    alpha = _token_record("alpha", "AAA")
+    beta = _token_record("beta", "BBB")
+    gamma = _token_record("gamma", "AAA")
+    for record in (alpha, beta, gamma):
+        service.chain.state.tokens[record.name] = record
+    assert alpha.variant.asset is not None
+    service.chain.state.minted_assets[alpha.variant.asset] = 99
+    with _client(service) as client:
+        listing = client.get("/v1/tokens").json()
+        by_name = client.get("/v1/tokens/alpha").json()
+        by_asset = client.get(f"/v1/tokens/{alpha.variant.asset}").json()
+        by_symbol = client.get("/v1/tokens/BBB")
+        ambiguous = client.get("/v1/tokens/AAA")
+        missing = client.get("/v1/tokens/nope")
+    assert listing["network"] == "devnet"
+    assert [token["name"] for token in listing["tokens"]] == ["alpha", "beta", "gamma"]
+    assert by_name == by_asset
+    assert by_name["asset"] == alpha.variant.asset
+    assert by_name["symbol"] == "AAA"
+    assert by_name["ruleset"] == "standard"
+    assert by_name["owner"] == FAUCET_ADDRESS
+    assert by_name["registered_at_height"] == 4
+    assert by_name["minted"] == 99
+    assert by_symbol.status_code == 200
+    assert by_symbol.json()["name"] == "beta"
+    assert ambiguous.status_code == 404
+    assert "ambiguous" in ambiguous.json()["detail"]
     assert missing.status_code == 404
     service.close()
 

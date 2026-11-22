@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from sccp.chess.pgn import validate_pgn
+from sccp.config import NetworkParams
 from sccp.errors import ClockError, PgnValidationError, ProofVerificationError, TranscriptError
 from sccp.protocol.clocks import (
     FIXED_TIME_CONTROL,
@@ -627,7 +628,10 @@ def test_time_forfeit_proof_round_trips(signed_match) -> None:
 def test_low_ply_forfeits_are_marked_and_verified(signed_match) -> None:
     pgn, evidence = _flag_game(signed_match)
     _, result = _signed_result(signed_match, pgn)
-    params = signed_match.params.model_copy(update={"min_plies": 10})
+    document = signed_match.params.model_dump()
+    document["min_plies"] = 10
+    document["variants"] = [{**variant, "min_plies": 10} for variant in document["variants"]]
+    params = NetworkParams.model_validate(document)
     proof = build_win_proof(
         signed_match.certificate,
         pgn,

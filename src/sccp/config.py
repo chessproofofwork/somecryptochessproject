@@ -64,11 +64,23 @@ transaction cap with classical signatures alone.
 """
 
 
-def coins_to_units(coins: int) -> int:
+def units_per_coin(decimals: int = 8) -> int:
+    """Base units in one whole coin at ``decimals`` decimal places.
+
+    Native ZQWX and the built-in variants use eight. A registered token fixes
+    its own ``decimals`` at registration, so every cap and conversion for that
+    asset has to use its value rather than the native constant.
+    """
+    if not isinstance(decimals, int) or isinstance(decimals, bool) or not 0 <= decimals <= 18:
+        raise ConfigError("decimals must be an integer between 0 and 18")
+    return int(10**decimals)
+
+
+def coins_to_units(coins: int, *, decimals: int = 8) -> int:
     """Convert whole coins to base units."""
     if not isinstance(coins, int) or isinstance(coins, bool):
         raise ConfigError("coin amounts must be integers")
-    return coins * UNITS_PER_COIN
+    return coins * units_per_coin(decimals)
 
 
 def format_coins(units: int) -> str:
@@ -80,6 +92,25 @@ def format_coins(units: int) -> str:
     whole, fraction = divmod(abs(units), UNITS_PER_COIN)
     sign = "-" if units < 0 else ""
     return f"{sign}{whole}.{fraction:08d}"
+
+
+def derive_variant_asset_id(name: str, symbol: str, decimals: int, ruleset: str) -> str:
+    """Derive a token's immutable asset id from its registration fields.
+
+    A token's symbol and display name are discovery metadata, not identity: the
+    asset id commits to the variant name, ticker, decimal precision and the
+    ruleset used to settle games. The variant name is part of the hash so a
+    second registration cannot claim an existing token's asset id.
+    """
+    return domain_hex(
+        Domain.ASSET,
+        {
+            "variant": name,
+            "symbol": symbol,
+            "decimals": decimals,
+            "ruleset": ruleset,
+        },
+    )
 
 
 class VariantParams(BaseModel):
@@ -94,6 +125,14 @@ class VariantParams(BaseModel):
 
     name: str = Field(min_length=1, max_length=32)
     rules: str = Field(min_length=1, max_length=32)
+    ruleset: str | None = Field(default=None, min_length=1, max_length=32)
+    """Registered ruleset that decides how games of this variant are played.
+
+    ``None`` means the variant is its own ruleset, which is how the built-in
+    ``standard`` and ``chess960`` variants are defined. A chain-registered token
+    names an existing ruleset (for example ``standard``) so validation never has
+    to execute code supplied by a transaction.
+    """
     asset: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     symbol: str = Field(min_length=1, max_length=16)
     display_name: str = Field(min_length=1, max_length=64)
@@ -103,7 +142,13 @@ class VariantParams(BaseModel):
     max_supply: int | None = Field(default=None, ge=1)
     min_plies: int = Field(ge=1)
     max_games_per_block: int = Field(default=1, ge=1)
-    opening_book: str = Field(default="standard", min_length=1, max_length=64)
+    opening_book: str = Field(default="v1", min_length=1, max_length=64)
+    """Opening-book version the relay plays this variant's games from.
+
+    Omission means the packaged ``v1`` book. A registration normally records the
+    network's own ``book_version`` so a token plays the same book as the native
+    variant.
+    """
     time_control_initial_ms: int = Field(
         default=DEFAULT_TIME_CONTROL_INITIAL_MS, ge=1, le=MAX_CLOCK_MS
     )
@@ -125,7 +170,7 @@ class VariantParams(BaseModel):
 
     @model_validator(mode="after")
     def _check_invariants(self) -> Self:
-        ruleset = ruleset_for(self.name)
+        ruleset = ruleset_for(self.ruleset or self.name)
         if self.rules != ruleset.pgn_rules:
             raise ConfigError(
                 f"variant {self.name!r} is registered with PGN rules "
@@ -134,6 +179,8 @@ class VariantParams(BaseModel):
             )
         if self.name == STANDARD_VARIANT and self.asset is not None:
             raise ConfigError("the standard variant is native ZQWX with no derived asset")
+        if self.name == STANDARD_VARIANT and self.ruleset not in (None, STANDARD_VARIANT):
+            raise ConfigError("the standard variant uses its own ruleset")
         if self.name != STANDARD_VARIANT and self.asset is None:
             raise ConfigError(f"variant {self.name!r} needs a derived asset id")
         if (self.max_supply is None) != (self.halving_interval is None):

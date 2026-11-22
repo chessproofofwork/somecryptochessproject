@@ -54,7 +54,16 @@ from sccp.chess.engines import open_engine
 from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
 from sccp.chess.variants import is_chess960
-from sccp.config import NetworkParams, coins_to_units, format_coins, get_network
+from sccp.config import (
+    DEFAULT_TIME_CONTROL_INCREMENT_MS,
+    DEFAULT_TIME_CONTROL_INITIAL_MS,
+    NetworkParams,
+    VariantParams,
+    coins_to_units,
+    derive_variant_asset_id,
+    format_coins,
+    get_network,
+)
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import hybrid_sign
 from sccp.crypto.wallet import (
@@ -73,7 +82,7 @@ from sccp.crypto.wallet import (
 from sccp.devnet import run_devnet
 from sccp.errors import SccpError, WalletServiceError
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient
-from sccp.miner.epoch_follower import EpochFollower
+from sccp.miner.epoch_follower import EpochFollower, _token_variants
 from sccp.miner.matchmaker import Matchmaker
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
 from sccp.node.app import create_app as create_node_app
@@ -536,6 +545,15 @@ def _node_document(
     if not isinstance(payload, Mapping):
         _fail(f"{path} did not return a JSON object")
     return payload
+
+
+def _node_variants(node: str, params: NetworkParams) -> dict[str, VariantParams]:
+    """Every variant token the node serves, keyed by variant name."""
+    document = _node_document(node, "/v1/tokens")
+    network = document.get("network")
+    if network is not None and network != params.network_id:
+        _fail(f"node serves {network!r}, but this command is on {params.network_id!r}")
+    return dict(_run(lambda: _token_variants(document)))
 
 
 def _document_text(document: Mapping[str, object], key: str) -> str:
@@ -1288,6 +1306,7 @@ def matchmaker_run(
             params=params,
             store=store,
             witness_keypair=witness,
+            variants=_node_variants(node, params) if node is not None else None,
         )
     )
     typer.echo(
@@ -1804,7 +1823,9 @@ def miner_run(
         _fail("--move-delay-seconds cannot be negative", code=2)
     secret = _nonce_secret(nonce_secret, nonce_secret_file)
     params = _resolve_network(ctx, network)
-    _run(lambda: params.variant(variant))
+    variants = _node_variants(node, params) if node is not None else None
+    if variants is None or variant not in variants:
+        _run(lambda: params.variant(variant))
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
@@ -1829,6 +1850,7 @@ def miner_run(
         witness_urls=tuple(witness_url or ()),
         resign_after_plies=resign_after_plies,
         variant=variant,
+        variants=variants,
         move_delay_seconds=move_delay_seconds,
         submit_timeout_claims=submit_timeout_claims,
     )
@@ -2246,6 +2268,149 @@ def faucet_send(
         _echo_json(payload)
         return
     typer.echo(f"faucet sent {_coins(coins_to_units(amount))} to {to}")
+    typer.echo(f"txid: {payload['txid']}")
+
+
+@dex_app.command("tokens")
+def dex_tokens(
+    ctx: typer.Context,
+    node: Annotated[str | None, typer.Option("--node", help="Node that serves the tokens.")] = None,
+) -> None:
+    """List every variant token registered on the node's chain."""
+    document = _node_document(node, "/v1/tokens")
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    rows = document.get("tokens")
+    if not isinstance(rows, list) or not rows:
+        typer.echo("no registered tokens on this chain")
+        return
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        maximum = row.get("max_supply")
+        cap = f" cap {maximum} coins" if maximum is not None else " uncapped"
+        typer.echo(
+            f"{row.get('name')} ({row.get('symbol')}) {row.get('ruleset')} "
+            f"asset {row.get('asset')}{cap}"
+        )
+        typer.echo(
+            f"  minted {row.get('minted')} of initial {row.get('initial_supply')}, "
+            f"subsidy {row.get('subsidy')} base units every win, "
+            f"{row.get('decimals')} decimals"
+        )
+
+
+@dex_app.command("register-token")
+def dex_register_token(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile that registers and funds the token.")],
+    name: Annotated[
+        str,
+        typer.Option("--name", help="New variant name; must not collide with any known variant."),
+    ],
+    ruleset: Annotated[
+        str,
+        typer.Option(
+            "--ruleset", help="Ruleset that settles the token's games: standard or chess960."
+        ),
+    ],
+    symbol: Annotated[
+        str, typer.Option("--symbol", help="Display symbol, unique per registration.")
+    ],
+    display_name: Annotated[
+        str | None,
+        typer.Option("--display-name", help="Human-readable name (default: --name)."),
+    ] = None,
+    subsidy: Annotated[int, typer.Option("--subsidy", help="Reward per win, in whole coins.")] = 10,
+    initial_supply: Annotated[
+        int,
+        typer.Option(
+            "--initial-supply", help="Coins minted to the registering key, in whole coins."
+        ),
+    ] = 0,
+    max_supply: Annotated[
+        int | None,
+        typer.Option("--max-supply", help="Lifetime coin cap; requires --halving-interval."),
+    ] = None,
+    halving_interval: Annotated[
+        int | None,
+        typer.Option("--halving-interval", help="Blocks between subsidy halvings."),
+    ] = None,
+    min_plies: Annotated[
+        int | None,
+        typer.Option("--min-plies", help="Minimum game length (default: the network's)."),
+    ] = None,
+    max_games_per_block: Annotated[
+        int,
+        typer.Option("--max-games-per-block", help="Games this token rewards in one block."),
+    ] = 1,
+    opening_book: Annotated[
+        str | None,
+        typer.Option(
+            "--opening-book",
+            help="Opening-book version recorded for the token (default: the network's).",
+        ),
+    ] = None,
+    decimals: Annotated[
+        int, typer.Option("--decimals", help="Decimal places, fixed at registration.")
+    ] = 8,
+    time_control_initial_ms: Annotated[
+        int,
+        typer.Option("--time-control-initial-ms", help="Starting clock, in milliseconds."),
+    ] = DEFAULT_TIME_CONTROL_INITIAL_MS,
+    time_control_increment_ms: Annotated[
+        int,
+        typer.Option("--time-control-increment-ms", help="Per-move increment, in milliseconds."),
+    ] = DEFAULT_TIME_CONTROL_INCREMENT_MS,
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Register a new variant token; it is immutable once mined into a block."""
+    if initial_supply < 0:
+        _fail("--initial-supply cannot be negative", code=2)
+    if subsidy <= 0:
+        _fail("--subsidy must be positive", code=2)
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_register_token(
+                wallet.signer,
+                name=name,
+                ruleset=ruleset,
+                symbol=symbol,
+                display_name=display_name or name,
+                subsidy=coins_to_units(subsidy, decimals=decimals),
+                initial_supply=coins_to_units(initial_supply, decimals=decimals),
+                decimals=decimals,
+                halving_interval=halving_interval,
+                max_supply=max_supply,
+                min_plies=min_plies,
+                max_games_per_block=max_games_per_block,
+                opening_book=opening_book,
+                time_control_initial_ms=time_control_initial_ms,
+                time_control_increment_ms=time_control_increment_ms,
+                fee=fee,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    payload = {
+        **_transaction_summary(tx, receipt),
+        "variant": name,
+        "asset": derive_variant_asset_id(name, symbol, decimals, ruleset),
+        "symbol": symbol,
+        "ruleset": ruleset,
+        "initial_supply": coins_to_units(initial_supply, decimals=decimals),
+        "subsidy": coins_to_units(subsidy, decimals=decimals),
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"registered token {name} ({symbol}) as asset {payload['asset']}")
     typer.echo(f"txid: {payload['txid']}")
 
 

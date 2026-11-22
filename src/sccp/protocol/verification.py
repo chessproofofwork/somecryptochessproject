@@ -23,7 +23,7 @@ from sccp.chess.openings import OpeningBook, book_for
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import ParsedGame, validate_pgn
 from sccp.chess.rulesets import ruleset_for, start_position_for
-from sccp.config import NetworkParams, get_network
+from sccp.config import NetworkParams, VariantParams, get_network
 from sccp.errors import (
     BeaconError,
     ClockError,
@@ -55,6 +55,7 @@ from sccp.protocol.models import (
 from sccp.protocol.pairing import RosterEntry, match_id, verify_pairing, white_seat
 from sccp.protocol.transcript import (
     expected_from_certificate,
+    opening_hash,
     validate_opening_ref,
     verify_certificate_signatures,
     verify_result_signatures,
@@ -99,6 +100,12 @@ class ProofContext:
     expected_drand_round: int | None = None
     seen_game_hashes: frozenset[str] = field(default_factory=frozenset)
     seen_proof_ids: frozenset[str] = field(default_factory=frozenset)
+    variants: Mapping[str, VariantParams] | None = None
+    """Full variant registry, including chain-registered tokens.
+
+    ``None`` means "the network's built-ins in ``params``", which keeps every
+    existing caller and test working unchanged.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +149,8 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
             f"beacon is for epoch {beacon.epoch}, proof claims epoch {proof.epoch}",
         )
     try:
-        variant_params = params.variant(proof.variant)
+        registered = (context.variants or {}).get(proof.variant)
+        variant_params = registered if registered is not None else params.variant(proof.variant)
     except ConfigError as exc:
         _fail(ProofFailure.CERTIFICATE, str(exc))
     if cert.variant != proof.variant:
@@ -219,12 +227,14 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
     # 4. Opening: the certificate carries the line, so no local book is needed.
     if proof.opening != cert.opening:
         _fail(ProofFailure.OPENING, "proof opening does not match the certificate")
+    rules = ruleset_for(variant_params.ruleset or variant_params.name)
     try:
-        validate_opening_ref(proof.opening)
+        validate_opening_ref(proof.opening, rules=rules)
     except TranscriptError as exc:
         _fail(ProofFailure.OPENING, str(exc))
-    rules = ruleset_for(proof.variant)
-    selected = start_position_for(proof.variant, beacon_bytes, proof.match_id)
+    selected = start_position_for(
+        variant_params.ruleset or proof.variant, beacon_bytes, proof.match_id
+    )
     if selected is not None:
         if (
             proof.opening.line_id != selected.line_id
@@ -245,7 +255,14 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         if (
             line.book_version != proof.opening.book_version
             or line.moves != proof.opening.moves
-            or line.opening_hash != proof.opening.hash
+            or opening_hash(
+                line.book_version,
+                line.line_id,
+                line.moves,
+                start_fen=proof.opening.start_fen,
+                variant=proof.variant,
+            )
+            != proof.opening.hash
         ):
             _fail(ProofFailure.OPENING, "opening does not match the local book line")
         if context.book.select(beacon_bytes, proof.match_id) != line:
@@ -326,6 +343,7 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
             expected=expected_from_certificate(cert),
             require_win=True,
             clock_evidence=proof.clock_evidence,
+            variants=context.variants,
         )
     except PgnValidationError as exc:
         _fail(ProofFailure.PGN, str(exc))

@@ -2758,6 +2758,152 @@
         ],
         "type": "object"
       },
+      "TokenList": {
+        "additionalProperties": false,
+        "properties": {
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "tokens": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TokenView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "network"
+        ],
+        "type": "object"
+      },
+      "TokenView": {
+        "additionalProperties": false,
+        "properties": {
+          "asset": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "decimals": {
+            "maximum": 18.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "display_name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "halving_interval": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initial_supply": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "max_games_per_block": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "max_supply": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "min_plies": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "minted": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "opening_book": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "owner": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "registered_at_height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "rules": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "ruleset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subsidy": {
+            "exclusiveMinimum": 0.0,
+            "type": "integer"
+          },
+          "symbol": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "time_control_increment_ms": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "time_control_initial_ms": {
+            "minimum": 1.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "network",
+          "asset",
+          "symbol",
+          "display_name",
+          "rules",
+          "decimals",
+          "subsidy",
+          "initial_supply",
+          "min_plies",
+          "max_games_per_block",
+          "opening_book",
+          "time_control_initial_ms",
+          "time_control_increment_ms",
+          "owner",
+          "registered_at_height",
+          "minted"
+        ],
+        "type": "object"
+      },
       "Transaction": {
         "additionalProperties": false,
         "properties": {
@@ -2916,7 +3062,8 @@
           "swap",
           "htlc_lock",
           "htlc_claim",
-          "htlc_refund"
+          "htlc_refund",
+          "register_token"
         ],
         "type": "string"
       },
@@ -4137,6 +4284,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NodeStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tokens": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tokens/{reference}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
