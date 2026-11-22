@@ -26,7 +26,11 @@ from sccp.chain import dex
 from sccp.chain.chain import Chain
 from sccp.chain.state import Account, HtlcRecord, State, epoch_of
 from sccp.chain.tx import MAX_TOKEN_AMOUNT, sign_transaction, txid
-from sccp.chess.rulesets import canonical_opening_line, ruleset_for
+from sccp.chess.rulesets import (
+    canonical_opening_line,
+    normalise_token_start_fen,
+    ruleset_for,
+)
 from sccp.config import (
     DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
@@ -780,6 +784,7 @@ class WalletService:
         max_supply: int | None = None,
         min_plies: int | None = None,
         max_games_per_block: int = 1,
+        start_fen: str | None = None,
         opening_book: str | None = None,
         openings: Sequence[str | Sequence[str]] = (),
         time_control_initial_ms: int = DEFAULT_TIME_CONTROL_INITIAL_MS,
@@ -800,6 +805,11 @@ class WalletService:
         identity, so another registration may reuse them and only the token id
         (the network-assigned asset id) distinguishes the two. The legacy
         ``name``/``symbol``/``display_name`` form is kept for pre-ticket chains.
+
+        ``start_fen`` pins the position every game of this token starts from. It
+        is canonicalised here and replayed against the chosen ruleset, so a
+        middle-game or variant position becomes part of the token's immutable
+        definition; a FEN-only token defaults to ``opening_book="none"``.
 
         ``openings`` is an optional per-token book: SAN lines (or space-delimited
         SAN strings) replayed against ``ruleset`` here and stored canonically on
@@ -828,9 +838,14 @@ class WalletService:
         if ruleset is None:
             raise WalletServiceError("a token registration must name its ruleset")
         resolved_min_plies = self.params.min_plies if min_plies is None else min_plies
-        resolved_opening_book = opening_book or (
-            f"token-{ticket}" if ticket is not None and openings else self.params.book_version
-        )
+        if opening_book is not None:
+            resolved_opening_book = opening_book
+        elif ticket is not None and openings:
+            resolved_opening_book = f"token-{ticket}"
+        elif start_fen is not None:
+            resolved_opening_book = "none"
+        else:
+            resolved_opening_book = self.params.book_version
         if initial_supply < 0:
             raise WalletServiceError("initial_supply cannot be negative")
         for label, value in (
@@ -861,10 +876,16 @@ class WalletService:
             )
         try:
             selected_ruleset = ruleset_for(ruleset)
+            canonical_start = (
+                normalise_token_start_fen(selected_ruleset, start_fen)
+                if start_fen is not None
+                else None
+            )
             canonical_openings = tuple(
                 canonical_opening_line(
                     selected_ruleset.name,
                     line.split() if isinstance(line, str) else list(line),
+                    start_fen=canonical_start,
                 )
                 for line in openings
             )
@@ -879,6 +900,7 @@ class WalletService:
                 ticket=ticket,
                 rules=selected_ruleset.pgn_rules,
                 ruleset=ruleset,
+                start_fen=canonical_start,
                 asset=(
                     derive_token_asset_id(ticket, decimals, ruleset)
                     if ticket is not None
@@ -932,6 +954,8 @@ class WalletService:
             payload["variant"] = name
             payload["symbol"] = symbol
             payload["display_name"] = display_name
+        if canonical_start is not None:
+            payload["start_fen"] = canonical_start
         if canonical_openings:
             payload["openings"] = [list(line) for line in canonical_openings]
         if time_control_first_moves is not None:

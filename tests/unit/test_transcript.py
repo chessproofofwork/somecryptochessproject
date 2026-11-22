@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from sccp.chess.rulesets import ruleset_for
-from sccp.config import MAX_TOKEN_OPENING_PLIES
+from sccp.chess.rulesets import chess960_start_fen, ruleset_for
+from sccp.config import MAX_TOKEN_OPENING_PLIES, VariantParams
 from sccp.errors import TranscriptError
 from sccp.protocol.models import OpeningRef, TimeControl, Transcript
 from sccp.protocol.transcript import (
@@ -27,6 +27,7 @@ from sccp.protocol.transcript import (
     save_transcript,
     sign_certificate,
     start_opening_ref,
+    token_opening_ref,
     validate_opening_ref,
     verify_certificate_signatures,
     verify_result_signatures,
@@ -66,6 +67,37 @@ def test_a_token_certificate_can_carry_a_middle_game_prefix(
             moves=(*line, "Bxb8"),
             variant="token-0042",
         )
+
+
+def test_a_pinned_chess960_token_overrides_the_beacon_start() -> None:
+    start = chess960_start_fen(5)
+    token = VariantParams(
+        name="token-0049",
+        ticket="0049",
+        rules="chess960",
+        ruleset="chess960",
+        asset="b" * 64,
+        symbol="FISCHER",
+        display_name="Pinned Fischer Random",
+        subsidy=1,
+        min_plies=1,
+        start_fen=start,
+        opening_book="none",
+    )
+    ref = token_opening_ref(
+        token,
+        bytes(32),
+        "ab" * 32,
+        rules=ruleset_for("chess960"),
+    )
+    assert ref is not None
+    assert ref.start_fen == start
+    assert ref.moves == ()
+    validate_opening_ref(
+        ref,
+        rules=ruleset_for("chess960"),
+        variants={token.name: token},
+    )
 
 
 def test_validate_opening_ref_rejects_tampering(protocol_book) -> None:

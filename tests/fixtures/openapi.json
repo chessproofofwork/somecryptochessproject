@@ -2938,6 +2938,18 @@
               }
             ]
           },
+          "start_fen": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "subsidy": {
             "exclusiveMinimum": 0.0,
             "type": "integer"

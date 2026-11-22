@@ -138,6 +138,112 @@ def test_a_token_opening_can_start_from_a_middle_game_prefix(
         )
 
 
+CUSTOM_START_FEN = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3"
+CANONICAL_CUSTOM_START_FEN = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"
+
+
+def test_a_token_can_pin_a_canonical_start_fen() -> None:
+    variant = VariantParams(
+        name="token-0123",
+        ticket="0123",
+        rules="chess",
+        ruleset="standard",
+        asset="b" * 64,
+        symbol="GOLD",
+        display_name="Gold Coin",
+        subsidy=1,
+        min_plies=1,
+        start_fen=CUSTOM_START_FEN,
+        opening_book="none",
+    )
+    assert variant.start_fen == CANONICAL_CUSTOM_START_FEN
+
+
+def test_token_openings_replay_from_the_pinned_start_fen() -> None:
+    variant = VariantParams(
+        name="token-0123",
+        ticket="0123",
+        rules="chess",
+        ruleset="standard",
+        asset="b" * 64,
+        symbol="GOLD",
+        display_name="Gold Coin",
+        subsidy=1,
+        min_plies=1,
+        start_fen=CUSTOM_START_FEN,
+        opening_book="token-0123",
+        openings=(("Nf3", "Nf6", "Nc3"),),
+    )
+    assert variant.openings == (("Nf3", "Nf6", "Nc3"),)
+
+    with pytest.raises(ValidationError, match="opening 0 is invalid"):
+        VariantParams(
+            name="token-0123",
+            ticket="0123",
+            rules="chess",
+            ruleset="standard",
+            asset="b" * 64,
+            symbol="GOLD",
+            display_name="Gold Coin",
+            subsidy=1,
+            min_plies=1,
+            start_fen=CUSTOM_START_FEN,
+            opening_book="token-0123",
+            openings=(("e4",),),
+        )
+
+
+def test_a_pinned_start_needs_a_playable_position_and_no_network_book() -> None:
+    with pytest.raises(ValidationError, match="already terminal"):
+        VariantParams(
+            name="token-0123",
+            ticket="0123",
+            rules="chess",
+            ruleset="standard",
+            asset="b" * 64,
+            symbol="GOLD",
+            display_name="Gold Coin",
+            subsidy=1,
+            min_plies=1,
+            start_fen="7k/6Q1/6K1/8/8/8/8/8 b - - 0 1",
+            opening_book="none",
+        )
+
+    with pytest.raises(ValidationError, match="set opening_book to 'none'"):
+        VariantParams(
+            name="token-0123",
+            ticket="0123",
+            rules="chess",
+            ruleset="standard",
+            asset="b" * 64,
+            symbol="GOLD",
+            display_name="Gold Coin",
+            subsidy=1,
+            min_plies=1,
+            start_fen=CUSTOM_START_FEN,
+        )
+
+
+def test_a_chess960_token_can_pin_one_start_position() -> None:
+    from sccp.chess.rulesets import chess960_start_fen
+
+    start = chess960_start_fen(0)
+    variant = VariantParams(
+        name="token-0123",
+        ticket="0123",
+        rules="chess960",
+        ruleset="chess960",
+        asset="b" * 64,
+        symbol="FISCHER",
+        display_name="Fischer Random",
+        subsidy=1,
+        min_plies=1,
+        start_fen=start,
+        opening_book="none",
+    )
+    assert variant.start_fen == start
+
+
 @pytest.mark.parametrize(
     ("network", "hrp"),
     [(MAINNET, "sccp"), (TESTNET, "sccpt"), (DEVNET, "sccpt")],

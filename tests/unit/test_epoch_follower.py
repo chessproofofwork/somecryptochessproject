@@ -173,7 +173,8 @@ def test_a_poll_teaches_the_relay_the_chain_s_registered_tokens(signed_match) ->
         display_name="Dragon Chess",
         subsidy=5,
         min_plies=1,
-        opening_book=signed_match.params.book_version,
+        start_fen="rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3",
+        opening_book="none",
     )
     node.tokens = lambda: {"tokens": [token.model_dump(mode="json")]}  # type: ignore[method-assign]
     follower, state = _follower(signed_match, node)

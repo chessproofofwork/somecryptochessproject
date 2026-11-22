@@ -82,8 +82,11 @@ Rules:
 4. `start_fen` is `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1`
    for standard chess. A Chess960 game uses one of the 960 legal positions in
    Shredder-FEN, carries `SetUp "1"` and `Variant "Chess960"`, and adds
-   `"variant": "chess960"` to the hash payload. A standard PGN carrying any
-   other `FEN` (or an ambiguous `KQkq` Chess960 FEN) is rejected.
+   `"variant": "chess960"` to the hash payload. A chain-registered token may pin
+   its own legal start FEN at registration; its games carry that canonical FEN
+   with `SetUp "1"` and hash it as their `start_fen`. A standard game that is not
+   a token match carrying any other `FEN` (or an ambiguous `KQkq` Chess960 FEN)
+   is rejected.
 5. PGN headers, comments, clock annotations, move numbers and whitespace are
    **not** hashed. The same moves with different metadata hash identically; a
    different move order or result hashes differently.
@@ -111,7 +114,7 @@ when a second game follows the first.
 | `EngineWhite`, `EngineBlack` | Engine fingerprints; must equal the certificate |
 | `OpeningID`, `OpeningHash` | Book line id and its opening hash |
 | `Rules` | the ruleset's PGN `Rules` value: `chess`, `chess960`, `antichess`, `atomic`, `crazyhouse`, `giveaway`, `horde`, `kingofthehill`, `racingkings`, `suicide` or `threecheck` |
-| `FEN`, `SetUp`, `Variant` | Every non-standard ruleset requires `SetUp "1"` and a fixed start `FEN`; `Variant` is its canonical python-chess header. Chess960 also uses `Variant "Chess960"` with a Shredder-FEN. |
+| `FEN`, `SetUp`, `Variant` | Every non-standard ruleset, and every token with a pinned `start_fen`, requires `SetUp "1"` and its canonical start `FEN`; `Variant` is the ruleset's canonical python-chess header. Chess960 also uses `Variant "Chess960"` with a Shredder-FEN. |
 
 Every tag must be present and non-empty. When a certificate is supplied,
 `MatchID`, `Epoch`, `RoundNumber`, `SeatWhite`, `SeatBlack`, `EngineWhite`,
@@ -230,16 +233,17 @@ on top of that format (see the end of this section).
   canonicalised to SAN, recorded on chain and selected with the same formula. A
   token that declares lines records
   `opening_book = "token-<ticket>"` by default; a token that declares none uses
-  the network's `book_version`. The selected line is accepted only when it
-  replays legally from the token ruleset's start; otherwise the match starts
-  from that ruleset's fixed initial position with `book_version = "none"`,
-  `line_id = 0` and no moves. Token lines replay from the ruleset's own start
-  position, and Chess960 allows no book moves at all. A fixed-start variant's
-  certificate carries its start FEN and variant name alongside the selected
-  line.
+  the network's `book_version`, except that a token with a pinned `start_fen`
+  and no lines records `opening_book = "none"` and starts from that position.
+  The selected line is accepted only when it replays legally from the token's
+  start; otherwise the match starts from that start with `book_version = "none"`,
+  `line_id = 0` and no moves. Token lines replay from the pinned `start_fen` when
+  present and from the ruleset's own start otherwise, and Chess960 allows no book
+  moves at all. A fixed-start or pinned-start token's certificate carries its
+  start FEN and variant name alongside the selected line.
 - The certificate carries the chosen line and its `opening_hash`, plus the start
-  FEN and variant when the ruleset is not standard, so a verifier checks the
-  replay prefix without consulting a local book.
+  FEN and variant when the ruleset is not standard or the token pins a start, so
+  a verifier checks the replay prefix without consulting a local book.
 
 ## 5. Engines and fingerprints
 
@@ -356,9 +360,11 @@ to check the prefix:
  "start_signatures": {"white": "hex", "black": "hex"}}
 ```
 
-For a delayed token the control object also carries `"delay_ms": 5000`; the key
-is omitted when the delay is zero, so sudden-death and increment payloads keep
-their existing bytes. A multi-period token additionally carries
+A token with a pinned start includes its canonical `start_fen` in the opening
+reference; the certificate payload and game hash already include that FEN for
+every non-standard variant. For a delayed token the control object also carries
+`"delay_ms": 5000`; the key is omitted when the delay is zero, so sudden-death
+and increment payloads keep their existing bytes. A multi-period token additionally carries
 `"first_period_moves": 40` and a `"periods"` array such as
 `[{"moves": 20, "initial_ms": 1800000, "increment_ms": 30000}]`. Each later
 period's `initial_ms` is added to both clocks when its boundary is reached.
@@ -878,7 +884,7 @@ the one scheme, not a second way to spend.
 | --- | --- | --- |
 | `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
 | `register` | `public_key`, `endpoint`, `engine`, `bond`, `variant`? | locks `bond >= min_bond`, stores key/endpoint/engine and the chosen variant (`standard` when omitted), sets `registered_until_epoch = epoch + registration_epochs`; refused while banned, and a miner already registered for a different variant must unregister first |
-| `register_token` | `ticket`, `display_name`, `symbol`, `ruleset`, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be 16 lowercase hex characters (or a four-digit short form) and unused, and is the token's unique registration serial, deriving the internal `variant = "token-<ticket>"`; `display_name` is the user-chosen name and `symbol` is the printable ticker, both are display metadata and need not be unique; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})` must be unused; `openings` are canonicalised to SAN for that ruleset (1–40 plies per line); an omitted `opening_book` is `token-<ticket>` when the token declares openings and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy name-based payloads (`variant` with `symbol` and `display_name`) remain accepted for pre-ticket chains. |
+| `register_token` | `ticket`, `display_name`, `symbol`, `ruleset`, `start_fen`?, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be 16 lowercase hex characters (or a four-digit short form) and unused, and is the token's unique registration serial, deriving the internal `variant = "token-<ticket>"`; `display_name` is the user-chosen name and `symbol` is the printable ticker, both are display metadata and need not be unique; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})` must be unused; an optional `start_fen` pins a legal canonical start position for every game and overrides a beacon-selected ruleset start such as Chess960; `openings` are canonicalised to SAN for that ruleset from `start_fen` (1–40 plies per line); an omitted `opening_book` is `token-<ticket>` when the token declares openings, `none` when it pins a start without lines, and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy name-based payloads (`variant` with `symbol` and `display_name`) remain accepted for pre-ticket chains. |
 | `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
 | `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
 | `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |

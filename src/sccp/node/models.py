@@ -503,6 +503,8 @@ class TokenView(ProtocolModel):
     display_name: str = Field(min_length=1)
     rules: str = Field(min_length=1)
     ruleset: str | None = None
+    start_fen: str | None = Field(default=None, min_length=1, max_length=128)
+    """Pinned initial position for a token, or ``None`` for the ruleset's start."""
     decimals: int = Field(ge=0, le=18)
     subsidy: int = Field(gt=0)
     initial_supply: int = Field(ge=0)

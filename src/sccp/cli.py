@@ -2455,11 +2455,25 @@ def dex_register_token(
         int,
         typer.Option("--max-games-per-block", help="Games this token rewards in one block."),
     ] = 1,
+    start_fen: Annotated[
+        str | None,
+        typer.Option(
+            "--start-fen",
+            help=(
+                "Pin the position every game starts from, in FEN. The halfmove and "
+                "fullmove counters are canonicalised away. Omit to use the ruleset's "
+                "own start or the beacon-selected Chess960 position."
+            ),
+        ),
+    ] = None,
     opening_book: Annotated[
         str | None,
         typer.Option(
             "--opening-book",
-            help="Opening-book version recorded for the token (default: the network's).",
+            help=(
+                "Opening-book version recorded for the token (default: the network's, "
+                "or 'none' for a start FEN with no token lines)."
+            ),
         ),
     ] = None,
     openings: Annotated[
@@ -2468,8 +2482,8 @@ def dex_register_token(
             "--opening",
             help=(
                 "A token-specific opening line in SAN or UCI, e.g. 'e4 e5 Nf3' "
-                "(at most 40 plies). Repeat for several lines; the beacon selects "
-                "one per match."
+                "(at most 40 plies), replayed from --start-fen when one is pinned. "
+                "Repeat for several lines; the beacon selects one per match."
             ),
         ),
     ] = None,
@@ -2575,6 +2589,7 @@ def dex_register_token(
                 max_supply=max_supply,
                 min_plies=min_plies,
                 max_games_per_block=max_games_per_block,
+                start_fen=start_fen,
                 opening_book=opening_book,
                 openings=tuple(openings or ()),
                 time_control_initial_ms=control.initial_ms,
@@ -2604,6 +2619,8 @@ def dex_register_token(
         "subsidy": coins_to_units(subsidy, decimals=decimals),
         "time_control": control_payload,
     }
+    if "start_fen" in tx.payload:
+        payload["start_fen"] = tx.payload["start_fen"]
     if _options(ctx).json_output:
         _echo_json(payload)
         return

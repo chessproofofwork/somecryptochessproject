@@ -30,7 +30,12 @@ from sccp.chess.pgn import (
 from sccp.chess.pgn import (
     GameResult as PgnResult,
 )
-from sccp.chess.rulesets import VariantRules, opening_line_fits, ruleset_for
+from sccp.chess.rulesets import (
+    VariantRules,
+    normalise_token_start_fen,
+    opening_line_fits,
+    ruleset_for,
+)
 from sccp.config import STANDARD_VARIANT, NetworkParams, VariantParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import (
@@ -107,17 +112,32 @@ def token_opening_ref(
     *,
     rules: VariantRules | None = None,
 ) -> OpeningRef | None:
-    """Select one of a token's own opening lines for a match.
+    """Select the opening a token's matches start from.
 
-    Returns ``None`` when the token declares no lines and therefore uses the
-    packaged book named by ``params.opening_book``. The selection rule is the
-    book's: ``SHA256(beacon || "opening" || match_id)[:8] % len(lines)``, so the
-    relay and every verifier derive the same line from chain state alone.
+    A token with a pinned ``start_fen`` and no lines returns that position as a
+    fixed ``book_version="none"`` opening, so the relay and every verifier agree
+    without consulting the network book. A token with lines uses the book's
+    selection rule: ``SHA256(beacon || "opening" || match_id)[:8] % len(lines)``.
+    ``None`` means the token has neither and therefore uses the packaged book
+    named by ``params.opening_book``.
     """
-    if not params.openings:
+    if not params.openings and params.start_fen is None:
         return None
+    ruleset = rules if rules is not None else ruleset_for(params.ruleset or params.name)
+    start_fen = (
+        normalise_token_start_fen(ruleset, params.start_fen)
+        if params.start_fen is not None
+        else ruleset.normalise_start_fen(None)
+    )
+    if not params.openings:
+        return start_opening_ref(params.name, ruleset, start_fen=start_fen)
     if len(beacon) != BEACON_BYTES:
         raise TranscriptError(f"beacon must be {BEACON_BYTES} bytes, got {len(beacon)}")
+    if not ruleset.allow_book_moves:
+        raise TranscriptError(
+            f"token {params.name!r} declares openings, but {ruleset.name} starts "
+            "from a position and allows no book moves"
+        )
     book = OpeningBook(
         version=params.opening_book,
         lines=tuple(
@@ -131,13 +151,6 @@ def token_opening_ref(
         ),
     )
     line = book.select(beacon, match_id)
-    ruleset = rules if rules is not None else ruleset_for(params.ruleset or params.name)
-    if not ruleset.allow_book_moves:
-        raise TranscriptError(
-            f"token {params.name!r} declares openings, but {ruleset.name} starts "
-            "from a position and allows no book moves"
-        )
-    start_fen = ruleset.normalise_start_fen(None)
     return OpeningRef(
         book_version=line.book_version,
         line_id=line.line_id,
@@ -168,15 +181,28 @@ def _ruleset_for_variant(
     return ruleset_for(ruleset or variant)
 
 
-def start_opening_ref(variant: str, rules: VariantRules) -> OpeningRef:
-    """The deterministic no-book start for ``rules`` under a token's name."""
-    start_fen = rules.normalise_start_fen(None)
+def start_opening_ref(
+    variant: str,
+    rules: VariantRules,
+    *,
+    start_fen: str | None = None,
+) -> OpeningRef:
+    """The deterministic no-book start for ``rules`` under a token's name.
+
+    ``start_fen`` pins a token's own position; otherwise the ruleset's fixed
+    start is used.
+    """
+    canonical_start = (
+        normalise_token_start_fen(rules, start_fen)
+        if start_fen is not None
+        else rules.normalise_start_fen(None)
+    )
     return OpeningRef(
         book_version="none",
         line_id=0,
-        hash=opening_hash("none", 0, (), start_fen=start_fen, variant=variant),
+        hash=opening_hash("none", 0, (), start_fen=canonical_start, variant=variant),
         moves=(),
-        start_fen=start_fen,
+        start_fen=canonical_start,
         variant=variant,
     )
 
@@ -221,6 +247,7 @@ def validate_opening_ref(
     *,
     rules: VariantRules | None = None,
     variants: Mapping[str, VariantParams] | None = None,
+    start_fen: str | None = None,
 ) -> None:
     """Replay the line and check its canonical SAN, start FEN and hash.
 
@@ -230,17 +257,29 @@ def validate_opening_ref(
 
     ``rules`` (or ``variants`` for a chain-registered token) supplies the
     ruleset when ``ref.variant`` is not itself the name of a registered ruleset.
+    A token's pinned ``start_fen`` is taken from ``variants`` unless supplied
+    explicitly.
     """
     ruleset = rules if rules is not None else _ruleset_for_variant(ref.variant, variants)
+    registered = (variants or {}).get(ref.variant)
+    pinned_start = (
+        start_fen
+        if start_fen is not None
+        else (registered.start_fen if registered is not None else None)
+    )
     try:
-        start_fen = ruleset.normalise_start_fen(ref.start_fen)
-        board = ruleset.board(start_fen)
+        expected_start = (
+            normalise_token_start_fen(ruleset, pinned_start)
+            if pinned_start is not None
+            else ruleset.normalise_start_fen(ref.start_fen)
+        )
+        board = ruleset.board(expected_start)
     except ConfigError as exc:
         raise TranscriptError(f"opening {ref.line_id}: {exc}") from None
-    if start_fen != ref.start_fen:
+    if expected_start != ref.start_fen:
         raise TranscriptError(
             f"opening {ref.line_id} start FEN is {ref.start_fen}, "
-            f"but the variant canonicalises it to {start_fen}"
+            f"but the variant canonicalises it to {expected_start}"
         )
     if not ruleset.allow_book_moves and ref.moves:
         raise TranscriptError(f"a {ref.variant} opening must not carry book moves")
@@ -501,6 +540,8 @@ def pgn_headers(
 ) -> dict[str, str]:
     """Protocol headers for a transcript PGN (section 3.1 of PROTOCOL.md)."""
     rules = _ruleset_for_variant(cert.variant, variants)
+    registered = (variants or {}).get(cert.variant)
+    pinned_start = registered.start_fen if registered is not None else None
     headers = {
         "Event": EVENT_TAG,
         "Site": SITE_TAG,
@@ -520,7 +561,7 @@ def pgn_headers(
         "TimeControl": time_control_tag(cert.time_control),
         "Rules": rules.pgn_rules,
     }
-    if rules.requires_start_fen:
+    if rules.requires_start_fen or pinned_start is not None:
         headers["FEN"] = cert.opening.start_fen
         headers["SetUp"] = "1"
     if rules.pgn_variant_header is not None:

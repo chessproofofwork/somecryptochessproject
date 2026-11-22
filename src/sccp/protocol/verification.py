@@ -231,7 +231,7 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         _fail(ProofFailure.OPENING, "proof opening does not match the certificate")
     rules = ruleset_for(variant_params.ruleset or variant_params.name)
     try:
-        validate_opening_ref(proof.opening, rules=rules)
+        validate_opening_ref(proof.opening, rules=rules, variants={proof.variant: variant_params})
     except TranscriptError as exc:
         _fail(ProofFailure.OPENING, str(exc))
     token_selected = token_opening_ref(

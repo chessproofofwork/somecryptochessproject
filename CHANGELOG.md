@@ -9,6 +9,15 @@ not itemised here.
 
 ### Added
 
+- **A custom token can pin its own start position.** `register_token` accepts an
+  optional `start_fen`; the position is canonicalised, validated under the
+  token's ruleset, and stored immutably. Every match starts from it, token
+  opening lines replay from it, and certificates/PGNs carry the canonical `FEN`
+  with `SetUp "1"`. A FEN-only token defaults to `opening_book = "none"`.
+  A pinned start overrides a beacon-selected ruleset start such as Chess960.
+  `sccp dex register-token` exposes the field as `--start-fen`, and the node's
+  token view reports it. This is a consensus-validity change: old nodes reject
+  registrations with the new payload field until upgraded.
 - **A custom token has a user-chosen name and ticker, and names may repeat.** A
   `register_token` claims a unique `ticket`, but the ticket is a registration
   serial, not a ticker: it derives the internal variant `token-<ticket>` and

@@ -27,6 +27,7 @@ import chess.pgn
 from sccp.chess.rulesets import (
     STANDARD_VARIANT,
     VariantRules,
+    normalise_token_start_fen,
     ruleset_for,
     ruleset_for_rules,
     supported_rules,
@@ -499,14 +500,26 @@ def validate_pgn(
         variant_params = registered if registered is not None else params.variant(variant)
     except ConfigError as exc:
         raise PgnValidationError(str(exc)) from None
+    pinned_start = variant_params.start_fen
+    requires_start_fen = ruleset.requires_start_fen or pinned_start is not None
+    raw_fen = game.headers.get("FEN")
     try:
-        start_fen = ruleset.normalise_start_fen(game.headers.get("FEN"))
+        if pinned_start is not None:
+            if raw_fen is None:
+                raise PgnValidationError(f"a {variant} PGN must carry its pinned FEN and SetUp")
+            start_fen = normalise_token_start_fen(ruleset, raw_fen)
+            expected_start = normalise_token_start_fen(ruleset, pinned_start)
+            if start_fen != expected_start:
+                raise PgnValidationError(
+                    f"game starts from {start_fen!r}, but token {variant!r} pins {expected_start!r}"
+                )
+        else:
+            start_fen = ruleset.normalise_start_fen(raw_fen)
     except ConfigError as exc:
         raise PgnValidationError(str(exc)) from None
-    if not ruleset.requires_start_fen and game.headers.get("SetUp") is not None:
+    if not requires_start_fen and game.headers.get("SetUp") is not None:
         raise PgnValidationError(f"{variant} PGNs must not carry SetUp")
-    if ruleset.requires_start_fen:
-        raw_fen = game.headers.get("FEN")
+    if requires_start_fen:
         if raw_fen is None:
             raise PgnValidationError(f"a {variant} PGN must carry FEN and SetUp")
         if game.headers.get("SetUp") not in (None, "1"):

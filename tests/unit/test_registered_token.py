@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import chess
 import pytest
 
 from sccp.chain.mempool import Mempool
@@ -20,6 +19,7 @@ from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
 from sccp.chess.pgn import validate_pgn
 from sccp.chess.rulesets import ruleset_for
+from sccp.chess.variants import board_for_variant
 from sccp.config import NetworkParams, VariantParams, derive_token_asset_id, derive_variant_asset_id
 from sccp.errors import ProofVerificationError, RelayError
 from sccp.miner.block_builder import BlockBuilder
@@ -36,6 +36,7 @@ from sccp.protocol.transcript import (
     render_transcript_pgn,
     sign_certificate,
     sign_result,
+    token_opening_ref,
 )
 from sccp.protocol.verification import ProofContext, ProofFailure, verify_win_proof
 from sccp.wallet.service import WalletService
@@ -89,24 +90,32 @@ def _registered_match(
     assert len(matchups) == 1
     matchup = matchups[0]
     assert matchup.variant == token.name
-    line = book.select(beacon_bytes, matchup.match_id)
-    opening = OpeningRef(
-        book_version=line.book_version,
-        line_id=line.line_id,
-        hash=opening_hash(
-            line.book_version,
-            line.line_id,
-            line.moves,
-            variant=token.name,
-        ),
-        moves=line.moves,
-        variant=token.name,
+    variants = {token.name: token}
+    rules = ruleset_for(token.ruleset or token.name)
+    opening = token_opening_ref(
+        token,
+        beacon_bytes,
+        matchup.match_id,
+        rules=rules,
     )
+    if opening is None:
+        line = book.select(beacon_bytes, matchup.match_id)
+        opening = OpeningRef(
+            book_version=line.book_version,
+            line_id=line.line_id,
+            hash=opening_hash(
+                line.book_version,
+                line.line_id,
+                line.moves,
+                variant=token.name,
+            ),
+            moves=line.moves,
+            variant=token.name,
+        )
     engines = {
         account.address: f"mock-v1:{index:016d}"
         for index, account in enumerate(accounts.values(), start=1)
     }
-    variants = {token.name: token}
     certificate = create_certificate(
         matchup,
         opening,
@@ -118,7 +127,11 @@ def _registered_match(
     certificate = sign_certificate(certificate, "white", by_address[certificate.white].keypair)
     certificate = sign_certificate(certificate, "black", by_address[certificate.black].keypair)
 
-    board = chess.Board()
+    board = board_for_variant(
+        token.ruleset or token.name,
+        certificate.opening.start_fen,
+        token_start_fen=token.start_fen,
+    )
     for san in certificate.opening.moves:
         board.push(board.parse_san(san))
     for san in ("Qh5", "Nf6", "Qxf7#"):
@@ -215,6 +228,70 @@ def test_a_registered_variant_builds_a_standard_pgn_and_verifies(
         verify_win_proof(proof, short_context)
     assert excinfo.value.reason is ProofFailure.PGN
     assert "at least 99" in str(excinfo.value)
+
+
+def test_a_token_can_start_from_a_pinned_middle_game_fen(
+    protocol_params: NetworkParams,
+    protocol_accounts: Any,
+    protocol_book: OpeningBook,
+    protocol_beacon: Any,
+    protocol_availability: Any,
+    protocol_public_keys: dict[str, str],
+) -> None:
+    """A pinned FEN is the shared prefix, and a proof replay carries it."""
+    token = VariantParams(
+        name="token-0048",
+        ticket="0048",
+        rules="chess",
+        ruleset="standard",
+        asset=derive_token_asset_id("0048", 8, "standard"),
+        symbol="PIN",
+        display_name="Pinned Start",
+        subsidy=TOKEN_SUBSIDY,
+        min_plies=1,
+        start_fen="rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3",
+        opening_book="none",
+    )
+    canonical = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"
+    assert token.start_fen == canonical
+    roster = {
+        account.address: RosterEntry(
+            address=account.address,
+            max_games=3,
+            variant=token.name,
+        )
+        for account in protocol_accounts.values()
+    }
+    availability = {item.miner: item.commitment for item in protocol_availability.values()}
+    proof = _registered_match(
+        params=protocol_params,
+        accounts=protocol_accounts,
+        book=protocol_book,
+        beacon=protocol_beacon,
+        roster=roster,
+        token=token,
+    )
+
+    assert proof.opening.book_version == "none"
+    assert proof.opening.moves == ()
+    assert proof.opening.start_fen == canonical
+    variants = {token.name: token}
+    headers = pgn_headers(proof.certificate, variants=variants)
+    assert headers["FEN"] == canonical
+    assert headers["SetUp"] == "1"
+
+    context = ProofContext(
+        params=protocol_params,
+        beacon=protocol_beacon,
+        roster=roster,
+        public_keys=protocol_public_keys,
+        book=protocol_book,
+        availability=availability,
+        variants=variants,
+    )
+    verified = verify_win_proof(proof, context)
+    assert verified.parsed.start_fen == canonical
+    assert verified.parsed.san_moves[:3] == ("Qh5", "Nf6", "Qxf7#")
 
 
 def test_a_relay_opening_a_registered_variant_uses_its_ruleset(

@@ -172,7 +172,7 @@ def test_pool_routes_report_reserves_and_positions() -> None:
     service.close()
 
 
-def _token_record(name: str, symbol: str) -> TokenRecord:
+def _token_record(name: str, symbol: str, *, start_fen: str | None = None) -> TokenRecord:
     asset = derive_variant_asset_id(name, symbol, 8, "standard")
     return TokenRecord(
         name=name,
@@ -185,6 +185,8 @@ def _token_record(name: str, symbol: str) -> TokenRecord:
             display_name=f"{name.title()} Chess",
             subsidy=50,
             min_plies=1,
+            start_fen=start_fen,
+            opening_book="none" if start_fen is not None else "v1",
         ),
         owner=FAUCET_ADDRESS,
         registered_at_height=4,
@@ -194,7 +196,8 @@ def _token_record(name: str, symbol: str) -> TokenRecord:
 
 def test_token_routes_name_tokens_by_name_asset_and_unique_symbol() -> None:
     service = _node()
-    alpha = _token_record("alpha", "AAA")
+    start_fen = "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"
+    alpha = _token_record("alpha", "AAA", start_fen=start_fen)
     beta = _token_record("beta", "BBB")
     gamma = _token_record("gamma", "AAA")
     for record in (alpha, beta, gamma):
@@ -219,6 +222,8 @@ def test_token_routes_name_tokens_by_name_asset_and_unique_symbol() -> None:
     assert by_name["asset"] == alpha.variant.asset
     assert by_name["symbol"] == "AAA"
     assert by_name["ruleset"] == "standard"
+    assert by_name["start_fen"] == start_fen
+    assert by_name["opening_book"] == "none"
     assert by_name["time_control_initial_ms"] == 600_000
     assert by_name["time_control_increment_ms"] == 0
     assert by_name["time_control_delay_ms"] == 0

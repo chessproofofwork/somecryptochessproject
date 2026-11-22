@@ -125,19 +125,24 @@ def _chess960_board(start_fen: str) -> chess.Board:
     return chess.Board(start_fen, chess960=True)
 
 
-def _canonical_board_fen(board: chess.Board) -> str:
-    """Canonicalise a fixed start FEN without its move counters.
+def _canonical_fen_text(fen: str) -> str:
+    """Canonicalise a FEN without its move counters.
 
     Some python-chess variants keep extra state in the FEN (Crazyhouse pockets,
     Three-check counters), so only the trailing halfmove/fullmove pair is
     dropped. Everything before it participates in the comparison.
     """
-    fields = board.fen().split()
+    fields = fen.split()
     if len(fields) < 4:
         raise ConfigError("not a FEN")
     if len(fields) >= 7:
         return " ".join(fields[:5]) + " 0 1"
     return " ".join(fields[:4]) + " 0 1"
+
+
+def _canonical_board_fen(board: chess.Board) -> str:
+    """Canonicalise a board's own FEN without its move counters."""
+    return _canonical_fen_text(board.fen())
 
 
 def _fixed_start_fen(
@@ -164,16 +169,52 @@ _MOVE_NUMBER_PATTERN: Final = re.compile(r"^(?:[0-9]+\.+|\.\.\.)$")
 _RESULT_TOKENS: Final = frozenset({"1-0", "0-1", "1/2-1/2", "*"})
 
 
-def canonical_opening_line(ruleset_name: str, moves: str | Iterable[str]) -> tuple[str, ...]:
+def normalise_token_start_fen(ruleset: VariantRules | str, fen: str) -> str:
+    """Canonicalise a fixed token start FEN for ``ruleset``.
+
+    A token may pin the position its games start from instead of using the
+    ruleset's own initial position or a beacon-selected one. The position must be
+    a legal board with at least one move available; its halfmove and fullmove
+    counters are discarded so every node stores and certificates the same
+    spelling. A pinned position takes precedence over a ruleset's beacon
+    ``start_selector``, which is how a Chess960 token can fix one layout.
+    """
+    rules = ruleset_for(ruleset) if isinstance(ruleset, str) else ruleset
+    if not isinstance(fen, str) or not fen.strip():
+        raise ConfigError("a token start FEN must be a non-empty string")
+    try:
+        board = rules.board(fen)
+    except (ValueError, RuntimeError) as exc:
+        raise ConfigError(f"invalid token start FEN {fen!r}: {exc}") from None
+    if not board.is_valid():
+        raise ConfigError(f"invalid token start FEN {fen!r}: the position is not legal")
+    if board.is_game_over(claim_draw=False):
+        raise ConfigError(f"token start FEN {fen!r} is already terminal")
+    raw = board.shredder_fen() if rules.shredder_castling else board.fen()
+    return _canonical_fen_text(raw)
+
+
+def canonical_opening_line(
+    ruleset_name: str,
+    moves: str | Iterable[str],
+    *,
+    start_fen: str | None = None,
+) -> tuple[str, ...]:
     """Replay a token's opening line and return canonical SAN.
 
     A registration may spell its opening as SAN or UCI, with or without move
     numbers. The chain stores SAN because that is what a transcript carries, so
-    the same replay rule decides the stored form and validates it. Raises
-    :class:`ConfigError` when the line is not legal for the named ruleset.
+    the same replay rule decides the stored form and validates it. ``start_fen``
+    replays against a token's pinned start instead of the ruleset's fixed one.
+    Raises :class:`ConfigError` when the line is not legal for the named ruleset.
     """
     rules = ruleset_for(ruleset_name)
-    board = rules.board(rules.normalise_start_fen(None))
+    start = (
+        normalise_token_start_fen(rules, start_fen)
+        if start_fen is not None
+        else rules.normalise_start_fen(None)
+    )
+    board = rules.board(start)
     tokens = moves.split() if isinstance(moves, str) else list(moves)
     line: list[str] = []
     for raw in tokens:
@@ -196,19 +237,30 @@ def canonical_opening_line(ruleset_name: str, moves: str | Iterable[str]) -> tup
     return tuple(line)
 
 
-def opening_line_fits(ruleset: VariantRules, moves: Iterable[str]) -> bool:
+def opening_line_fits(
+    ruleset: VariantRules,
+    moves: Iterable[str],
+    *,
+    start_fen: str | None = None,
+) -> bool:
     """Whether ``moves`` is a legal book prefix under ``ruleset``.
 
     A network book is written for standard chess. Registered tokens may reuse a
     ruleset whose fixed position or victory condition rejects some of those
     lines, so the relay and verifier both ask this question before accepting a
-    selected line.
+    selected line. ``start_fen`` checks the prefix from a token's pinned start
+    instead of the ruleset's fixed one.
     """
     line = tuple(moves)
     if line and not ruleset.allow_book_moves:
         return False
     try:
-        board = ruleset.board(ruleset.normalise_start_fen(None))
+        start = (
+            normalise_token_start_fen(ruleset, start_fen)
+            if start_fen is not None
+            else ruleset.normalise_start_fen(None)
+        )
+        board = ruleset.board(start)
     except (ConfigError, ValueError):
         return False
     for san in line:
@@ -490,6 +542,7 @@ __all__ = [
     "is_registered_ruleset",
     "normalise_chess960_start_fen",
     "normalise_standard_start_fen",
+    "normalise_token_start_fen",
     "opening_line_fits",
     "register_variant_rules",
     "registered_rulesets",

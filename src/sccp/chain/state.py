@@ -581,10 +581,18 @@ class TokenRecord:
                 raise StateError(f"token {label} must be a non-negative integer")
 
     def as_dict(self) -> dict[str, object]:
-        """Canonical mapping committed by ``state_root`` and snapshots."""
+        """Canonical mapping committed by ``state_root`` and snapshots.
+
+        ``start_fen`` is omitted when the ruleset owns the start, so a token
+        registered before pinned positions existed keeps the exact leaf and a
+        pinned genesis hash stays stable.
+        """
+        variant = self.variant.model_dump(mode="json")
+        if self.variant.start_fen is None:
+            variant.pop("start_fen", None)
         return {
             "name": self.name,
-            "variant": self.variant.model_dump(mode="json"),
+            "variant": variant,
             "owner": self.owner,
             "registered_at_height": self.registered_at_height,
             "initial_supply": self.initial_supply,

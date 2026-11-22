@@ -372,10 +372,15 @@ class MatchSession:
         except (KeyError, TypeError, ValueError) as exc:
             raise RelayError(f"stored match session is invalid: {exc}") from None
 
+        registered = (variants or {}).get(certificate.variant)
         ruleset_name = certificate.variant
-        if variants is not None and certificate.variant in variants:
-            ruleset_name = variants[certificate.variant].ruleset or certificate.variant
-        board = board_for_variant(ruleset_name, certificate.opening.start_fen)
+        if registered is not None:
+            ruleset_name = registered.ruleset or certificate.variant
+        board = board_for_variant(
+            ruleset_name,
+            certificate.opening.start_fen,
+            token_start_fen=registered.start_fen if registered is not None else None,
+        )
         try:
             for san in san_moves:
                 board.push(board.parse_san(san))
@@ -1092,7 +1097,11 @@ class Matchmaker:
                     time_control=time_control_for(variant_params),
                     variants=self._variants,
                 )
-                board = board_for_variant(ruleset_name, certificate.opening.start_fen)
+                board = board_for_variant(
+                    ruleset_name,
+                    certificate.opening.start_fen,
+                    token_start_fen=variant_params.start_fen,
+                )
                 san_moves: list[str] = []
                 for san in opening.moves:
                     move = board.parse_san(san)

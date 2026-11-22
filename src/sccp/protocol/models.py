@@ -242,7 +242,9 @@ class OpeningRef(ProtocolModel):
 
     Standard chess carries a book line and the ordinary FEN. Chess960 carries
     the position selected from the beacon, its Shredder-FEN, and no opening
-    moves, because the certified start is the whole shared prefix.
+    moves, because the certified start is the whole shared prefix. A token with
+    a pinned start carries that canonical FEN and has no network-book moves
+    unless the token also declares its own lines.
     """
 
     book_version: str = Field(min_length=1, max_length=64)
