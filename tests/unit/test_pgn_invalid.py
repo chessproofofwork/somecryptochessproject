@@ -72,7 +72,7 @@ def test_missing_and_blank_tags_are_rejected(
 def test_rules_tag_must_name_a_supported_variant(
     make_pgn: Callable[[str, Mapping[str, str]], str], match_tags: dict[str, str]
 ) -> None:
-    tags = _tags(Rules="crazyhouse")(match_tags)
+    tags = _tags(Rules="bughouse")(match_tags)
     with pytest.raises(PgnValidationError, match="unsupported Rules"):
         validate_pgn(make_pgn(FOOLS_MATE, tags), params=TESTNET)
 

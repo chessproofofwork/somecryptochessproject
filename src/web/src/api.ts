@@ -37,6 +37,8 @@ import type {
   RatingsView,
   TakeAccepted,
   TakeView,
+  TokenList,
+  TokenView,
   TransactionRecord,
   Transcript,
   TxAccepted,
@@ -204,6 +206,16 @@ export function fetchTransaction(
 /** `GET /v1/accounts/{address}`: balances, nonce and registration. */
 export function fetchAccount(address: string, signal?: AbortSignal): Promise<AccountView> {
   return request<AccountView>(`/v1/accounts/${encodeURIComponent(address)}`, { signal });
+}
+
+/** `GET /v1/tokens`: chain-registered variant tokens and their issuance. */
+export function fetchTokens(signal?: AbortSignal): Promise<TokenList> {
+  return request<TokenList>("/v1/tokens", { signal });
+}
+
+/** `GET /v1/tokens/{reference}`: one token by ticket, token id, name or symbol. */
+export function fetchToken(reference: string, signal?: AbortSignal): Promise<TokenView> {
+  return request<TokenView>(`/v1/tokens/${encodeURIComponent(reference)}`, { signal });
 }
 
 /** `GET /v1/pools`: every DEX pool and its LP share ledger. */

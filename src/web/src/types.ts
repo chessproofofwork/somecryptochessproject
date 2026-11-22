@@ -15,11 +15,24 @@ export type TerminationValue = "checkmate" | "draw" | "resignation" | "time_forf
 export type VariantName = string;
 
 /** One variant and the asset its settled proofs mint (`GET /v1/params`). */
+/** One later stage of a multi-period time control. */
+export interface TimeControlPeriod {
+  /** Length of this period in full moves. */
+  moves: number;
+  /** Time added to both clocks when the period starts, in milliseconds. */
+  initial_ms: number;
+  increment_ms: number;
+  delay_ms: number;
+}
+
 export interface VariantParams {
   name: VariantName;
   rules: string;
+  ruleset?: string | null;
   /** `null` for standard chess: its proofs mint native ZQWX. */
   asset: string | null;
+  /** Four-digit ticket a chain-registered token claimed. */
+  ticket?: string | null;
   symbol: string;
   display_name: string;
   decimals: number;
@@ -29,12 +42,57 @@ export interface VariantParams {
   min_plies: number;
   max_games_per_block: number;
   opening_book: string;
+  /** Canonical SAN opening lines this token accepts, if it declares its own. */
+  openings?: string[][];
   /** Main time each seat starts with, in milliseconds. */
   time_control_initial_ms: number;
   /** Time added after every move, in milliseconds. */
   time_control_increment_ms: number;
   /** Free time at the start of every move, in milliseconds. */
   time_control_delay_ms?: number;
+  /** Full moves in the first period; `null` for a plain sudden-death control. */
+  time_control_first_moves?: number | null;
+  /** Later periods, in order; empty for a plain sudden-death control. */
+  time_control_periods?: TimeControlPeriod[];
+}
+
+/** `GET /v1/tokens`: one chain-registered token and its issuance. */
+export interface TokenView {
+  name: string;
+  /** Four-digit ticket; absent on chains that predate tickets. */
+  ticket: string | null;
+  network: string;
+  /** The immutable asset id, also accepted as the token's lookup id. */
+  asset: string;
+  token_id: string;
+  /** Whether the node operator approved this token for wallet display. */
+  approved: boolean;
+  symbol: string;
+  display_name: string;
+  rules: string;
+  ruleset: string | null;
+  decimals: number;
+  subsidy: number;
+  initial_supply: number;
+  halving_interval: number | null;
+  max_supply: number | null;
+  min_plies: number;
+  max_games_per_block: number;
+  opening_book: string;
+  openings: string[][];
+  time_control_initial_ms: number;
+  time_control_increment_ms: number;
+  time_control_delay_ms: number;
+  time_control_first_moves: number | null;
+  time_control_periods: TimeControlPeriod[];
+  owner: string;
+  registered_at_height: number;
+  minted: number;
+}
+
+export interface TokenList {
+  network: string;
+  tokens: TokenView[];
 }
 
 export interface MempoolStatus {

@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from sccp.chess.rulesets import ruleset_for
 from sccp.errors import TranscriptError
 from sccp.protocol.models import TimeControl, Transcript
 from sccp.protocol.transcript import (
+    book_opening_ref,
     build_win_proof,
     certificate_payload,
     create_certificate,
@@ -23,6 +25,7 @@ from sccp.protocol.transcript import (
     result_payload,
     save_transcript,
     sign_certificate,
+    start_opening_ref,
     validate_opening_ref,
     verify_certificate_signatures,
     verify_result_signatures,
@@ -47,6 +50,16 @@ def test_validate_opening_ref_rejects_tampering(protocol_book) -> None:
         validate_opening_ref(ref.model_copy(update={"moves": ("e4", "e5", "Qh9")}))
     with pytest.raises(TranscriptError):
         validate_opening_ref(ref.model_copy(update={"moves": ("e2e4",)}))
+
+
+def test_book_opening_ref_falls_back_when_the_line_does_not_fit(protocol_book) -> None:
+    horde = ruleset_for("horde")
+    ref = book_opening_ref("token-0042", horde, protocol_book, bytes(32), "ab" * 32)
+    assert ref == start_opening_ref("token-0042", horde)
+    assert ref.book_version == "none"
+    assert ref.line_id == 0
+    assert ref.moves == ()
+    validate_opening_ref(ref, rules=horde)
 
 
 def test_create_certificate_carries_the_signed_fields(protocol_matchup, protocol_book) -> None:

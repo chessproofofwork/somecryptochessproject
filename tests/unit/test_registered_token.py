@@ -19,6 +19,7 @@ from sccp.chain.mempool import Mempool
 from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
 from sccp.chess.pgn import validate_pgn
+from sccp.chess.rulesets import ruleset_for
 from sccp.config import NetworkParams, VariantParams, derive_variant_asset_id
 from sccp.errors import ProofVerificationError, RelayError
 from sccp.miner.block_builder import BlockBuilder
@@ -257,6 +258,64 @@ def test_a_relay_opening_a_registered_variant_uses_its_ruleset(
     assert certificate.variant == token.name
     assert certificate.opening.variant == token.name
     assert certificate.opening.book_version == protocol_book.version
+
+
+def test_a_fixed_start_token_falls_back_when_a_network_line_does_not_fit(
+    protocol_params: NetworkParams,
+    protocol_accounts: Any,
+    protocol_book: OpeningBook,
+    protocol_beacon: Any,
+    protocol_public_keys: dict[str, str],
+) -> None:
+    """A network book line that is illegal for the token's ruleset is skipped.
+
+    Horde starts with pawns already on e4 and has no knights, so a standard
+    opening line cannot be the shared prefix. The relay must start from the
+    Horde position with book version ``none`` rather than publish a certificate
+    no verifier can replay.
+    """
+    token = VariantParams(
+        name="token-0042",
+        ticket="0042",
+        rules="horde",
+        ruleset="horde",
+        asset=derive_variant_asset_id("token-0042", "T0042", 8, "horde"),
+        symbol="T0042",
+        display_name="Token 0042",
+        subsidy=TOKEN_SUBSIDY,
+        min_plies=TOKEN_MIN_PLIES,
+        opening_book=protocol_book.version,
+    )
+    roster = {
+        account.address: RosterEntry(
+            address=account.address,
+            max_games=3,
+            variant=token.name,
+        )
+        for account in protocol_accounts.values()
+    }
+    engines = {
+        account.address: f"mock-v1:{index:016d}"
+        for index, account in enumerate(protocol_accounts.values(), start=1)
+    }
+    relay = Matchmaker(
+        protocol_params,
+        beacon=protocol_beacon,
+        roster=roster,
+        public_keys=protocol_public_keys,
+        engines=engines,
+        book=protocol_book,
+        variants={token.name: token},
+    )
+    relay.require_witnesses = False
+    views = relay.open_round(0)
+    assert len(views) == 1
+    opening = views[0].certificate.opening
+    assert opening.variant == token.name
+    assert opening.book_version == "none"
+    assert opening.line_id == 0
+    assert opening.moves == ()
+    assert opening.start_fen == ruleset_for("horde").normalise_start_fen(None)
 
 
 def test_a_relay_store_remembers_a_registered_token(

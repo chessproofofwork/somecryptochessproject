@@ -90,11 +90,13 @@ from sccp.protocol.models import (
 )
 from sccp.protocol.pairing import RosterEntry, pair
 from sccp.protocol.transcript import (
+    book_opening_ref,
     certificate_payload,
     create_certificate,
     opening_hash,
     render_transcript_pgn,
     result_payload,
+    token_opening_ref,
 )
 from sccp.serialization import Domain
 
@@ -237,6 +239,7 @@ def _clock_document(clock: MatchClock | None) -> dict[str, object] | None:
         "turn_started_at_ms": clock.turn_started_at_ms,
         "lag_grace_ms": clock.lag_grace_ms,
         "started": clock.started,
+        "ply": clock.ply,
     }
 
 
@@ -250,6 +253,9 @@ def _clock_from_document(document: object, control: TimeControl) -> MatchClock |
     if turn not in ("white", "black"):
         raise RelayError("stored match clock has an invalid turn")
     try:
+        ply = int(document.get("ply", 0))
+        if ply < 0:
+            raise ValueError("ply must not be negative")
         return MatchClock(
             control=control,
             white_ms=int(document["white_ms"]),
@@ -258,6 +264,7 @@ def _clock_from_document(document: object, control: TimeControl) -> MatchClock |
             turn_started_at_ms=int(document["turn_started_at_ms"]),
             lag_grace_ms=int(document.get("lag_grace_ms", DEFAULT_LAG_GRACE_MS)),
             started=bool(document.get("started", True)),
+            ply=ply,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise RelayError(f"stored match clock is invalid: {exc}") from None
@@ -841,6 +848,7 @@ class Matchmaker:
             session.certificate.time_control,
             now_ms=now_ms,
             lag_grace_ms=self.lag_grace_ms,
+            ply=len(session.san_moves),
         )
         clock.turn = session.turn
         session.clock = clock
@@ -1040,51 +1048,41 @@ class Matchmaker:
             for matchup in matchups:
                 variant_params = self._variant(matchup.variant)
                 ruleset_name = variant_params.ruleset or variant_params.name
-                opening: OpeningLine | OpeningRef
-                selected = start_position_for(ruleset_name, beacon_bytes, matchup.match_id)
-                if selected is not None:
-                    opening = OpeningRef(
-                        book_version=selected.book_version,
-                        line_id=selected.line_id,
-                        hash=opening_hash(
-                            selected.book_version,
-                            selected.line_id,
-                            selected.moves,
-                            start_fen=selected.start_fen,
-                            variant=matchup.variant,
-                        ),
-                        moves=selected.moves,
-                        start_fen=selected.start_fen,
-                        variant=matchup.variant,
-                    )
-                else:
-                    book = (
-                        self.book
-                        if self.book.version == variant_params.opening_book
-                        else load_book(variant_params.opening_book)
-                    )
-                    line = book.select(beacon_bytes, matchup.match_id)
-                    if ruleset_name == matchup.variant:
-                        opening = line
-                    else:
-                        # A registered token reuses an existing ruleset, so its
-                        # name is not in the ruleset registry. Spell the same
-                        # opening out with the token's name, which is what the
-                        # certificate and the proof both carry.
-                        start_fen = ruleset_for(ruleset_name).normalise_start_fen(None)
+                opening: OpeningLine | OpeningRef | None = token_opening_ref(
+                    variant_params,
+                    beacon_bytes,
+                    matchup.match_id,
+                    rules=ruleset_for(ruleset_name),
+                )
+                if opening is None:
+                    selected = start_position_for(ruleset_name, beacon_bytes, matchup.match_id)
+                    if selected is not None:
                         opening = OpeningRef(
-                            book_version=line.book_version,
-                            line_id=line.line_id,
+                            book_version=selected.book_version,
+                            line_id=selected.line_id,
                             hash=opening_hash(
-                                line.book_version,
-                                line.line_id,
-                                line.moves,
-                                start_fen=start_fen,
+                                selected.book_version,
+                                selected.line_id,
+                                selected.moves,
+                                start_fen=selected.start_fen,
                                 variant=matchup.variant,
                             ),
-                            moves=line.moves,
-                            start_fen=start_fen,
+                            moves=selected.moves,
+                            start_fen=selected.start_fen,
                             variant=matchup.variant,
+                        )
+                    else:
+                        book = (
+                            self.book
+                            if self.book.version == variant_params.opening_book
+                            else load_book(variant_params.opening_book)
+                        )
+                        opening = book_opening_ref(
+                            matchup.variant,
+                            ruleset_for(ruleset_name),
+                            book,
+                            beacon_bytes,
+                            matchup.match_id,
                         )
                 certificate = create_certificate(
                     matchup,

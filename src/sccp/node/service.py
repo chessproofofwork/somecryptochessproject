@@ -29,7 +29,7 @@ from sccp.chain.block import block_hash
 from sccp.chain.chain import Chain, StoredBlock
 from sccp.chain.genesis import load_genesis
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import HtlcRecord, ProofRecord
+from sccp.chain.state import HtlcRecord, ProofRecord, TokenRecord
 from sccp.chain.storage import Storage, restore_chain
 from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
@@ -289,6 +289,12 @@ class NodeService:
     fanout: int = MAX_FANOUT
     max_sync_blocks: int = 512
     syncing: bool = False
+    approved_tokens: frozenset[str] | None = None
+    """Tickets, token ids or names this operator approved for wallet display.
+
+    ``None`` approves every chain-registered token. An empty set approves none,
+    which leaves them reachable through the manual lookup endpoint only.
+    """
     _ratings: tuple[str, RatingLedger] | None = field(default=None, repr=False, compare=False)
     """Cached derived ratings, keyed by the tip hash they were replayed at."""
     _minted_subsidy_cache: tuple[str, int] | None = field(default=None, repr=False, compare=False)
@@ -330,6 +336,7 @@ class NodeService:
         storage: Storage | None = None,
         book: OpeningBook | None = None,
         clock: Callable[[], int] = unix_now,
+        approved_tokens: Sequence[str] | None = None,
     ) -> NodeService:
         """Open a node, replaying ``storage`` when one is supplied."""
         require_pq()
@@ -352,6 +359,7 @@ class NodeService:
             mempool=mempool,
             storage=storage,
             clock=clock,
+            approved_tokens=(None if approved_tokens is None else frozenset(approved_tokens)),
         )
 
     def check_startup(self) -> None:
@@ -658,6 +666,20 @@ class NodeService:
             raise NotFoundError(f"unknown pool {pool_id!r}")
         return self._pool_view(pool_id)
 
+    def _token_approved(self, record: TokenRecord) -> bool:
+        """Whether this node's operator put the token in its approved registry."""
+        approved = self.approved_tokens
+        if approved is None:
+            return True
+        return bool(
+            {
+                record.name,
+                record.ticket or "",
+                record.token_id,
+            }
+            & approved
+        )
+
     def _token_view(self, name: str) -> TokenView:
         """Project one registered token and its minted supply onto the API shape."""
         record = self.chain.state.tokens[name]
@@ -665,8 +687,11 @@ class NodeService:
         assert variant.asset is not None
         return TokenView(
             name=record.name,
+            ticket=record.ticket,
             network=self.params.network_id,
             asset=variant.asset,
+            token_id=record.token_id,
+            approved=self._token_approved(record),
             symbol=variant.symbol,
             display_name=variant.display_name,
             rules=variant.rules,
@@ -682,6 +707,9 @@ class NodeService:
             time_control_initial_ms=variant.time_control_initial_ms,
             time_control_increment_ms=variant.time_control_increment_ms,
             time_control_delay_ms=variant.time_control_delay_ms,
+            time_control_first_moves=variant.time_control_first_moves,
+            time_control_periods=variant.time_control_periods,
+            openings=variant.openings,
             owner=record.owner,
             registered_at_height=record.registered_at_height,
             minted=self.chain.state.minted_assets.get(variant.asset, 0),
@@ -695,25 +723,31 @@ class NodeService:
         )
 
     def token(self, reference: str) -> TokenView:
-        """One token by variant name, symbol or asset id; 404 when unknown.
+        """One token by ticket, token id, variant name or legacy symbol; 404 when unknown.
 
-        Name and asset are unique by construction. A symbol is discovery
-        metadata that two registrations may share, so it resolves only when one
-        token on the chain carries it.
+        A four-digit ticket and the network-assigned token id are unique by
+        construction, which is what makes the manual lookup in a wallet
+        deterministic. Legacy name/symbol resolution is kept for tokens
+        registered before tickets existed; a symbol that two registrations
+        share resolves only when one token on the chain carries it.
         """
         registry = self.chain.state.tokens
         if reference in registry:
             return self._token_view(reference)
-        matches = [
-            name
-            for name, record in registry.items()
-            if record.variant.asset == reference or record.variant.symbol == reference
-        ]
+        if reference.isdigit() and len(reference) == 4:
+            record = self.chain.state.token_by_ticket(reference)
+            if record is not None:
+                return self._token_view(record.name)
+        record = self.chain.state.token_by_id(reference)
+        if record is not None:
+            return self._token_view(record.name)
+        matches = [name for name, token in registry.items() if token.variant.symbol == reference]
         if len(matches) == 1:
             return self._token_view(matches[0])
         if len(matches) > 1:
             raise NotFoundError(
-                f"token reference {reference!r} is ambiguous; use a variant name or asset id"
+                f"token reference {reference!r} is ambiguous; "
+                "use a ticket, token id or variant name"
             )
         raise NotFoundError(f"unknown token {reference!r}")
 

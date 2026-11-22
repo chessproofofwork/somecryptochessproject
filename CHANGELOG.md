@@ -17,6 +17,21 @@ not itemised here.
   accepts a single `--time-control 300+5d` tag as well as the three millisecond
   flags, and the node API, certificate payload, clock receipts, timeout
   arithmetic, relay, miners and explorer all carry the chosen control.
+- **FIDE-style multi-period clocks count opening plies without charging them.**
+  A token can declare `time_control_first_moves` and later `time_control_periods`
+  (for example `40/5400+0:20/1800+30`). Each period's initial time is added to
+  both clocks at its ply boundary, not used to reset them. The certified opening
+  advances the board and can unlock a period, but neither seat pays for those
+  moves; the relay starts the first timed turn with the opening's accumulated
+  period time already credited. Clock evidence remains a suffix: its first
+  signed receipt anchors both absolute clocks, while every later receipt is
+  checked against the period in force at its total board ply.
+- **A registered token can carry its own opening book, with a verifiable
+  fallback.** Lines declared at registration are canonicalised to SAN and
+  selected like a packaged book. A line that does not replay legally from the
+  token ruleset's start is replaced by the ruleset's fixed initial position with
+  `book_version = "none"`, `line_id = 0` and no moves, so relay, miner and
+  transcript verification agree on the same deterministic opening.
 
 ### Changed
 

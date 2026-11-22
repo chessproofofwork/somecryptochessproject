@@ -54,8 +54,10 @@ from sccp.protocol.models import (
 )
 from sccp.protocol.pairing import RosterEntry, match_id, verify_pairing, white_seat
 from sccp.protocol.transcript import (
+    book_opening_ref,
     expected_from_certificate,
-    opening_hash,
+    start_opening_ref,
+    token_opening_ref,
     validate_opening_ref,
     verify_certificate_signatures,
     verify_result_signatures,
@@ -232,41 +234,57 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         validate_opening_ref(proof.opening, rules=rules)
     except TranscriptError as exc:
         _fail(ProofFailure.OPENING, str(exc))
-    selected = start_position_for(
-        variant_params.ruleset or proof.variant, beacon_bytes, proof.match_id
+    token_selected = token_opening_ref(
+        variant_params,
+        beacon_bytes,
+        proof.match_id,
+        rules=rules,
     )
-    if selected is not None:
-        if (
-            proof.opening.line_id != selected.line_id
-            or proof.opening.start_fen != selected.start_fen
-            or proof.opening.moves != selected.moves
-            or proof.opening.book_version != selected.book_version
-        ):
-            _fail(ProofFailure.OPENING, "opening is not the position the beacon selected")
-    elif (
-        context.book is not None
-        and rules.allow_book_moves
-        and proof.opening.book_version == context.book.version
-    ):
-        try:
-            line = context.book.line(proof.opening.line_id)
-        except OpeningBookError as exc:
-            _fail(ProofFailure.OPENING, str(exc))
-        if (
-            line.book_version != proof.opening.book_version
-            or line.moves != proof.opening.moves
-            or opening_hash(
-                line.book_version,
-                line.line_id,
-                line.moves,
-                start_fen=proof.opening.start_fen,
-                variant=proof.variant,
+    if token_selected is not None:
+        if proof.opening != token_selected:
+            _fail(
+                ProofFailure.OPENING,
+                "opening is not the line the beacon selected from the token's book",
             )
-            != proof.opening.hash
+    else:
+        selected = start_position_for(
+            variant_params.ruleset or proof.variant, beacon_bytes, proof.match_id
+        )
+        if selected is not None:
+            if (
+                proof.opening.line_id != selected.line_id
+                or proof.opening.start_fen != selected.start_fen
+                or proof.opening.moves != selected.moves
+                or proof.opening.book_version != selected.book_version
+            ):
+                _fail(
+                    ProofFailure.OPENING,
+                    "opening is not the position the beacon selected",
+                )
+        elif (
+            context.book is not None
+            and rules.allow_book_moves
+            and proof.opening.book_version == context.book.version
         ):
-            _fail(ProofFailure.OPENING, "opening does not match the local book line")
-        if context.book.select(beacon_bytes, proof.match_id) != line:
-            _fail(ProofFailure.OPENING, "beacon did not select this opening line")
+            try:
+                expected = book_opening_ref(
+                    proof.variant,
+                    rules,
+                    context.book,
+                    beacon_bytes,
+                    proof.match_id,
+                )
+            except OpeningBookError as exc:
+                _fail(ProofFailure.OPENING, str(exc))
+            if proof.opening != expected:
+                _fail(
+                    ProofFailure.OPENING,
+                    "opening is not the line the beacon selected from the network book",
+                )
+        elif proof.opening.book_version == "none" and proof.opening != start_opening_ref(
+            proof.variant, rules
+        ):
+            _fail(ProofFailure.OPENING, "a no-book opening must be the ruleset's start")
 
     # 5. Roster membership and the pairing the beacon produced.
     for seat in (cert.white, cert.black):

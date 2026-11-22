@@ -951,6 +951,11 @@ token fixes its own clock. The three protocol forms are:
 TimeControl(initial_ms = 600_000, increment_ms = 0)              # sudden death
 TimeControl(initial_ms = 600_000, increment_ms = 5_000)          # Fischer increment
 TimeControl(initial_ms = 600_000, delay_ms = 5_000)              # per-turn delay
+TimeControl(initial_ms = 5_400_000, increment_ms = 0,            # FIDE periods
+            first_period_moves = 40,
+            periods = (TimeControlPeriod(moves = 20,
+                                         initial_ms = 1_800_000,
+                                         increment_ms = 30_000),))
 ```
 
 ### 11.3 Starting the clock
@@ -958,13 +963,18 @@ TimeControl(initial_ms = 600_000, delay_ms = 5_000)              # per-turn dela
 The clock starts when the second valid start signature is accepted and the relay
 has played the book line. The side to move on the resulting board is to move
 (White normally, Black if the opening ends after an odd ply). Only that side
-spends time. A move deducts
+spends time. The certified opening is never charged to either clock, but its
+plies count toward FIDE period boundaries: a boundary the opening already
+crossed credits its `initial_ms` to both clocks before the first timed turn.
+A move deducts
 
 ```text
-max(0, elapsed_ms - lag_grace_ms)
+max(0, elapsed_ms - lag_grace_ms - delay_ms)
 ```
 
-from the mover, adds the increment (zero in v1) and switches turns. If the
+from the mover, adds the period's increment and switches turns. When the move
+reaches a period boundary, that period's `initial_ms` is added to both clocks
+after the mover's increment; it is added time, not a clock reset. If the
 deduction would leave zero or less, the move is rejected and the side to move
 is flagged. `lag_grace_ms` defaults to 250 ms and is capped at 1,000 ms. It is a
 relay policy that is recorded in network parameters; it is not part of the game
@@ -1307,9 +1317,8 @@ semantics are "all or nothing". A node never persists a partially applied block.
 
 ### 13.6 Variant assets
 
-A variant is a second chess ruleset whose settled proofs mint a different asset
-inside the same block that carries them, not a second chain and not a second
-roster:
+A variant is a chess ruleset whose settled proofs mint a different asset inside
+the same block that carries them, not a second chain and not a second roster:
 
 | Variant | Rules | Asset | Symbol | Issue schedule |
 | --- | --- | --- | --- | --- |
@@ -1344,19 +1353,26 @@ C960 still needs a little native coin to spend it.
 
 Registration is not limited to the two built-ins. Any account may pay a fee and
 submit `register_token`, which adds one variant to the chain's registry and
-mints an asset under the same rules as Chess960: the token's name joins the
-roster vocabulary, its games settle as proofs of that variant, and a block pays
-its `subsidy` (halved on its own `halving_interval`, capped by
+mints an asset under the same rules as Chess960. A registration names a
+four-digit `ticket` and an existing ruleset — `standard`, `chess960`, or one of
+the python-chess variants `antichess`, `atomic`, `crazyhouse`, `giveaway`,
+`horde`, `kingofthehill`, `racingkings`, `suicide` and `threecheck` — and the
+ticket derives `token-<ticket>`, symbol `T<ticket>` and label `Token <ticket>`.
+The token's games settle as proofs of that variant, and a block pays its
+`subsidy` (halved on its own `halving_interval`, capped by
 `max_supply * 10^decimals` base units) at most once per block. The payload fixes
-`ruleset`, `symbol`, `decimals`,
-`initial_supply`, `min_plies`, `max_games_per_block`, `opening_book` and both
-time-control values; an omitted `opening_book` defaults to the network's own
-`book_version`. The asset id is derived as
-`H("sccp/v1/asset", {variant, symbol, decimals, ruleset})` from the name, symbol,
-decimals and ruleset, so it is immutable and needs no issuer key. Built-in
-variant names may not be reused, and the registering key receives
-`initial_supply` base units, which are minted and count against the cap exactly
-like a mined reward.
+`ruleset`, `decimals`, `initial_supply`, `min_plies`, `max_games_per_block`,
+`opening_book`, its optional SAN `openings`, the initial/increment/delay clock
+and any later `time_control_periods`; an omitted `opening_book` is
+`token-<ticket>` when the token declares its own lines and otherwise the
+network's own `book_version`. When the beacon selects a network line that is
+illegal under the token's ruleset, the match starts from that ruleset's fixed
+initial position with book `none`. The asset id is derived as
+`H("sccp/v1/asset", {variant, symbol, decimals, ruleset})` from the derived
+variant, symbol, decimals and ruleset, so it is immutable and needs no issuer
+key. An unused ticket is required, derived asset ids may not collide, and the
+registering key receives `initial_supply` base units, which are minted and count
+against the cap exactly like a mined reward.
 `GET /v1/tokens` publishes the registry, including the total
 minted, so a wallet or pool can quote a token without replaying the chain.
 
@@ -1678,7 +1694,7 @@ contract (snapshotted in `tests/fixtures/openapi.json`):
 | `GET /v1/pools` | Every DEX pool: reserves, total shares, fee, LP positions |
 | `GET /v1/pools/{pool_id}` | One DEX pool |
 | `GET /v1/tokens` | Every registered variant token and its minted supply |
-| `GET /v1/tokens/{reference}` | One token by variant name, symbol or asset id |
+| `GET /v1/tokens/{reference}` | One token by ticket, variant name, symbol or asset id |
 | `GET /v1/bridge` | The Ethereum deployment facts for this network |
 | `GET /v1/htlcs` | SCCP hash locks, filtered by address or hashlock |
 | `GET /v1/htlcs/{htlc_id}` | One lock, its status and the preimage once claimed |

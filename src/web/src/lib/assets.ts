@@ -12,6 +12,8 @@ import type {
   AccountView,
   NetworkParams,
   NodeStatus,
+  TimeControlPeriod,
+  TokenView,
   VariantName,
   VariantParams,
 } from "../types";
@@ -38,6 +40,21 @@ export interface Token {
   timeControlInitialMs: number;
   timeControlIncrementMs: number;
   timeControlDelayMs: number;
+  /** First period length in full moves, or `null` for plain sudden death. */
+  timeControlFirstMoves: number | null;
+  /** Later periods; empty for plain sudden death. */
+  timeControlPeriods: readonly TimeControlPeriod[];
+  /** Four-digit ticket for chain-registered tokens, `null` for built-ins. */
+  ticket: string | null;
+  /** The ruleset the verifier replays, when it differs from `variant`. */
+  ruleset: string | null;
+  /** Canonical SAN opening lines, empty when the shared book applies. */
+  openings: readonly (readonly string[])[];
+  /** Stable network-assigned token id; `null` for native ZQWX. */
+  tokenId: string | null;
+  /** Whether the node approved the token, or this browser pinned it manually. */
+  approved: boolean;
+  registeredAtHeight: number | null;
 }
 
 const ZQWX: Token = {
@@ -54,6 +71,14 @@ const ZQWX: Token = {
   timeControlInitialMs: DEFAULT_TIME_CONTROL_INITIAL_MS,
   timeControlIncrementMs: DEFAULT_TIME_CONTROL_INCREMENT_MS,
   timeControlDelayMs: DEFAULT_TIME_CONTROL_DELAY_MS,
+  timeControlFirstMoves: null,
+  timeControlPeriods: [],
+  ticket: null,
+  ruleset: null,
+  openings: [],
+  tokenId: null,
+  approved: true,
+  registeredAtHeight: null,
 };
 
 /** Project one network variant onto the token the UI spends and displays. */
@@ -74,6 +99,41 @@ export function tokenForVariantParams(variant: VariantParams): Token {
     timeControlIncrementMs:
       variant.time_control_increment_ms ?? DEFAULT_TIME_CONTROL_INCREMENT_MS,
     timeControlDelayMs: variant.time_control_delay_ms ?? DEFAULT_TIME_CONTROL_DELAY_MS,
+    timeControlFirstMoves: variant.time_control_first_moves ?? null,
+    timeControlPeriods: variant.time_control_periods ?? [],
+    ticket: variant.ticket ?? null,
+    ruleset: variant.ruleset ?? null,
+    openings: variant.openings ?? [],
+    tokenId: variant.asset,
+    approved: true,
+    registeredAtHeight: null,
+  };
+}
+
+/** Project one chain-registered token onto the token the UI spends and displays. */
+export function tokenForTokenView(view: TokenView): Token {
+  return {
+    variant: view.name,
+    asset: view.asset,
+    symbol: view.symbol,
+    name: view.display_name,
+    decimals: view.decimals,
+    native: false,
+    subsidy: view.subsidy,
+    halvingInterval: view.halving_interval,
+    maxSupply: view.max_supply,
+    minPlies: view.min_plies,
+    timeControlInitialMs: view.time_control_initial_ms,
+    timeControlIncrementMs: view.time_control_increment_ms,
+    timeControlDelayMs: view.time_control_delay_ms,
+    timeControlFirstMoves: view.time_control_first_moves,
+    timeControlPeriods: view.time_control_periods ?? [],
+    ticket: view.ticket,
+    ruleset: view.ruleset,
+    openings: view.openings ?? [],
+    tokenId: view.token_id,
+    approved: view.approved,
+    registeredAtHeight: view.registered_at_height,
   };
 }
 
@@ -83,6 +143,48 @@ export function tokensFor(params: NetworkParams | undefined): Token[] {
   const tokens = (params.variants ?? []).map(tokenForVariantParams);
   if (!tokens.some((token) => token.native)) tokens.unshift(ZQWX);
   return tokens.sort((left, right) => Number(right.native) - Number(left.native));
+}
+
+/**
+ * The built-in tokens plus the chain-registered tokens this client trusts.
+ *
+ * A token appears when the node operator approved it (``TokenView.approved``)
+ * or when this browser pinned its ticket or token id. Permissionless
+ * registrations therefore never appear in a wallet by accident, while a user
+ * who looked one up manually keeps it across reloads.
+ */
+export function tokensWithRegistry(
+  params: NetworkParams | undefined,
+  registered: readonly TokenView[],
+  locallyApproved: readonly string[] = [],
+): Token[] {
+  const tokens = tokensFor(params);
+  const pinned = new Set(locallyApproved);
+  const known = new Set(tokens.map((token) => token.asset).filter((asset) => asset !== null));
+  for (const view of registered) {
+    if (params !== undefined && view.network !== params.network_id) continue;
+    if (known.has(view.asset)) continue;
+    const approved =
+      view.approved ||
+      pinned.has(view.token_id) ||
+      (view.ticket !== null && pinned.has(view.ticket));
+    if (!approved) continue;
+    known.add(view.asset);
+    tokens.push({ ...tokenForTokenView(view), approved: true });
+  }
+  return tokens.sort((left, right) => Number(right.native) - Number(left.native));
+}
+
+/** A looked-up token, marked as approved because the user asked for it. */
+export function tokenFromLookup(view: TokenView): Token {
+  return { ...tokenForTokenView(view), approved: true };
+}
+
+/** The short form of an asset id, for a table cell: `abcd12…ef3456`. */
+export function shortTokenId(tokenId: string | null): string {
+  if (tokenId === null) return "-";
+  if (tokenId.length <= 14) return tokenId;
+  return `${tokenId.slice(0, 6)}…${tokenId.slice(-6)}`;
 }
 
 /**

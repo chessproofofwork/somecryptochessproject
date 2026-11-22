@@ -2748,6 +2748,18 @@
             "multipleOf": 1000.0,
             "type": "integer"
           },
+          "first_period_moves": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "increment_ms": {
             "default": 0,
             "minimum": 0.0,
@@ -2758,9 +2770,48 @@
             "minimum": 1000.0,
             "multipleOf": 1000.0,
             "type": "integer"
+          },
+          "periods": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TimeControlPeriod"
+            },
+            "type": "array"
           }
         },
         "required": [
+          "initial_ms"
+        ],
+        "type": "object"
+      },
+      "TimeControlPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "delay_ms": {
+            "default": 0,
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "increment_ms": {
+            "default": 0,
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "initial_ms": {
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "moves": {
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "moves",
           "initial_ms"
         ],
         "type": "object"
@@ -2788,6 +2839,10 @@
       "TokenView": {
         "additionalProperties": false,
         "properties": {
+          "approved": {
+            "default": true,
+            "type": "boolean"
+          },
           "asset": {
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
@@ -2851,6 +2906,16 @@
             "minLength": 1,
             "type": "string"
           },
+          "openings": {
+            "default": [],
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
           "owner": {
             "minLength": 1,
             "type": "string"
@@ -2881,9 +2946,31 @@
             "minLength": 1,
             "type": "string"
           },
+          "ticket": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "time_control_delay_ms": {
             "minimum": 0.0,
             "type": "integer"
+          },
+          "time_control_first_moves": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "time_control_increment_ms": {
             "minimum": 0.0,
@@ -2892,12 +2979,24 @@
           "time_control_initial_ms": {
             "minimum": 1.0,
             "type": "integer"
+          },
+          "time_control_periods": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TimeControlPeriod"
+            },
+            "type": "array"
+          },
+          "token_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
           }
         },
         "required": [
           "name",
           "network",
           "asset",
+          "token_id",
           "symbol",
           "display_name",
           "rules",

@@ -20,7 +20,7 @@ from typing import Final, cast
 import chess
 import chess.pgn
 
-from sccp.chess.openings import OpeningLine
+from sccp.chess.openings import BEACON_BYTES, OpeningBook, OpeningLine
 from sccp.chess.pgn import (
     GameExpectations,
     ParsedGame,
@@ -30,7 +30,7 @@ from sccp.chess.pgn import (
 from sccp.chess.pgn import (
     GameResult as PgnResult,
 )
-from sccp.chess.rulesets import VariantRules, ruleset_for
+from sccp.chess.rulesets import VariantRules, opening_line_fits, ruleset_for
 from sccp.config import STANDARD_VARIANT, NetworkParams, VariantParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import (
@@ -100,6 +100,60 @@ def opening_ref(line: OpeningLine) -> OpeningRef:
     )
 
 
+def token_opening_ref(
+    params: VariantParams,
+    beacon: bytes,
+    match_id: str,
+    *,
+    rules: VariantRules | None = None,
+) -> OpeningRef | None:
+    """Select one of a token's own opening lines for a match.
+
+    Returns ``None`` when the token declares no lines and therefore uses the
+    packaged book named by ``params.opening_book``. The selection rule is the
+    book's: ``SHA256(beacon || "opening" || match_id)[:8] % len(lines)``, so the
+    relay and every verifier derive the same line from chain state alone.
+    """
+    if not params.openings:
+        return None
+    if len(beacon) != BEACON_BYTES:
+        raise TranscriptError(f"beacon must be {BEACON_BYTES} bytes, got {len(beacon)}")
+    book = OpeningBook(
+        version=params.opening_book,
+        lines=tuple(
+            OpeningLine(
+                book_version=params.opening_book,
+                line_id=index,
+                name=f"{params.name} line {index}",
+                moves=moves,
+            )
+            for index, moves in enumerate(params.openings)
+        ),
+    )
+    line = book.select(beacon, match_id)
+    ruleset = rules if rules is not None else ruleset_for(params.ruleset or params.name)
+    if not ruleset.allow_book_moves:
+        raise TranscriptError(
+            f"token {params.name!r} declares openings, but {ruleset.name} starts "
+            "from a position and allows no book moves"
+        )
+    start_fen = ruleset.normalise_start_fen(None)
+    return OpeningRef(
+        book_version=line.book_version,
+        line_id=line.line_id,
+        hash=opening_hash(
+            line.book_version,
+            line.line_id,
+            line.moves,
+            start_fen=start_fen,
+            variant=params.name,
+        ),
+        moves=line.moves,
+        start_fen=start_fen,
+        variant=params.name,
+    )
+
+
 def _ruleset_for_variant(
     variant: str, variants: Mapping[str, VariantParams] | None = None
 ) -> VariantRules:
@@ -112,6 +166,54 @@ def _ruleset_for_variant(
     params = (variants or {}).get(variant)
     ruleset = params.ruleset if params is not None else None
     return ruleset_for(ruleset or variant)
+
+
+def start_opening_ref(variant: str, rules: VariantRules) -> OpeningRef:
+    """The deterministic no-book start for ``rules`` under a token's name."""
+    start_fen = rules.normalise_start_fen(None)
+    return OpeningRef(
+        book_version="none",
+        line_id=0,
+        hash=opening_hash("none", 0, (), start_fen=start_fen, variant=variant),
+        moves=(),
+        start_fen=start_fen,
+        variant=variant,
+    )
+
+
+def book_opening_ref(
+    variant: str,
+    rules: VariantRules,
+    book: OpeningBook,
+    beacon: bytes,
+    match_id: str,
+) -> OpeningRef:
+    """Select a book line for ``variant``, or fall back to its fixed start.
+
+    Network books are authored for standard chess. A registered token can name
+    a ruleset whose fixed start rejects the selected line (Horde has no knights
+    to develop, for example). In that case the shared prefix is the ruleset's
+    own start: line 0, no moves and ``book_version`` ``none``. The relay and
+    every verifier derive that fallback from the same beacon and book.
+    """
+    line = book.select(beacon, match_id)
+    if not opening_line_fits(rules, line.moves):
+        return start_opening_ref(variant, rules)
+    start_fen = rules.normalise_start_fen(None)
+    return OpeningRef(
+        book_version=line.book_version,
+        line_id=line.line_id,
+        hash=opening_hash(
+            line.book_version,
+            line.line_id,
+            line.moves,
+            start_fen=start_fen,
+            variant=variant,
+        ),
+        moves=line.moves,
+        start_fen=start_fen,
+        variant=variant,
+    )
 
 
 def validate_opening_ref(
@@ -658,6 +760,7 @@ __all__ = [
     "save_transcript",
     "sign_certificate",
     "sign_result",
+    "token_opening_ref",
     "validate_opening_ref",
     "verify_certificate_signatures",
     "verify_result_signatures",

@@ -34,14 +34,19 @@ from sccp.chain.state import (
     epoch_of,
     first_matchable_epoch,
 )
-from sccp.chess.rulesets import ruleset_for
+from sccp.chess.rulesets import canonical_opening_line, ruleset_for
 from sccp.config import (
     DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
+    TOKEN_TICKET_PATTERN,
     NetworkParams,
+    TimeControlPeriod,
     VariantParams,
     derive_variant_asset_id,
+    token_display_name_for_ticket,
+    token_symbol_for_ticket,
+    token_variant_name,
     units_per_coin,
 )
 from sccp.crypto.address import encode_address, validate_address
@@ -413,10 +418,12 @@ ALLOWED: dict[TxType, frozenset[str]] = {
     TxType.HTLC_REFUND: frozenset({"htlc_id", "public_key"}),
     TxType.REGISTER_TOKEN: frozenset(
         {
+            "ticket",
             "variant",
             "ruleset",
             "symbol",
             "display_name",
+            "openings",
             "decimals",
             "initial_supply",
             "subsidy",
@@ -428,6 +435,8 @@ ALLOWED: dict[TxType, frozenset[str]] = {
             "time_control_initial_ms",
             "time_control_increment_ms",
             "time_control_delay_ms",
+            "time_control_first_moves",
+            "time_control_periods",
             "public_key",
         }
     ),
@@ -495,23 +504,112 @@ def _validate_register(params: NetworkParams, state: State, tx: Transaction, hei
     assert endpoint is not None and engine is not None
 
 
+def _field_ticket(payload: Mapping[str, object]) -> str:
+    """A ticket is exactly four digits and is the only public token name."""
+    ticket = payload.get("ticket")
+    if not isinstance(ticket, str) or re.fullmatch(TOKEN_TICKET_PATTERN, ticket) is None:
+        _fail(TxFailure.SCHEMA, "payload field 'ticket' must be exactly four digits")
+    return ticket
+
+
+def _field_openings(
+    payload: Mapping[str, object], ruleset_name: str
+) -> tuple[tuple[str, ...], ...]:
+    """Token opening lines, canonicalised from SAN or UCI by the ruleset."""
+    raw = payload.get("openings")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or len(raw) > 256:
+        _fail(TxFailure.SCHEMA, "payload field 'openings' must be an array of at most 256 lines")
+    lines: list[tuple[str, ...]] = []
+    for index, line in enumerate(raw):
+        if isinstance(line, str):
+            tokens: list[str] | str = line
+        elif isinstance(line, list) and all(isinstance(move, str) for move in line):
+            tokens = line
+        else:
+            _fail(
+                TxFailure.SCHEMA,
+                f"opening {index} must be a SAN string or an array of SAN moves",
+            )
+        try:
+            canonical = canonical_opening_line(ruleset_name, tokens)
+        except ConfigError as exc:
+            _fail(TxFailure.TYPE, f"opening {index}: {exc}")
+        if len(canonical) > 12:
+            _fail(TxFailure.TYPE, f"opening {index} has more than 12 plies")
+        lines.append(canonical)
+    return tuple(lines)
+
+
+def _field_time_control_periods(
+    payload: Mapping[str, object],
+) -> tuple[int | None, tuple[TimeControlPeriod, ...]]:
+    """Parse the FIDE-style later periods carried by a token registration."""
+    first_moves = (
+        _field_int(payload, "time_control_first_moves", minimum=1)
+        if "time_control_first_moves" in payload
+        else None
+    )
+    raw = payload.get("time_control_periods")
+    if raw is None:
+        periods: tuple[TimeControlPeriod, ...] = ()
+    elif not isinstance(raw, list) or len(raw) > 64:
+        _fail(
+            TxFailure.SCHEMA,
+            "payload field 'time_control_periods' must be an array of at most 64 periods",
+        )
+    else:
+        parsed: list[TimeControlPeriod] = []
+        for index, period in enumerate(raw):
+            if not isinstance(period, Mapping):
+                _fail(TxFailure.SCHEMA, f"time-control period {index} must be an object")
+            try:
+                parsed.append(TimeControlPeriod.model_validate(period))
+            except ValidationError as exc:
+                detail = "; ".join(error["msg"] for error in exc.errors())
+                _fail(TxFailure.SCHEMA, f"time-control period {index}: {detail}")
+        periods = tuple(parsed)
+    return first_moves, periods
+
+
 def _parse_token_registration(
     params: NetworkParams, payload: Mapping[str, object]
 ) -> tuple[VariantParams, int]:
     """Build the token a ``register_token`` payload describes.
 
     Both validation and application call this function, so the definition that
-    is checked is byte-for-byte the definition that is stored.
+    is checked is byte-for-byte the definition that is stored. A ticketed token
+    derives its variant name, ticker and label from the ticket; the legacy
+    name-based payload is still accepted for pre-ticket chains.
     """
-    name = _field_token_name(payload, "variant")
-    ruleset_name = _field_token_name(payload, "ruleset")
-    symbol = _field_text(payload, "symbol")
-    display_name = _field_text(payload, "display_name")
+    symbol: str | None
+    display_name: str | None
+    if "ticket" in payload:
+        ticket = _field_ticket(payload)
+        legacy = {"variant", "symbol", "display_name"} & set(payload)
+        if legacy:
+            _fail(
+                TxFailure.SCHEMA,
+                "a ticketed token derives its name from the ticket; "
+                f"remove {', '.join(sorted(legacy))}",
+            )
+        name = token_variant_name(ticket)
+        symbol = token_symbol_for_ticket(ticket)
+        display_name = token_display_name_for_ticket(ticket)
+    else:
+        ticket = None
+        name = _field_token_name(payload, "variant")
+        symbol = _field_text(payload, "symbol")
+        display_name = _field_text(payload, "display_name")
     assert symbol is not None and display_name is not None
+    ruleset_name = _field_token_name(payload, "ruleset")
     try:
         ruleset = ruleset_for(ruleset_name)
     except ConfigError as exc:
         _fail(TxFailure.TYPE, str(exc))
+    openings = _field_openings(payload, ruleset.name)
+    first_period_moves, periods = _field_time_control_periods(payload)
 
     initial_supply = (
         _field_int(payload, "initial_supply", minimum=0) if "initial_supply" in payload else 0
@@ -529,7 +627,9 @@ def _parse_token_registration(
         else 1
     )
     opening_book = (
-        _field_text(payload, "opening_book") if "opening_book" in payload else params.book_version
+        _field_text(payload, "opening_book")
+        if "opening_book" in payload
+        else (f"token-{ticket}" if ticket is not None and openings else params.book_version)
     )
     initial_ms = (
         _field_int(payload, "time_control_initial_ms", minimum=1)
@@ -568,6 +668,7 @@ def _parse_token_registration(
     try:
         token = VariantParams(
             name=name,
+            ticket=ticket,
             rules=ruleset.pgn_rules,
             ruleset=ruleset_name,
             asset=asset,
@@ -583,6 +684,9 @@ def _parse_token_registration(
             time_control_initial_ms=initial_ms,
             time_control_increment_ms=increment_ms,
             time_control_delay_ms=delay_ms,
+            time_control_first_moves=first_period_moves,
+            time_control_periods=periods,
+            openings=openings,
         )
     except ValidationError as exc:
         detail = "; ".join(
@@ -605,6 +709,8 @@ def _validate_register_token(
     """
     _check_unknown_keys(tx.payload, ALLOWED[TxType.REGISTER_TOKEN])
     token, _ = _parse_token_registration(params, tx.payload)
+    if token.ticket is not None and token.ticket in state.token_tickets():
+        _fail(TxFailure.TYPE, f"ticket {token.ticket} is already registered")
     if token.name in state.variant_names():
         _fail(
             TxFailure.TYPE,

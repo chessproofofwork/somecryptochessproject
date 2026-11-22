@@ -24,7 +24,6 @@ import { FailureNotice, Loading, StatusPill } from "../components/Chrome";
 import { useNotice } from "../components/Notices";
 import { WalletGate } from "../components/WalletGate";
 import { useWalletSession } from "../components/WalletSession";
-import { tokensFor } from "../lib/assets";
 import { connectEthAccount, currentEthAccount, ensureEthChain } from "../lib/eth";
 import { formatInteger } from "../lib/format";
 import { useNode } from "../node";
@@ -105,8 +104,6 @@ function Desk({ view }: { view: BridgeTab }): ReactNode {
       />
     );
   }
-  const tokens = tokensFor(params);
-  if (tokens.length === 0) return null;
   const bridgeInfo = bridge.data;
   const reload = (): void => {
     account.reload();

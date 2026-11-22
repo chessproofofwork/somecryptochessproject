@@ -1,9 +1,12 @@
 /**
  * The token summary: one row per chess variant and the asset it mints.
  *
- * A token is identified by its variant, clock and ticker; issuance is split into
- * what has been minted already and what the next block can still mint. Fees are
- * deliberately absent from both numbers: they are transfers, not new supply.
+ * A chain-registered token is identified twice: by the four-digit ticket its
+ * issuer chose and by the network-assigned token id derived from its variant
+ * name. The ticket is the human handle; the id is what a lookup accepts and what
+ * an account's `assets` map uses. Built-in variants have a ticker but no ticket.
+ * Issuance is split into what has been minted already and what the next block
+ * can still mint; fees are deliberately absent, they are transfers not supply.
  */
 
 import type { ReactNode } from "react";
@@ -12,11 +15,12 @@ import { Text } from "react-native-paper";
 
 import {
   currentBlockReward,
+  shortTokenId,
   tokenMinted,
   variantLabel,
   type Token,
 } from "../lib/assets";
-import { formatTimeControl, formatTokenAmount } from "../lib/format";
+import { formatMultiPeriodTimeControl, formatTokenAmount } from "../lib/format";
 import type { BlockSummary, NodeStatus } from "../types";
 import { tableStyles } from "./tableStyles";
 
@@ -41,8 +45,14 @@ export function TokenTable({
           <Text variant="labelSmall" style={[styles.colTime, tableStyles.muted]}>
             TIME CONTROL
           </Text>
+          <Text variant="labelSmall" style={[styles.colTicket, tableStyles.muted]}>
+            TICKET
+          </Text>
           <Text variant="labelSmall" style={[styles.colTicker, tableStyles.muted]}>
             TICKER
+          </Text>
+          <Text variant="labelSmall" style={[styles.colTokenId, tableStyles.muted]}>
+            TOKEN ID
           </Text>
           <Text variant="labelSmall" style={[styles.colMinted, tableStyles.muted]}>
             TOTAL MINTED
@@ -66,14 +76,26 @@ export function TokenTable({
                 {variantLabel(token.variant)}
               </Text>
               <Text variant="bodyMedium" style={[styles.colTime, tableStyles.numeric]}>
-                {formatTimeControl(
+                {formatMultiPeriodTimeControl(
                   token.timeControlInitialMs,
                   token.timeControlIncrementMs,
                   token.timeControlDelayMs,
+                  token.timeControlFirstMoves,
+                  token.timeControlPeriods,
                 )}
+              </Text>
+              <Text variant="bodyMedium" style={[styles.colTicket, tableStyles.numeric]}>
+                {token.ticket ?? "-"}
               </Text>
               <Text variant="bodyMedium" style={styles.colTicker}>
                 {token.symbol}
+              </Text>
+              <Text
+                variant="bodySmall"
+                style={[styles.colTokenId, tableStyles.numeric, tableStyles.muted]}
+                selectable
+              >
+                {shortTokenId(token.tokenId)}
               </Text>
               <Text variant="bodyMedium" style={[styles.colMinted, tableStyles.numeric]}>
                 {formatTokenAmount(minted, token.symbol, token.decimals)}
@@ -93,10 +115,12 @@ export function TokenTable({
 }
 
 const styles = StyleSheet.create({
-  table: { minWidth: 760 },
-  colVariant: { width: 96 },
-  colTime: { width: 96 },
-  colTicker: { width: 64 },
+  table: { minWidth: 980 },
+  colVariant: { width: 112 },
+  colTime: { width: 116 },
+  colTicket: { width: 64, textAlign: "right" },
+  colTicker: { width: 72 },
+  colTokenId: { width: 132, textAlign: "right" },
   colMinted: { flexGrow: 1, flexShrink: 1, minWidth: 150, textAlign: "right" },
   colReward: { width: 130, textAlign: "right" },
   colDifficulty: { width: 150, textAlign: "right" },

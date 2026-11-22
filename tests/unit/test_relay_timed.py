@@ -169,6 +169,8 @@ def test_activation_starts_both_clocks_at_the_fixed_control(signed_match: Any) -
         "initial_ms": FIXED_TIME_CONTROL.initial_ms,
         "increment_ms": FIXED_TIME_CONTROL.increment_ms,
         "delay_ms": FIXED_TIME_CONTROL.delay_ms,
+        "first_period_moves": None,
+        "periods": [],
     }
     assert view["white_ms"] == FIXED_TIME_CONTROL.initial_ms
     assert view["black_ms"] == FIXED_TIME_CONTROL.initial_ms
@@ -431,6 +433,8 @@ def test_a_relay_restart_re_bases_the_live_clock(signed_match: Any, tmp_path: Pa
     reloaded = _relay(signed_match, time=later, witness=generate_hybrid_keypair(), store=store)
     resumed = reloaded.get(match_id)
     assert resumed.status == "active"
+    session = reloaded._sessions[match_id]
+    assert session.clock is not None and session.clock.ply == ply + 1
     assert resumed.white_ms == moved["white_ms"]
     assert resumed.black_ms == FIXED_TIME_CONTROL.initial_ms
     assert resumed.receipts == 1

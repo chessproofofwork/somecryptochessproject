@@ -16,7 +16,14 @@ from sccp.chain.tx import (
     txid,
     validate_transaction,
 )
-from sccp.config import DEVNET, NetworkParams
+from sccp.config import (
+    DEVNET,
+    NetworkParams,
+    derive_variant_asset_id,
+    token_display_name_for_ticket,
+    token_symbol_for_ticket,
+    token_variant_name,
+)
 from sccp.errors import TxValidationError
 from sccp.protocol.models import Transaction, TxType
 from sccp.wallet.service import WalletService
@@ -397,6 +404,89 @@ def test_register_token_adds_a_variant_and_credits_its_initial_supply(
 
     again = _resigned(tx.model_copy(update={"nonce": 1}), alice)
     assert _reason(again, ledger) is TxFailure.TYPE
+
+
+def test_a_ticketed_registration_derives_its_identity_and_keeps_its_own_book(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """A ticket is the only public name a registration chooses.
+
+    The chain derives the variant name, ticker and label; stores the opening
+    lines as canonical SAN; and keeps the FIDE-style periods in one immutable
+    record resolvable by either the ticket or the network-assigned token id.
+    """
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        ticket="0042",
+        ruleset="standard",
+        subsidy=COINS,
+        initial_supply=7,
+        openings=["e2e4 e7e5 g1f3", ["d2d4"]],
+        time_control_initial_ms=5_400_000,
+        time_control_first_moves=40,
+        time_control_periods=[{"moves": 20, "initial_ms": 1_800_000, "increment_ms": 30_000}],
+    )
+    assert tx.payload["ticket"] == "0042"
+    assert "variant" not in tx.payload
+    assert "symbol" not in tx.payload
+    assert "display_name" not in tx.payload
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+
+    record = ledger.tokens["token-0042"]
+    variant = record.variant
+    asset = derive_variant_asset_id("token-0042", "T0042", 8, "standard")
+    assert record.ticket == "0042"
+    assert record.token_id == asset
+    assert variant.name == token_variant_name("0042")
+    assert variant.symbol == token_symbol_for_ticket("0042")
+    assert variant.display_name == token_display_name_for_ticket("0042")
+    assert variant.opening_book == "token-0042"
+    assert variant.openings == (("e4", "e5", "Nf3"), ("d4",))
+    assert variant.time_control_initial_ms == 5_400_000
+    assert variant.time_control_first_moves == 40
+    assert len(variant.time_control_periods) == 1
+    period = variant.time_control_periods[0]
+    assert (period.moves, period.initial_ms, period.increment_ms) == (
+        20,
+        1_800_000,
+        30_000,
+    )
+    assert ledger.token_by_ticket("0042") == record
+    assert ledger.token_by_id(asset) == record
+    assert ledger.variant_for_asset(asset) == variant
+
+    duplicate = _resigned(tx.model_copy(update={"nonce": 1}), alice)
+    assert _reason(duplicate, ledger, height=HEIGHT + 1) is TxFailure.TYPE
+    mixed = _resigned(
+        tx.model_copy(
+            update={
+                "nonce": 1,
+                "payload": {**tx.payload, "ticket": "0043", "variant": "dragonchess"},
+            }
+        ),
+        alice,
+    )
+    assert _reason(mixed, ledger, height=HEIGHT + 1) is TxFailure.SCHEMA
+
+
+def test_a_ticketed_token_without_its_own_lines_uses_the_network_book(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """A ticket is not a book by itself; omitting lines keeps the network's."""
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        ticket="0044",
+        ruleset="standard",
+        subsidy=COINS,
+    )
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+    record = ledger.tokens["token-0044"]
+    assert record.variant.openings == ()
+    assert record.variant.opening_book == DEVNET.book_version
 
 
 def test_register_token_requires_its_fee_in_the_senders_balance(

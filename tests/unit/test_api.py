@@ -27,6 +27,9 @@ from sccp.config import (
     TESTNET,
     VariantParams,
     derive_variant_asset_id,
+    token_display_name_for_ticket,
+    token_symbol_for_ticket,
+    token_variant_name,
 )
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
@@ -223,6 +226,58 @@ def test_token_routes_name_tokens_by_name_asset_and_unique_symbol() -> None:
     assert ambiguous.status_code == 404
     assert "ambiguous" in ambiguous.json()["detail"]
     assert missing.status_code == 404
+
+
+def _ticketed_token_record(ticket: str) -> TokenRecord:
+    name = token_variant_name(ticket)
+    symbol = token_symbol_for_ticket(ticket)
+    asset = derive_variant_asset_id(name, symbol, 8, "standard")
+    return TokenRecord(
+        name=name,
+        variant=VariantParams(
+            name=name,
+            ticket=ticket,
+            rules="chess",
+            ruleset="standard",
+            asset=asset,
+            symbol=symbol,
+            display_name=token_display_name_for_ticket(ticket),
+            subsidy=50,
+            min_plies=1,
+            opening_book=f"token-{ticket}",
+        ),
+        owner=FAUCET_ADDRESS,
+        registered_at_height=4,
+        initial_supply=10,
+    )
+
+
+def test_token_lookup_accepts_a_ticket_or_token_id_and_reports_approval() -> None:
+    """A permissionless token stays listed, but only approved ones reach a wallet."""
+    service = NodeService.open(DEVNET, approved_tokens=["0042"])
+    approved = _ticketed_token_record("0042")
+    hidden = _ticketed_token_record("0043")
+    for record in (approved, hidden):
+        service.chain.state.tokens[record.name] = record
+    with _client(service) as client:
+        listing = client.get("/v1/tokens").json()
+        by_ticket = client.get("/v1/tokens/0042")
+        by_token_id = client.get(f"/v1/tokens/{approved.token_id}")
+        hidden_lookup = client.get("/v1/tokens/0043")
+    service.close()
+
+    flags = {token["ticket"]: token["approved"] for token in listing["tokens"]}
+    assert flags == {"0042": True, "0043": False}
+    assert by_ticket.status_code == 200
+    assert by_ticket.json() == by_token_id.json()
+    assert by_ticket.json()["name"] == "token-0042"
+    assert by_ticket.json()["ticket"] == "0042"
+    assert by_ticket.json()["token_id"] == approved.token_id
+    assert by_ticket.json()["opening_book"] == "token-0042"
+    # A lookup still finds a token the operator did not approve; the wallet
+    # decides whether to keep it in its own registry.
+    assert hidden_lookup.status_code == 200
+    assert hidden_lookup.json()["approved"] is False
     service.close()
 
 

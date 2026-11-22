@@ -8,6 +8,7 @@ time rather than at block validation time.
 
 from __future__ import annotations
 
+import re
 from typing import Final, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -18,7 +19,12 @@ from sccp.chess.rulesets import (
 from sccp.chess.rulesets import (
     STANDARD_VARIANT as STANDARD_VARIANT,
 )
-from sccp.chess.rulesets import ruleset_for, supported_rules
+from sccp.chess.rulesets import (
+    canonical_opening_line,
+    opening_line_fits,
+    ruleset_for,
+    supported_rules,
+)
 from sccp.errors import ConfigError, NetworkError
 from sccp.serialization import Domain, domain_hex
 
@@ -116,6 +122,55 @@ def derive_variant_asset_id(name: str, symbol: str, decimals: int, ruleset: str)
     )
 
 
+TOKEN_TICKET_PATTERN: Final = r"^[0-9]{4}$"
+"""A chip-style four-digit ticket. Every chain-registered token has one."""
+
+
+def token_variant_name(ticket: str) -> str:
+    """The internal variant name for a four-digit ticket.
+
+    Users pick a ticket, not a name. Names are derived here so two spellings of
+    one ticket can never create two variants, and the asset id then commits to
+    the ticket through the variant name.
+    """
+    if not isinstance(ticket, str) or re.fullmatch(TOKEN_TICKET_PATTERN, ticket) is None:
+        raise ConfigError(f"token ticket must be exactly four digits, got {ticket!r}")
+    return f"token-{ticket}"
+
+
+def token_symbol_for_ticket(ticket: str) -> str:
+    """The printable ticker derived from a ticket, e.g. ``T0042``."""
+    token_variant_name(ticket)
+    return f"T{ticket}"
+
+
+def token_display_name_for_ticket(ticket: str) -> str:
+    """The explorer label for a ticket, e.g. ``Token 0042``."""
+    token_variant_name(ticket)
+    return f"Token {ticket}"
+
+
+class TimeControlPeriod(BaseModel):
+    """One later stage of a multi-period (sudden-death) time control.
+
+    FIDE-style controls add time when a move-number threshold is reached, for
+    example 40 moves at 90 minutes followed by 30 minutes for the rest of the
+    game. The token's base fields describe the first period; each entry here
+    describes a *later* period and the number of full moves it lasts.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    moves: int = Field(ge=1, le=MAX_PLIES_LIMIT // 2)
+    """Length of this period in full moves (both seats' moves)."""
+
+    initial_ms: int = Field(ge=0, le=MAX_CLOCK_MS)
+    """Time added to *both* clocks when this period starts."""
+
+    increment_ms: int = Field(default=0, ge=0, le=MAX_CLOCK_MS)
+    delay_ms: int = Field(default=0, ge=0, le=MAX_CLOCK_MS)
+
+
 class VariantParams(BaseModel):
     """One chess variant and the asset its settled proofs mint.
 
@@ -127,6 +182,13 @@ class VariantParams(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = Field(min_length=1, max_length=32)
+    ticket: str | None = Field(default=None, pattern=TOKEN_TICKET_PATTERN)
+    """The four-digit ticket that identifies a chain-registered token.
+
+    Built-in variants have no ticket. The ticket replaces every user-chosen name
+    as the token's public identity; ``name`` is derived from it and the asset id
+    (the network-assigned token id) commits to that derivation.
+    """
     rules: str = Field(min_length=1, max_length=32)
     ruleset: str | None = Field(default=None, min_length=1, max_length=32)
     """Registered ruleset that decides how games of this variant are played.
@@ -148,9 +210,9 @@ class VariantParams(BaseModel):
     opening_book: str = Field(default="v1", min_length=1, max_length=64)
     """Opening-book version the relay plays this variant's games from.
 
-    Omission means the packaged ``v1`` book. A registration normally records the
-    network's own ``book_version`` so a token plays the same book as the native
-    variant.
+    Omission means the packaged ``v1`` book. A chain registration records the
+    network's ``book_version``, or ``token-<ticket>`` when that ticketed token
+    declares its own opening lines.
     """
     time_control_initial_ms: int = Field(
         default=DEFAULT_TIME_CONTROL_INITIAL_MS, ge=1, le=MAX_CLOCK_MS
@@ -165,6 +227,24 @@ class VariantParams(BaseModel):
 
     A delay is mutually exclusive with an increment. ``0`` means no delay, so
     ``increment_ms == delay_ms == 0`` is sudden death.
+    """
+    time_control_first_moves: int | None = Field(default=None, ge=1, le=MAX_PLIES_LIMIT // 2)
+    """Full moves in the first period when a later period follows.
+
+    ``None`` means the base control lasts the whole game. When set, each entry
+    in ``time_control_periods`` starts at a fixed move boundary, and time is
+    added to both clocks at that boundary.
+    """
+    time_control_periods: tuple[TimeControlPeriod, ...] = ()
+    """Later time-control periods, in order. Empty for a single-period control."""
+    openings: tuple[tuple[str, ...], ...] = Field(default=(), max_length=256)
+    """Token-specific opening lines in canonical SAN.
+
+    The relay selects one line from the epoch beacon and the match id, exactly
+    as it selects a line from the packaged book. An empty tuple means the token
+    uses the network book named by ``opening_book``. Every line is replayed and
+    canonicalised against this variant's ruleset at registration, so a token
+    cannot smuggle an illegal line into consensus state.
     """
 
     @property
@@ -190,6 +270,14 @@ class VariantParams(BaseModel):
                 f"{ruleset.pgn_rules!r}, not {self.rules!r}; known rules: "
                 f"{', '.join(sorted(supported_rules()))}"
             )
+        if self.ticket is not None:
+            if self.name != token_variant_name(self.ticket):
+                raise ConfigError(
+                    f"variant {self.name!r} does not match ticket {self.ticket!r}; "
+                    f"expected {token_variant_name(self.ticket)!r}"
+                )
+            if self.asset is None:
+                raise ConfigError("a ticketed token needs a network-assigned asset id")
         if self.name == STANDARD_VARIANT and self.asset is not None:
             raise ConfigError("the standard variant is native ZQWX with no derived asset")
         if self.name == STANDARD_VARIANT and self.ruleset not in (None, STANDARD_VARIANT):
@@ -209,10 +297,54 @@ class VariantParams(BaseModel):
             )
         if self.time_control_increment_ms and self.time_control_delay_ms:
             raise ConfigError(f"variant {self.name!r} uses an increment or a delay, not both")
+        if self.time_control_periods and self.time_control_first_moves is None:
+            raise ConfigError("a multi-period time control needs time_control_first_moves")
+        if self.time_control_first_moves is not None and not self.time_control_periods:
+            raise ConfigError("time_control_first_moves is only valid with a later period")
+        for index, line in enumerate(self.openings):
+            if not 1 <= len(line) <= 12:
+                raise ConfigError(
+                    f"variant {self.name!r} opening {index} has {len(line)} plies; "
+                    "a certified opening carries between 1 and 12"
+                )
+            try:
+                canonical = canonical_opening_line(ruleset.name, line)
+            except ConfigError as exc:
+                raise ConfigError(
+                    f"variant {self.name!r} opening {index} is invalid: {exc}"
+                ) from None
+            if canonical != tuple(line):
+                raise ConfigError(
+                    f"variant {self.name!r} opening {index} is not canonical SAN; "
+                    f"expected {' '.join(canonical)}"
+                )
+            if not opening_line_fits(ruleset, line):
+                raise ConfigError(
+                    f"variant {self.name!r} opening {index} is not playable under "
+                    f"ruleset {ruleset.name!r}"
+                )
+        period_increments = [self.time_control_increment_ms]
+        total_moves = self.time_control_first_moves or (MAX_PLIES_LIMIT // 2)
+        added = 0
+        for period in self.time_control_periods:
+            if period.initial_ms % 1000 or period.increment_ms % 1000 or period.delay_ms % 1000:
+                raise ConfigError(
+                    f"variant {self.name!r} time-control periods must be whole seconds"
+                )
+            if period.increment_ms and period.delay_ms:
+                raise ConfigError(f"variant {self.name!r} uses an increment or a delay, not both")
+            total_moves += period.moves
+            added += period.initial_ms
+            period_increments.append(period.increment_ms)
+        if total_moves > MAX_PLIES_LIMIT // 2:
+            raise ConfigError(
+                f"variant {self.name!r} periods cover {total_moves} moves, "
+                f"above the {MAX_PLIES_LIMIT // 2}-move protocol ceiling"
+            )
         # A clock never exceeds one day even if the game runs to the protocol's
         # ply ceiling, so ``mm:ss`` formatting cannot overflow. A delay never
-        # grows a clock, so only the increment contributes to the upper bound.
-        worst_case = self.time_control_initial_ms + self.time_control_increment_ms * MAX_PLIES_LIMIT
+        # grows a clock, so only the increments contribute to the upper bound.
+        worst_case = self.time_control_initial_ms + added + max(period_increments) * MAX_PLIES_LIMIT
         if worst_case > MAX_CLOCK_MS:
             raise ConfigError(
                 f"variant {self.name!r} time control can reach {worst_case} ms, "

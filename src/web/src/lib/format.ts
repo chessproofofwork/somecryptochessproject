@@ -147,6 +147,44 @@ export function formatTimeControl(
   return `${initial}+${bonus}${suffix}`;
 }
 
+/** One later stage of a multi-period control, as the API/UI models it. */
+export interface TimeControlPeriodLike {
+  moves: number;
+  initial_ms: number;
+  increment_ms: number;
+  delay_ms: number;
+}
+
+/**
+ * A token's clock as the lossless PGN form.
+ *
+ * Sudden death stays `10+0`; an increment or delay keeps its `d` suffix. A
+ * multi-period control uses the colon-separated FIDE form, for example
+ * `40/90+0:20/30+30` (40 moves at 90 minutes, then a 20-move period of 30
+ * minutes with a 30-second increment). Every later period carries its move
+ * count so the rendering is lossless.
+ */
+export function formatMultiPeriodTimeControl(
+  initialMs: number,
+  incrementMs = 0,
+  delayMs = 0,
+  firstMoves: number | null = null,
+  periods: readonly TimeControlPeriodLike[] = [],
+): string {
+  const first = formatTimeControl(initialMs, incrementMs, delayMs);
+  if (periods.length === 0 || firstMoves === null) return first;
+  const stages = [`${firstMoves}/${first}`];
+  for (const period of periods) {
+    const segment = formatTimeControl(
+      period.initial_ms,
+      period.increment_ms,
+      period.delay_ms,
+    );
+    stages.push(`${period.moves}/${segment}`);
+  }
+  return stages.join(":");
+}
+
 /** A millisecond duration as a clock, e.g. `3:07`. */
 export function formatClock(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));

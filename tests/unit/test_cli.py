@@ -818,6 +818,43 @@ def test_node_run_serves_the_app(data_dir: Path, monkeypatch: pytest.MonkeyPatch
     assert isinstance(served["app"], FastAPI)
 
 
+def test_node_run_forwards_approved_token_flags(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The node's approved registry is operator input, not a default guess."""
+    import uvicorn
+
+    from sccp.node.service import NodeService
+
+    seen: dict[str, Any] = {}
+    original = NodeService.open.__func__
+
+    def spy(cls: Any, network: Any, **kwargs: Any) -> NodeService:
+        seen["approved_tokens"] = kwargs.get("approved_tokens")
+        return original(cls, network, **kwargs)
+
+    monkeypatch.setattr(NodeService, "open", classmethod(spy))
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    token_id = "a" * 64
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "node",
+            "run",
+            "--network",
+            "devnet",
+            "--approved-token",
+            "0042",
+            "--approved-token",
+            token_id,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert seen["approved_tokens"] == ["0042", token_id]
+
+
 def test_node_run_validates_the_mining_options(data_dir: Path) -> None:
     missing = runner.invoke(
         app, ["--data-dir", str(data_dir), "node", "run", "--network", "devnet", "--mine"]
@@ -2181,6 +2218,37 @@ def test_dex_and_bridge_series_are_available_from_the_cli() -> None:
         assert command in bridge.stdout
 
 
+def test_dex_tokens_names_the_ticket_and_the_derived_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sccp.cli as cli
+
+    token_id = "a" * 64
+    document = {
+        "network": "devnet",
+        "tokens": [
+            {
+                "name": "token-0042",
+                "ticket": "0042",
+                "symbol": "T0042",
+                "ruleset": "standard",
+                "asset": token_id,
+                "max_supply": 21_000_000,
+                "minted": 10,
+                "initial_supply": 10,
+                "subsidy": 5,
+                "decimals": 8,
+            }
+        ],
+    }
+    monkeypatch.setattr(cli, "_node_document", lambda *_args: document)
+    result = runner.invoke(app, ["dex", "tokens", "--node", "http://node.test:8645"])
+    assert result.exit_code == 0, result.output
+    assert f"token-0042 (T0042) ticket 0042 standard asset {token_id} cap 21000000 coins" in (
+        result.stdout
+    )
+
+
 def test_sccp_network_env_selects_the_network_when_no_flag_is_given(
     tmp_path: Path, env: dict[str, str]
 ) -> None:
@@ -2341,14 +2409,10 @@ def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
             "devnet",
             "--key",
             str(key),
-            "--name",
-            "dragonchess",
+            "--ticket",
+            "0042",
             "--ruleset",
             "standard",
-            "--symbol",
-            "DRG",
-            "--display-name",
-            "Dragon Chess",
             "--subsidy",
             "50",
             "--initial-supply",
@@ -2364,14 +2428,17 @@ def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    expected = derive_variant_asset_id("dragonchess", "DRG", 8, "standard")
-    assert payload["variant"] == "dragonchess"
+    expected = derive_variant_asset_id("token-0042", "T0042", 8, "standard")
+    assert payload["ticket"] == "0042"
+    assert payload["variant"] == "token-0042"
+    assert payload["symbol"] == "T0042"
     assert payload["asset"] == expected
     assert payload["type"] == "register_token"
     assert len(recorded_node) == 1
     tx = recorded_node[0]
     assert tx.nonce == 7
-    assert tx.payload["variant"] == "dragonchess"
+    assert tx.payload["ticket"] == "0042"
+    assert "variant" not in tx.payload
     assert tx.payload["subsidy"] == 50 * UNITS_PER_COIN
     assert tx.payload["initial_supply"] == 100 * UNITS_PER_COIN
     assert tx.payload["max_supply"] == 21_000_000
@@ -2408,12 +2475,10 @@ def test_dex_register_token_accepts_a_pgn_time_control(
             "devnet",
             "--key",
             str(key),
-            "--name",
-            "delaychess",
+            "--ticket",
+            "0043",
             "--ruleset",
             "standard",
-            "--symbol",
-            "DLY",
             "--time-control",
             "300+5d",
             "--node",

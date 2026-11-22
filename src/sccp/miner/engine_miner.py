@@ -948,6 +948,7 @@ class EngineMiner:
             state.certificate.time_control,
             now_ms=self.clock_ms(),
             lag_grace_ms=self.config.params.lag_grace_ms,
+            ply=len(state.san_moves),
         )
         clock.turn = self._to_move(state)
         state.clock = clock

@@ -88,8 +88,10 @@ What this document set out to add, and where it landed:
   and auditable, for liquidity and ecosystem incentives. There is no sale and no
   administrative mint after genesis. If nobody settles variant games, no variant
   token is mined -- C960 today, plus any token registered on chain. Registration
-  can name only an existing ruleset (`chess` or `chess960`; §5.4), so it adds a
-  token without adding executable code.
+  can name only an existing ruleset (`standard`, `chess960`, or one of the
+  python-chess variants: `antichess`, `atomic`, `crazyhouse`, `giveaway`,
+  `horde`, `kingofthehill`, `racingkings`, `suicide`, `threecheck`; §5.4), so it
+  adds a token without adding executable code.
 - **Assets are consensus objects, not contracts.** An asset has an id, a supply
   counter and a minting rule. It has no bytecode, no issuer privileges and no
   upgrade path, so there is nothing for an issuer to rug and nothing for a
@@ -383,20 +385,21 @@ as zero; a fresh replay from genesis counts every historical slash.
 | `htlc_claim` | new | `{htlc_id, preimage, public_key}` |
 | `htlc_refund` | new | `{htlc_id, public_key}` |
 | `register` | extended | `{public_key, endpoint, engine, bond, variant?}`; `variant` defaults to `standard` and is fixed until the account unregisters |
-| `register_token` | new | `{variant, ruleset, symbol, display_name, subsidy, decimals?, initial_supply?, halving_interval?, max_supply?, min_plies?, max_games_per_block?, opening_book?, time_control_initial_ms?, time_control_increment_ms?, time_control_delay_ms?, public_key}`; adds an immutable variant token and a derived asset id |
+| `register_token` | new | `{ticket, ruleset, openings?, subsidy, decimals?, initial_supply?, halving_interval?, max_supply?, min_plies?, max_games_per_block?, opening_book?, time_control_initial_ms?, time_control_increment_ms?, time_control_delay_ms?, time_control_first_moves?, time_control_periods?, public_key}`; adds an immutable variant token and a derived asset id |
 | `availability` | unchanged | `{epoch, max_games, commitment, public_key}`; the variant comes from the account, so a registration plays one discipline |
 
 Workstream B shipped with **no `create_asset` transaction**: the asset set was
 fixed by `NetworkParams`, which made a variant token a claim on a game corpus
 rather than a promise by an issuer, and removed lookalike and spam assets by
 construction. Registration now closes that gap without reopening it. Any funded
-account may submit `register_token`, but the payload only names an existing
-ruleset, the name and asset id must be new, and every issuance and clock
-parameter is fixed in the same transaction. The registering key receives
-`initial_supply`; the asset id commits to the variant, symbol, decimals and
-ruleset, so no issuer key or mutable metadata exists to trust afterwards. The
-result is permissionless discovery with the same derived, collision-resistant
-identity the closed set had.
+account may submit `register_token` with an unused four-digit `ticket`; the
+payload only names an existing ruleset, and every identity, issuance and clock
+parameter is fixed in the same transaction. The ticket derives the variant
+`token-<ticket>`, symbol `T<ticket>` and label `Token <ticket>`, so the asset id
+commits to the variant, symbol, decimals and ruleset, and no issuer key or
+mutable metadata exists to trust afterwards. The registering key receives
+`initial_supply`. The result is permissionless discovery with the same derived,
+collision-resistant identity the closed set had.
 
 ### 5.4 Variants in consensus
 
@@ -406,11 +409,11 @@ first and unchanged. As shipped (`config.py`), a variant is:
 ```python
 @dataclass(frozen=True)
 class VariantParams:
-    name: str                 # "standard", "chess960"
-    rules: str                # "chess" | "chess960" -- validated
+    name: str                 # "standard", "chess960", "token-0042"
+    rules: str                # PGN Rules tag; validated against the ruleset
     ruleset: str | None       # registered ruleset; None means the variant's own
     asset: str | None         # asset id hex; None for standard, which mints ZQWX
-    symbol: str               # "C960"
+    symbol: str               # "C960", or "T0042" for a ticket
     display_name: str
     decimals: int
     subsidy: int
@@ -418,11 +421,13 @@ class VariantParams:
     max_supply: int | None    # set together with halving_interval
     min_plies: int
     max_games_per_block: int  # declared and served, not consulted by consensus
-    opening_book: str         # book id, or "none"; a token defaults to book_version
+    opening_book: str         # book id, or "none"; token lines default to token-<ticket>
+    openings: tuple[tuple[str, ...], ...]  # token SAN lines; empty uses the book when it fits
 ```
 
 Chain-registered tokens reuse this record but live in `State.tokens`, keyed by
-variant name; a block resolves a proof against the built-ins plus that registry.
+ticket and variant name; a block resolves a proof against the built-ins plus
+that registry.
 
 Rules that follow from it:
 

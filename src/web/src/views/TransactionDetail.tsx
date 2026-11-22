@@ -24,15 +24,15 @@ import {
   StatusPill,
 } from "../components/Chrome";
 import { formatInteger, formatTokenAmount, prettyJson, shortHash } from "../lib/format";
-import { tokenForAsset, tokensFor } from "../lib/assets";
+import { tokenForAsset } from "../lib/assets";
 import { txId as computeTxId, type TxType } from "../lib/tx";
-import { useNode } from "../node";
 import { useResource } from "../useResource";
+import { useTokenRegistry } from "../useTokenRegistry";
 import type { Block, Transaction } from "../types";
 
 export function TransactionDetail({ txid }: { txid: string }): ReactNode {
-  const { params } = useNode();
-  const tokens = tokensFor(params.data);
+  const registry = useTokenRegistry();
+  const tokens = registry.tokens;
   const record = useResource(
     (signal) => fetchTransaction(txid, signal),
     [txid],

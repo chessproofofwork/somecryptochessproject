@@ -12,6 +12,7 @@ import {
   UNITS_PER_COIN,
   formatAmount,
   formatCoins,
+  formatMultiPeriodTimeControl,
   formatTimeControl,
   formatTokenAmount,
   parseAmount,
@@ -60,6 +61,22 @@ describe("parseAmount", () => {
     expect(formatTimeControl(1_800_000, 0, 5_000)).toBe("30+5d");
     expect(formatTimeControl(90_000, 0)).toBe("1.5+0");
     expect(formatTimeControl(-1, -1)).toBe("0+0");
+  });
+
+  it("renders FIDE-style periods, falling back when the first period is absent", () => {
+    expect(
+      formatMultiPeriodTimeControl(5_400_000, 0, 0, 40, [
+        { moves: 20, initial_ms: 1_800_000, increment_ms: 30_000, delay_ms: 0 },
+      ]),
+    ).toBe("40/90+0:20/30+30");
+    expect(
+      formatMultiPeriodTimeControl(600_000, 5_000, 0, 40, []),
+    ).toBe("10+5");
+    expect(
+      formatMultiPeriodTimeControl(600_000, 0, 3_000, null, [
+        { moves: 10, initial_ms: 300_000, increment_ms: 0, delay_ms: 2_000 },
+      ]),
+    ).toBe("10+3d");
   });
 });
 

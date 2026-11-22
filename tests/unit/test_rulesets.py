@@ -10,6 +10,7 @@ from sccp.chess.rulesets import (
     STANDARD_VARIANT,
     chess960_position,
     chess960_start_fen,
+    opening_line_fits,
     ruleset_for,
     ruleset_for_rules,
     start_position_for,
@@ -34,9 +35,23 @@ def test_builtin_rulesets_are_registered() -> None:
 def test_rules_tags_map_back_to_registered_variants() -> None:
     assert ruleset_for_rules("chess").name == STANDARD_VARIANT
     assert ruleset_for_rules("chess960").name == CHESS960_VARIANT
-    assert supported_rules() == frozenset({"chess", "chess960"})
+    assert supported_rules() == frozenset(
+        {
+            "chess",
+            "chess960",
+            "antichess",
+            "atomic",
+            "crazyhouse",
+            "giveaway",
+            "horde",
+            "kingofthehill",
+            "racingkings",
+            "suicide",
+            "threecheck",
+        }
+    )
     with pytest.raises(ConfigError, match="unsupported Rules tag"):
-        ruleset_for_rules("crazyhouse")
+        ruleset_for_rules("bughouse")
 
 
 def test_chess960_start_is_stable_and_beacon_driven() -> None:
@@ -59,3 +74,14 @@ def test_chess960_start_is_stable_and_beacon_driven() -> None:
 
 def test_standard_variant_uses_the_opening_book() -> None:
     assert start_position_for(STANDARD_VARIANT, "11" * 32, "22" * 32) is None
+
+
+def test_opening_lines_are_checked_against_their_ruleset_start() -> None:
+    standard = ruleset_for(STANDARD_VARIANT)
+    assert opening_line_fits(standard, ("e4", "e5", "Nf3")) is True
+    assert opening_line_fits(standard, ("f3", "e5", "g4", "Qh4#")) is False
+
+    # The horde starts with pawns on e4; a network line cannot be replayed there.
+    horde = ruleset_for("horde")
+    assert horde.allow_book_moves is True
+    assert opening_line_fits(horde, ("e4",)) is False

@@ -64,6 +64,8 @@ from sccp.config import (
     derive_variant_asset_id,
     format_coins,
     get_network,
+    token_symbol_for_ticket,
+    token_variant_name,
 )
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import hybrid_sign
@@ -1405,6 +1407,16 @@ def node_run(
             ),
         ),
     ] = 0.0,
+    approved_token: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--approved-token",
+            help=(
+                "Ticket, token id or legacy name to approve for wallet display "
+                "(repeatable). Omit to approve every registered token."
+            ),
+        ),
+    ] = None,
     no_faucet: Annotated[
         bool,
         typer.Option("--no-faucet", help="Do not expose the testnet faucet endpoint."),
@@ -1474,6 +1486,7 @@ def node_run(
             params,
             genesis_path=genesis,
             storage=Storage(data_dir / "chain.sqlite"),
+            approved_tokens=approved_token,
         )
     )
     stop: Event | None = None
@@ -2302,8 +2315,10 @@ def dex_tokens(
             continue
         maximum = row.get("max_supply")
         cap = f" cap {maximum} coins" if maximum is not None else " uncapped"
+        ticket = row.get("ticket")
+        identity = f"ticket {ticket} " if isinstance(ticket, str) else ""
         typer.echo(
-            f"{row.get('name')} ({row.get('symbol')}) {row.get('ruleset')} "
+            f"{row.get('name')} ({row.get('symbol')}) {identity}{row.get('ruleset')} "
             f"asset {row.get('asset')}{cap}"
         )
         typer.echo(
@@ -2317,23 +2332,27 @@ def dex_tokens(
 def dex_register_token(
     ctx: typer.Context,
     key: Annotated[Path, typer.Option("--key", help="Keyfile that registers and funds the token.")],
-    name: Annotated[
+    ticket: Annotated[
         str,
-        typer.Option("--name", help="New variant name; must not collide with any known variant."),
+        typer.Option(
+            "--ticket",
+            help=(
+                "Four-digit ticket that identifies the token, e.g. 0042. The name, "
+                "ticker and network-assigned id are all derived from it."
+            ),
+        ),
     ],
     ruleset: Annotated[
         str,
         typer.Option(
-            "--ruleset", help="Ruleset that settles the token's games: standard or chess960."
+            "--ruleset",
+            help=(
+                "Ruleset that settles the token's games: standard, chess960 or any "
+                "python-chess variant (antichess, atomic, crazyhouse, giveaway, "
+                "horde, kingofthehill, racingkings, suicide, threecheck)."
+            ),
         ),
     ],
-    symbol: Annotated[
-        str, typer.Option("--symbol", help="Display symbol, unique per registration.")
-    ],
-    display_name: Annotated[
-        str | None,
-        typer.Option("--display-name", help="Human-readable name (default: --name)."),
-    ] = None,
     subsidy: Annotated[int, typer.Option("--subsidy", help="Reward per win, in whole coins.")] = 10,
     initial_supply: Annotated[
         int,
@@ -2362,6 +2381,16 @@ def dex_register_token(
         typer.Option(
             "--opening-book",
             help="Opening-book version recorded for the token (default: the network's).",
+        ),
+    ] = None,
+    openings: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--opening",
+            help=(
+                "A token-specific opening line in SAN or UCI, e.g. 'e4 e5 Nf3'. "
+                "Repeat for several lines; the beacon selects one per match."
+            ),
         ),
     ] = None,
     decimals: Annotated[
@@ -2412,11 +2441,13 @@ def dex_register_token(
     ] = None,
     network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
 ) -> None:
-    """Register a new variant token; it is immutable once mined into a block."""
+    """Register a token under a four-digit ticket; immutable once mined."""
     if initial_supply < 0:
         _fail("--initial-supply cannot be negative", code=2)
     if subsidy <= 0:
         _fail("--subsidy must be positive", code=2)
+    name = _run(lambda: token_variant_name(ticket))
+    symbol = token_symbol_for_ticket(ticket)
     raw_clock = (time_control_initial_ms, time_control_increment_ms, time_control_delay_ms)
     if time_control is not None:
         if any(value is not None for value in raw_clock):
@@ -2452,10 +2483,8 @@ def dex_register_token(
         tx = _run(
             lambda: accounts.service.build_register_token(
                 wallet.signer,
-                name=name,
+                ticket=ticket,
                 ruleset=ruleset,
-                symbol=symbol,
-                display_name=display_name or name,
                 subsidy=coins_to_units(subsidy, decimals=decimals),
                 initial_supply=coins_to_units(initial_supply, decimals=decimals),
                 decimals=decimals,
@@ -2464,9 +2493,12 @@ def dex_register_token(
                 min_plies=min_plies,
                 max_games_per_block=max_games_per_block,
                 opening_book=opening_book,
+                openings=tuple(openings or ()),
                 time_control_initial_ms=control.initial_ms,
                 time_control_increment_ms=control.increment_ms,
                 time_control_delay_ms=control.delay_ms,
+                time_control_first_moves=control.first_period_moves,
+                time_control_periods=tuple(control.periods),
                 fee=fee,
             )
         )
@@ -2479,6 +2511,7 @@ def dex_register_token(
         control_payload["delay_ms"] = control.delay_ms
     payload = {
         **_transaction_summary(tx, receipt),
+        "ticket": ticket,
         "variant": name,
         "asset": derive_variant_asset_id(name, symbol, decimals, ruleset),
         "symbol": symbol,
@@ -2490,7 +2523,7 @@ def dex_register_token(
     if _options(ctx).json_output:
         _echo_json(payload)
         return
-    typer.echo(f"registered token {name} ({symbol}) as asset {payload['asset']}")
+    typer.echo(f"registered token {ticket} as {name} ({symbol}), asset {payload['asset']}")
     typer.echo(f"time control: {time_control_tag(control)}")
     typer.echo(f"txid: {payload['txid']}")
 

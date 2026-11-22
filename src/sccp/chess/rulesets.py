@@ -35,11 +35,13 @@ way only.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Final
 
 import chess
+import chess.variant
 
 from sccp.errors import ConfigError
 
@@ -121,6 +123,112 @@ def chess960_position(beacon: bytes | str, match_id: str) -> int:
 def _chess960_board(start_fen: str) -> chess.Board:
     """Build a board whose castling rights follow Shredder-FEN."""
     return chess.Board(start_fen, chess960=True)
+
+
+def _canonical_board_fen(board: chess.Board) -> str:
+    """Canonicalise a fixed start FEN without its move counters.
+
+    Some python-chess variants keep extra state in the FEN (Crazyhouse pockets,
+    Three-check counters), so only the trailing halfmove/fullmove pair is
+    dropped. Everything before it participates in the comparison.
+    """
+    fields = board.fen().split()
+    if len(fields) < 4:
+        raise ConfigError("not a FEN")
+    if len(fields) >= 7:
+        return " ".join(fields[:5]) + " 0 1"
+    return " ".join(fields[:4]) + " 0 1"
+
+
+def _fixed_start_fen(
+    board_factory: Callable[[str | None], chess.Board],
+) -> Callable[[str | None], str]:
+    """Build a normaliser that only accepts ``board_factory``'s initial position."""
+    expected = _canonical_board_fen(board_factory(None))
+
+    def normalise(fen: str | None) -> str:
+        if fen is None:
+            return expected
+        try:
+            board = board_factory(fen)
+        except ValueError as exc:
+            raise ConfigError(f"invalid start FEN {fen!r}: {exc}") from None
+        if _canonical_board_fen(board) != expected:
+            raise ConfigError("this variant must start from its fixed initial position")
+        return expected
+
+    return normalise
+
+
+_MOVE_NUMBER_PATTERN: Final = re.compile(r"^(?:[0-9]+\.+|\.\.\.)$")
+_RESULT_TOKENS: Final = frozenset({"1-0", "0-1", "1/2-1/2", "*"})
+
+
+def canonical_opening_line(ruleset_name: str, moves: str | Iterable[str]) -> tuple[str, ...]:
+    """Replay a token's opening line and return canonical SAN.
+
+    A registration may spell its opening as SAN or UCI, with or without move
+    numbers. The chain stores SAN because that is what a transcript carries, so
+    the same replay rule decides the stored form and validates it. Raises
+    :class:`ConfigError` when the line is not legal for the named ruleset.
+    """
+    rules = ruleset_for(ruleset_name)
+    board = rules.board(rules.normalise_start_fen(None))
+    tokens = moves.split() if isinstance(moves, str) else list(moves)
+    line: list[str] = []
+    for raw in tokens:
+        token = raw.strip()
+        if not token or _MOVE_NUMBER_PATTERN.match(token) or token in _RESULT_TOKENS:
+            continue
+        try:
+            move = board.parse_san(token)
+        except ValueError:
+            try:
+                move = board.parse_uci(token)
+            except ValueError:
+                raise ConfigError(
+                    f"{token!r} is not a legal move for ruleset {ruleset_name!r}"
+                ) from None
+        line.append(board.san(move))
+        board.push(move)
+    if not line:
+        raise ConfigError("an opening line needs at least one move")
+    return tuple(line)
+
+
+def opening_line_fits(ruleset: VariantRules, moves: Iterable[str]) -> bool:
+    """Whether ``moves`` is a legal book prefix under ``ruleset``.
+
+    A network book is written for standard chess. Registered tokens may reuse a
+    ruleset whose fixed position or victory condition rejects some of those
+    lines, so the relay and verifier both ask this question before accepting a
+    selected line.
+    """
+    line = tuple(moves)
+    if line and not ruleset.allow_book_moves:
+        return False
+    try:
+        board = ruleset.board(ruleset.normalise_start_fen(None))
+    except (ConfigError, ValueError):
+        return False
+    for san in line:
+        if board.is_game_over(claim_draw=False):
+            return False
+        try:
+            move = board.parse_san(san)
+        except ValueError:
+            return False
+        board.push(move)
+    return not board.is_game_over(claim_draw=False)
+
+
+def _variant_board(factory: type[chess.Board]) -> Callable[[str | None], chess.Board]:
+    """Adapt a python-chess board class to the ruleset callable shape."""
+
+    def build(fen: str | None = None) -> chess.Board:
+        return factory() if fen is None else factory(fen)
+
+    return build
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,17 +394,103 @@ register_variant_rules(
     )
 )
 
+
+def _register_python_chess_variant(
+    name: str,
+    board: type[chess.Board],
+    *,
+    pgn_variant: str,
+    description: str,
+) -> VariantRules:
+    """Register one of python-chess's fixed-start variants.
+
+    These are *rulesets*, not network variants: a network still ships only its
+    own ``variants`` tuple, and a registered token opts into one of these by
+    naming it in ``register_token``. The board class is selected by name from
+    python-chess, never supplied by a transaction.
+    """
+    factory = _variant_board(board)
+    return register_variant_rules(
+        VariantRules(
+            name=name,
+            pgn_rules=name,
+            board=factory,
+            normalise_start_fen=_fixed_start_fen(factory),
+            pgn_variant_tags=frozenset({pgn_variant, name}),
+            pgn_variant_header=pgn_variant,
+            description=description,
+        )
+    )
+
+
+_register_python_chess_variant(
+    "antichess",
+    chess.variant.AntichessBoard,
+    pgn_variant="Antichess",
+    description="Antichess: capturing is compulsory and the first side to lose all pieces wins.",
+)
+_register_python_chess_variant(
+    "atomic",
+    chess.variant.AtomicBoard,
+    pgn_variant="Atomic",
+    description="Atomic chess: every capture explodes the surrounding pieces.",
+)
+_register_python_chess_variant(
+    "crazyhouse",
+    chess.variant.CrazyhouseBoard,
+    pgn_variant="Crazyhouse",
+    description="Crazyhouse: captured pieces can be dropped back onto the board.",
+)
+_register_python_chess_variant(
+    "giveaway",
+    chess.variant.GiveawayBoard,
+    pgn_variant="Giveaway",
+    description="Giveaway chess: the first side to lose every piece wins.",
+)
+_register_python_chess_variant(
+    "horde",
+    chess.variant.HordeBoard,
+    pgn_variant="Horde",
+    description="Horde: one side is a wall of pawns, the other the usual army.",
+)
+_register_python_chess_variant(
+    "kingofthehill",
+    chess.variant.KingOfTheHillBoard,
+    pgn_variant="King of the Hill",
+    description="King of the Hill: reaching one of the four centre squares wins.",
+)
+_register_python_chess_variant(
+    "racingkings",
+    chess.variant.RacingKingsBoard,
+    pgn_variant="Racing Kings",
+    description="Racing Kings: kings race to the eighth rank, and checks are illegal.",
+)
+_register_python_chess_variant(
+    "suicide",
+    chess.variant.SuicideBoard,
+    pgn_variant="Suicide",
+    description="Suicide chess: compulsory captures, and losing every piece wins.",
+)
+_register_python_chess_variant(
+    "threecheck",
+    chess.variant.ThreeCheckBoard,
+    pgn_variant="Three-check",
+    description="Three-check: the first side to give check three times wins.",
+)
+
 __all__ = [
     "CHESS960_POSITIONS",
     "CHESS960_VARIANT",
     "STANDARD_VARIANT",
     "StartPosition",
     "VariantRules",
+    "canonical_opening_line",
     "chess960_position",
     "chess960_start_fen",
     "is_registered_ruleset",
     "normalise_chess960_start_fen",
     "normalise_standard_start_fen",
+    "opening_line_fits",
     "register_variant_rules",
     "registered_rulesets",
     "registered_variants",

@@ -22,11 +22,11 @@ import { FailureNotice, KeyValue, Loading, Section, StatusPill } from "../compon
 import { useNotice } from "../components/Notices";
 import { WalletGate } from "../components/WalletGate";
 import { useWalletSession } from "../components/WalletSession";
-import { tokensFor } from "../lib/assets";
 import { formatInteger, shortHash } from "../lib/format";
 import { signTransaction, txId } from "../lib/tx";
 import { useNode } from "../node";
 import { useResource } from "../useResource";
+import { useTokenRegistry } from "../useTokenRegistry";
 import { CreatePanel } from "./dex/CreatePanel";
 import { LiquidityPanel } from "./dex/LiquidityPanel";
 import { SwapPanel } from "./dex/SwapPanel";
@@ -55,6 +55,7 @@ export function DexPage({ view }: { view: DexTab }): ReactNode {
 function Desk({ view }: { view: DexTab }): ReactNode {
   const { session, pendingNonce, setPendingNonce, sendPending } = useWalletSession();
   const { params: paramsResource } = useNode();
+  const tokens = useTokenRegistry().tokens;
   const notify = useNotice();
   const [review, setReview] = useState<Review | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,7 +85,6 @@ function Desk({ view }: { view: DexTab }): ReactNode {
     return <Loading />;
   }
 
-  const tokens = tokensFor(params);
   const nonce = pendingNonce ?? accountView.nonce;
   const reload = (): void => {
     account.reload();

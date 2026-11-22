@@ -19,6 +19,9 @@ from sccp.config import (
     coins_to_units,
     get_network,
     network_ids,
+    token_display_name_for_ticket,
+    token_symbol_for_ticket,
+    token_variant_name,
 )
 from sccp.errors import ConfigError, NetworkError
 
@@ -28,6 +31,48 @@ def test_registry_contains_all_networks() -> None:
     assert set(NETWORKS) == {"devnet", "mainnet", "testnet"}
     assert get_network("mainnet") is MAINNET
     assert get_network(TESTNET) is TESTNET
+
+
+def test_a_ticket_derives_one_name_ticker_and_label() -> None:
+    """Users choose a ticket; the network derives every printable name from it."""
+    assert token_variant_name("0042") == "token-0042"
+    assert token_symbol_for_ticket("0042") == "T0042"
+    assert token_display_name_for_ticket("0042") == "Token 0042"
+    with pytest.raises(ConfigError, match="exactly four digits"):
+        token_variant_name("42")
+    with pytest.raises(ConfigError, match="exactly four digits"):
+        token_symbol_for_ticket("004a")
+
+    variant = VariantParams(
+        name="token-0042",
+        ticket="0042",
+        rules="chess",
+        ruleset="standard",
+        asset="a" * 64,
+        symbol="T0042",
+        display_name="Token 0042",
+        subsidy=1,
+        min_plies=1,
+    )
+    assert variant.ticket == "0042"
+    with pytest.raises(ValidationError, match="does not match ticket"):
+        VariantParams.model_validate({**variant.model_dump(), "name": "dragonchess"})
+
+
+def test_a_token_cannot_declare_an_opening_whose_game_already_ended() -> None:
+    with pytest.raises(ValidationError, match="not playable under ruleset 'standard'"):
+        VariantParams(
+            name="token-0123",
+            ticket="0123",
+            rules="chess",
+            ruleset="standard",
+            asset="b" * 64,
+            symbol="T0123",
+            display_name="Token 0123",
+            subsidy=1,
+            min_plies=1,
+            openings=(("f3", "e5", "g4", "Qh4#"),),
+        )
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from sccp.config import TimeControlPeriod
 from sccp.protocol.models import (
     AddressText,
     Beacon,
@@ -489,8 +490,14 @@ class TokenView(ProtocolModel):
     """
 
     name: str = Field(min_length=1)
+    ticket: str | None = Field(default=None, pattern=r"^[0-9]{4}$")
+    """The four-digit ticket the token claimed; absent on pre-ticket chains."""
     network: str = Field(min_length=1)
     asset: str = Field(pattern=r"^[0-9a-f]{64}$")
+    token_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    """The network-assigned id clients paste when they look a token up."""
+    approved: bool = True
+    """True when this node's operator approved the token for wallet display."""
     symbol: str = Field(min_length=1)
     display_name: str = Field(min_length=1)
     rules: str = Field(min_length=1)
@@ -506,6 +513,9 @@ class TokenView(ProtocolModel):
     time_control_initial_ms: int = Field(ge=1)
     time_control_increment_ms: int = Field(ge=0)
     time_control_delay_ms: int = Field(ge=0)
+    time_control_first_moves: int | None = Field(default=None, ge=1)
+    time_control_periods: tuple[TimeControlPeriod, ...] = ()
+    openings: tuple[tuple[str, ...], ...] = ()
     owner: str = Field(min_length=1)
     registered_at_height: int = Field(ge=0)
     minted: int = Field(ge=0)

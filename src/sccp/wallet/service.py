@@ -19,23 +19,27 @@ whose chain it has never synced.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from sccp.chain import dex
 from sccp.chain.chain import Chain
 from sccp.chain.state import Account, HtlcRecord, State, epoch_of
 from sccp.chain.tx import MAX_TOKEN_AMOUNT, sign_transaction, txid
-from sccp.chess.rulesets import ruleset_for
+from sccp.chess.rulesets import canonical_opening_line, ruleset_for
 from sccp.config import (
     DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     NetworkParams,
+    TimeControlPeriod,
     VariantParams,
     derive_variant_asset_id,
     format_coins,
     get_network,
+    token_display_name_for_ticket,
+    token_symbol_for_ticket,
+    token_variant_name,
     units_per_coin,
 )
 from sccp.crypto.address import encode_address, validate_address
@@ -765,11 +769,12 @@ class WalletService:
         self,
         keypair: HybridKeypair,
         *,
-        name: str,
-        ruleset: str,
-        symbol: str,
-        display_name: str,
         subsidy: int,
+        ticket: str | None = None,
+        name: str | None = None,
+        ruleset: str | None = None,
+        symbol: str | None = None,
+        display_name: str | None = None,
         initial_supply: int = 0,
         decimals: int = 8,
         halving_interval: int | None = None,
@@ -777,29 +782,52 @@ class WalletService:
         min_plies: int | None = None,
         max_games_per_block: int = 1,
         opening_book: str | None = None,
+        openings: Sequence[str | Sequence[str]] = (),
         time_control_initial_ms: int = DEFAULT_TIME_CONTROL_INITIAL_MS,
         time_control_increment_ms: int = DEFAULT_TIME_CONTROL_INCREMENT_MS,
         time_control_delay_ms: int = DEFAULT_TIME_CONTROL_DELAY_MS,
+        time_control_first_moves: int | None = None,
+        time_control_periods: Sequence[TimeControlPeriod | Mapping[str, object]] = (),
         fee: int | None = None,
         nonce: int | None = None,
     ) -> Transaction:
         """Build and sign a permissionless ``register_token`` transaction.
 
-        ``name`` becomes a new variant in the chain's registry, settled by the
-        existing ``ruleset`` (``standard`` or ``chess960``). The asset id is
-        derived from ``name``, ``symbol``, ``decimals`` and ``ruleset`` and is
-        never changeable afterwards. ``initial_supply`` is credited to the
-        sender in base units and counts against ``max_supply`` exactly like a
-        mined reward.
+        A new token is identified by a four-digit ``ticket`` and the ruleset that
+        settles its games. The variant name, ticker and label are derived from
+        the ticket, and the asset id (the network-assigned token id) commits to
+        that derivation, so users never choose a name or a ticker. The legacy
+        ``name``/``symbol``/``display_name`` form is kept for pre-ticket chains.
 
-        The local state is checked for a duplicate variant or asset id and the
-        parameters are built into a :class:`VariantParams`, so an impossible
-        combination fails here instead of after paying a fee; the chain repeats
-        every check.
+        ``openings`` is an optional per-token book: SAN lines (or space-delimited
+        SAN strings) replayed against ``ruleset`` here and stored canonically on
+        chain. ``time_control_periods`` adds FIDE-style later periods, each with
+        its own delay or increment.
+
+        The local state is checked for a duplicate ticket, variant or asset id,
+        so an impossible combination fails here instead of after paying a fee;
+        the chain repeats every check.
         """
         sender = self.address_for(keypair)
+        if ticket is not None:
+            if name is not None or symbol is not None or display_name is not None:
+                raise WalletServiceError(
+                    "a ticketed token derives its name, ticker and label from the ticket"
+                )
+            try:
+                name = token_variant_name(ticket)
+                symbol = token_symbol_for_ticket(ticket)
+                display_name = token_display_name_for_ticket(ticket)
+            except ConfigError as exc:
+                raise WalletServiceError(str(exc)) from None
+        elif name is None or symbol is None or display_name is None:
+            raise WalletServiceError("a token registration needs a ticket or a full name")
+        if ruleset is None:
+            raise WalletServiceError("a token registration must name its ruleset")
         resolved_min_plies = self.params.min_plies if min_plies is None else min_plies
-        resolved_opening_book = opening_book or self.params.book_version
+        resolved_opening_book = opening_book or (
+            f"token-{ticket}" if ticket is not None and openings else self.params.book_version
+        )
         if initial_supply < 0:
             raise WalletServiceError("initial_supply cannot be negative")
         for label, value in (
@@ -822,14 +850,30 @@ class WalletService:
             raise WalletServiceError(
                 f"initial_supply {initial_supply} exceeds the {max_supply}-coin supply cap"
             )
+        if ticket is not None and ticket in self.state.token_tickets():
+            raise WalletServiceError(f"ticket {ticket} is already registered")
         if name in self.state.variant_names():
             raise WalletServiceError(
                 f"variant {name!r} is already known; a token's variant name must be new"
             )
         try:
             selected_ruleset = ruleset_for(ruleset)
+            canonical_openings = tuple(
+                canonical_opening_line(
+                    selected_ruleset.name,
+                    line.split() if isinstance(line, str) else list(line),
+                )
+                for line in openings
+            )
+            canonical_periods = tuple(
+                period
+                if isinstance(period, TimeControlPeriod)
+                else TimeControlPeriod.model_validate(period)
+                for period in time_control_periods
+            )
             token = VariantParams(
                 name=name,
+                ticket=ticket,
                 rules=selected_ruleset.pgn_rules,
                 ruleset=ruleset,
                 asset=derive_variant_asset_id(name, symbol, decimals, ruleset),
@@ -845,8 +889,11 @@ class WalletService:
                 time_control_initial_ms=time_control_initial_ms,
                 time_control_increment_ms=time_control_increment_ms,
                 time_control_delay_ms=time_control_delay_ms,
+                time_control_first_moves=time_control_first_moves,
+                time_control_periods=canonical_periods,
+                openings=canonical_openings,
             )
-        except ValueError as exc:
+        except (ValueError, ConfigError) as exc:
             raise WalletServiceError(f"invalid token parameters: {exc}") from None
         assert token.asset is not None
         known_variants = self.state.variant_params().values()
@@ -858,10 +905,7 @@ class WalletService:
                 f"{sender} cannot pay the {format_coins(resolved_fee)} ZQWX fee"
             )
         payload: dict[str, object] = {
-            "variant": name,
             "ruleset": ruleset,
-            "symbol": symbol,
-            "display_name": display_name,
             "decimals": decimals,
             "initial_supply": initial_supply,
             "subsidy": subsidy,
@@ -873,6 +917,20 @@ class WalletService:
             "time_control_delay_ms": time_control_delay_ms,
             "public_key": keypair.public_key_hex,
         }
+        if ticket is not None:
+            payload["ticket"] = ticket
+        else:
+            payload["variant"] = name
+            payload["symbol"] = symbol
+            payload["display_name"] = display_name
+        if canonical_openings:
+            payload["openings"] = [list(line) for line in canonical_openings]
+        if time_control_first_moves is not None:
+            payload["time_control_first_moves"] = time_control_first_moves
+        if canonical_periods:
+            payload["time_control_periods"] = [
+                period.model_dump(mode="json") for period in canonical_periods
+            ]
         if halving_interval is not None:
             payload["halving_interval"] = halving_interval
         if max_supply is not None:

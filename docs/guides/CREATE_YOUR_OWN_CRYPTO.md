@@ -9,7 +9,7 @@ constant-product pool, and is minted when the chain settles games of its
 variant.
 
 The registration is permissionless but **immutable**. There is no owner key, no
-mint function, no metadata edit and no way to change the name, symbol, decimals,
+mint function, no metadata edit and no way to change the ticket, decimals,
 ruleset or supply later. Choose the parameters once, carefully.
 
 This page uses **testnet** coins, which have no value. The same commands work on
@@ -23,7 +23,7 @@ undone.
 | `sccp` installed | See [`INSTALL.md`](INSTALL.md) for the shared install and node setup. |
 | A funded keyfile | The registration pays one network fee in native **ZQWX**. The fee comes from the spendable balance; `--initial-supply` is minted, not paid for. |
 | A node | The CLI reads the account and nonce from it, then submits the signed transaction to it. |
-| A token name, symbol and supply plan | All of them are fixed at registration. |
+| A four-digit token ticket and a supply plan | The ticket is the token's only public identifier; the supply rules are fixed at registration. |
 
 Create and fund a wallet first if you have not already:
 
@@ -54,67 +54,93 @@ on another network, the CLI refuses the keyfile before signing anything.
 ## 1. Decide what the token is
 
 A registration reuses an existing ruleset. It does **not** upload code, so the
-only game rules available are the ones the node already ships:
+only game rules available are the ones the node already ships. The canonical
+ruleset names are the Python-chess ones:
 
-| `--ruleset` | Games settle as | Typical use |
-| --- | --- | --- |
-| `standard` | normal chess | a new asset whose games are ordinary chess |
-| `chess960` | Fischer Random / C960 | a second Chess960-denominated asset |
+| `--ruleset` | Games settle as |
+| --- | --- |
+| `standard` | normal chess |
+| `chess960` | Fischer Random / C960 |
+| `antichess` | Antichess: captures are compulsory and the first side to lose every piece wins |
+| `atomic` | Atomic chess: captures explode the surrounding pieces |
+| `crazyhouse` | Crazyhouse: captured pieces may be dropped back |
+| `giveaway` | Giveaway chess: the first side to lose every piece wins |
+| `horde` | Horde: a wall of pawns against a normal army |
+| `kingofthehill` | King of the Hill: reaching a centre square wins |
+| `racingkings` | Racing Kings: the kings race to the eighth rank |
+| `suicide` | Suicide chess: compulsory captures, and losing every piece wins |
+| `threecheck` | Three-check: the first side to give check three times wins |
 
-The token's `--name` is the variant label miners, the relay and proofs use. It
-must be a new lowercase slug: 1–32 characters from letters, digits, `-` and
-`_`, starting with a letter or digit.
-`standard` and `chess960` are reserved and can never be registered again.
+The only name you choose is the **ticket** (`--ticket`): exactly four digits,
+for example `0042`. The chain derives every public identity from it, so two
+spellings cannot create two variants:
+
+| Public value | Derivation for ticket `0042` |
+| --- | --- |
+| Variant name | `token-0042` |
+| Ticker | `T0042` |
+| Explorer label | `Token 0042` |
+| Book version (with `--opening`) | `token-0042` |
+
+A ticket is claimed permanently by the first registration mined. Built-in
+`standard` and `chess960` do not consume a ticket; their variant names are
+already reserved. Check the current list before choosing a number:
+
+```bash
+sccp dex tokens --node "$NODE"
+```
 
 The asset id is derived, not issued:
 
 ```text
-H("sccp/v1/asset", {variant, symbol, decimals, ruleset})
+H("sccp/v1/asset", {variant: "token-0042", symbol: "T0042", decimals, ruleset})
 ```
 
-That means the id commits to the variant name, symbol, decimals and ruleset. It
-contains no issuer key, so there is nobody to trust after registration. The
-exact payload and derivation are normative in
+That means the id commits to the ticket's derived name, its ticker, decimals and
+ruleset. It contains no issuer key, so there is nobody to trust after
+registration. The exact payload and derivation are normative in
 [`PROTOCOL.md`](../design/PROTOCOL.md) section 10.2; the design rationale is in
 [`BIG_PICTURE.md`](../design/BIG_PICTURE.md) section 5.3.
 
 ### The parameters this example fixes
 
-This page registers **Dragon Chess**, a standard-rules token with a limited
+This page registers ticket **0042**, a standard-rules token with a limited
 supply:
 
 | Flag | Example | Meaning |
 | --- | --- | --- |
-| `--name` | `dragonchess` | Variant slug. Immutable and reserved forever. |
+| `--ticket` | `0042` | Four-digit public identity. Immutable and retired forever. |
 | `--ruleset` | `standard` | Existing rules that settle its games. |
-| `--symbol` | `DRG` | Display symbol, 1–16 characters. Pick a unique one. |
-| `--display-name` | `Dragon Chess` | Human-readable label, up to 64 characters. |
 | `--decimals` | `8` | 0–18. Committed to the asset id; use `8` unless you need otherwise. |
-| `--subsidy` | `50` | Whole coins minted per block that settles a Dragon Chess game. |
+| `--subsidy` | `50` | Whole coins minted per block that settles a Token 0042 game. |
 | `--initial-supply` | `100` | Whole coins minted to the registering account in the registration block. |
 | `--max-supply` | `21000000` | Lifetime cap, in whole coins. Must be paired with `--halving-interval`. |
 | `--halving-interval` | `210000` | Blocks between subsidy halvings, counted from chain height. |
 | `--min-plies` | `20` | Shorter games do not earn the token. |
 | `--max-games-per-block` | `1` | Games of this token a block may settle, as served by the node. |
-| `--opening-book` | *(omit)* | Defaults to the network's real `book_version`. |
-| `--time-control` | *(omit)* | Whole-second PGN clock: `600+0` sudden death, `600+5` increment, or `300+5d` delay. |
+| `--opening` | *(omit)* | Adds a token-specific opening line. Repeat for several lines. |
+| `--opening-book` | *(omit)* | Advanced book-version override; see below. |
+| `--time-control` | *(omit)* | Whole-second PGN clock; omit for sudden-death 10+0. |
 
 ### Choose the clock
 
-The clock is fixed at registration. The simplest form is one PGN-style
-`--time-control` tag, in whole seconds:
+The clock is fixed at registration. Pass one PGN-style `--time-control` tag, in
+whole seconds:
 
 | Mode | Example | Meaning |
 | --- | --- | --- |
 | Sudden death | `--time-control 600+0` | Ten minutes each, no bonus. |
 | Increment (Fischer) | `--time-control 600+5` | Five seconds are added after every move. |
 | Delay | `--time-control 300+5d` | The first five seconds of every turn are free; unused delay is not carried. |
+| Multi-period | `--time-control 40/5400+0:20/1800+30` | 40 moves at 90 minutes; then 30 minutes are added to each clock and the next 20-move period uses a 30-second increment. |
 
-A delay and an increment are mutually exclusive. If you prefer explicit
-millisecond flags, use `--time-control-initial-ms`,
-`--time-control-increment-ms` and `--time-control-delay-ms` instead; they cannot
-be combined with `--time-control`. All values must be whole seconds, and the
-worst case must fit the protocol's one-day clock ceiling.
+Every later period must name its move count; a bare trailing segment is refused
+because it would not say when the added time starts. A delay and an increment
+are mutually exclusive, and the periods must fit within the network's
+`max_plies` and one-day clock ceiling. If you prefer explicit millisecond
+flags, use `--time-control-initial-ms`, `--time-control-increment-ms` and
+`--time-control-delay-ms` instead; they cannot be combined with
+`--time-control`.
 
 Two supply modes are possible:
 
@@ -138,14 +164,28 @@ whole-coin amounts at the network's 8-decimal coin unit. A different decimal
 count needs a tool that speaks base units; otherwise `--amount 5` means the
 wrong number of token units.
 
-Leave `--opening-book` unset in the normal case. The registration then records
-the network's own book version, so the token plays the same book as the native
-variant. Overriding it is an advanced choice: the relay must be able to load the
-book version you name.
+### Pick an opening book
+
+Leave `--opening` and `--opening-book` unset in the normal case. The token then
+uses the network's book. If the line the beacon selects is not legal under the
+token's ruleset, the match starts from that ruleset's fixed initial position
+with book version `none` instead of certifying a prefix the token cannot play.
+
+`--opening "e4 e5 Nf3"` declares one token-specific line; repeat the flag to add
+more. The chain replays each line from the named ruleset's start and
+canonicalises it to SAN, so every move must be legal there. The epoch beacon
+selects one line per match. When any custom line is present, the default book
+version becomes `token-<ticket>`, which is the identity recorded with those
+lines. Chess960 is the exception: the beacon selects its start position and it
+allows no book moves, so it cannot take custom lines.
+
+`--opening-book` is an advanced override for the version name recorded with the
+registration. The relay must be able to load the version you name; do not set it
+unless you operate that book.
 
 ---
 
-## 2. Check that the name is free
+## 2. Check that the ticket is free
 
 The built-in variants are not returned by `dex tokens`. The command lists only
 tokens created by `register_token`:
@@ -161,18 +201,23 @@ no registered tokens on this chain
 ```
 
 `standard` and `chess960` are still reserved even when the list is empty. If the
-node already has a token named `dragonchess`, its line appears here and the
-registration will be rejected. Names and asset ids are never reused, even if the
-token has no supply or was never traded.
+node already has a token for ticket `0042`, its line appears here:
+
+```text
+token-0042 (T0042) ticket 0042 standard asset <64-hex-asset-id> cap 21000000 coins
+```
+
+The registration will then be rejected. Tickets, derived variants and asset ids
+are never reused, even if the token has no supply or was never traded.
 
 To inspect one token in detail, ask the node directly:
 
 ```bash
-curl -sS "$NODE/v1/tokens/dragonchess" | jq
+curl -sS "$NODE/v1/tokens/0042" | jq
 ```
 
-That endpoint accepts a name, a symbol or an asset id when the reference is
-unambiguous.
+That endpoint accepts the ticket, the derived variant name (`token-0042`), the
+network-assigned token id or the symbol when the reference is unambiguous.
 
 ## 3. Register the token
 
@@ -183,10 +228,8 @@ the keyfile, and submits it. Nothing secret leaves the machine.
 sccp dex register-token \
     --network testnet \
     --key "$KEY" \
-    --name dragonchess \
+    --ticket 0042 \
     --ruleset standard \
-    --symbol DRG \
-    --display-name "Dragon Chess" \
     --subsidy 50 \
     --initial-supply 100 \
     --max-supply 21000000 \
@@ -198,7 +241,7 @@ sccp dex register-token \
 ```
 
 ```text
-registered token dragonchess (DRG) as asset <64-hex-asset-id>
+registered token 0042 as token-0042 (T0042), asset <64-hex-asset-id>
 time control: 600+0
 txid: <txid>
 ```
@@ -206,7 +249,7 @@ txid: <txid>
 Registration is **one transaction**. The human output gives you the two values
 you need later:
 
-- the **variant name** (`dragonchess`), used by miners and the relay;
+- the **variant name** (`token-0042`), used by miners and the relay;
 - the **asset id**, used by transfers and pools.
 
 Scripts should ask for JSON. The asset id is then a field, not text to parse:
@@ -215,10 +258,8 @@ Scripts should ask for JSON. The asset id is then a field, not text to parse:
 sccp --json dex register-token \
     --network testnet \
     --key "$KEY" \
-    --name dragonchess \
+    --ticket 0042 \
     --ruleset standard \
-    --symbol DRG \
-    --display-name "Dragon Chess" \
     --subsidy 50 \
     --initial-supply 100 \
     --max-supply 21000000 \
@@ -227,7 +268,7 @@ sccp --json dex register-token \
     --max-games-per-block 1 \
     --time-control 600+0 \
     --node "$NODE" \
-    | tee "$HOME/.sccp/dragonchess-registration.json"
+    | tee "$HOME/.sccp/token-0042-registration.json"
 ```
 
 ```json
@@ -239,9 +280,10 @@ sccp --json dex register-token \
   "nonce": 4,
   "fee": 1000,
   "accepted": true,
-  "variant": "dragonchess",
+  "ticket": "0042",
+  "variant": "token-0042",
   "asset": "<64-hex-asset-id>",
-  "symbol": "DRG",
+  "symbol": "T0042",
   "ruleset": "standard",
   "initial_supply": 10000000000,
   "subsidy": 5000000000,
@@ -261,11 +303,12 @@ built. The common refusals are:
 
 | Message | Cause |
 | --- | --- |
-| `variant 'dragonchess' is already known` | A built-in or registered token already owns that name. Names are permanent. |
-| `asset id ... is already registered` | The name, symbol, decimals and ruleset hash to an existing token. Change one of them. |
-| `payload field 'variant' must be a lowercase slug...` | The name has spaces, uppercase letters or an unsupported character. |
-| `invalid token parameters` | A value violates the protocol, for example `min_plies` above the network maximum or `max_supply` without `halving_interval`. |
+| `ticket '42' must be exactly four digits` | Tickets are quoted four-digit strings such as `0042`; leading zeroes are significant. |
+| `ticket 0042 is already registered` | Another token claimed that ticket. Tickets are permanent. |
+| `asset id ... is already registered` | The derived variant name, symbol, decimals and ruleset hash to an existing token. Register a different ticket. |
+| `invalid token parameters` | A value violates the protocol, for example `min_plies` above the network maximum, an unknown ruleset, or `max_supply` without `halving_interval`. |
 | `uses an increment or a delay, not both` | A clock cannot carry both bonus modes. Pick one, or set both to zero. |
+| `every period after the first needs a move count` | A multi-period clock had a bare trailing segment such as `40/5400+0:1800+30`. |
 | `initial_supply ... exceeds the ... supply cap` | The initial mint is larger than `max_supply`. |
 | `cannot pay the ... ZQWX fee` | The registration is paid in native ZQWX; the token balance does not exist yet. |
 
@@ -280,7 +323,7 @@ CLI alone to remember them.
 Capture the two identifiers from the JSON:
 
 ```bash
-REGISTRATION="$HOME/.sccp/dragonchess-registration.json"
+REGISTRATION="$HOME/.sccp/token-0042-registration.json"
 TXID="$(jq -r .txid "$REGISTRATION")"
 ASSET="$(jq -r .asset "$REGISTRATION")"
 
@@ -307,12 +350,12 @@ sccp dex tokens --node "$NODE"
 ```
 
 ```text
-dragonchess (DRG) standard asset <64-hex-asset-id> cap 21000000 coins
+token-0042 (T0042) ticket 0042 standard asset <64-hex-asset-id> cap 21000000 coins
   minted 10000000000 of initial 10000000000, subsidy 5000000000 base units every win, 8 decimals
 ```
 
 `minted`, `initial_supply` and `subsidy` in that view are **base units**:
-`10_000_000_000` is 100 whole DRG at 8 decimals. The cap is shown in whole
+`10_000_000_000` is 100 whole T0042 at 8 decimals. The cap is shown in whole
 coins because `max_supply` is stored that way.
 
 `wallet balance` reads the token from the account's `assets` map and shows it as
@@ -328,8 +371,8 @@ sccpt1... 999.99999000 (spendable 999.99999000, bonded 0.00000000, immature 0.00
   <first-8-hex>… spendable 100.00000000, immature 0.00000000
 ```
 
-The native ZQWX line stays separate from the DRG line. A token cannot pay a fee;
-every DRG transaction still needs a little ZQWX for the network fee.
+The native ZQWX line stays separate from the T0042 line. A token cannot pay a fee;
+every T0042 transaction still needs a little ZQWX for the network fee.
 
 ---
 
@@ -353,7 +396,7 @@ sent 5.00000000 <64-hex-asset-id> to sccpt1... (fee 0.00001000)
 txid: <txid>
 ```
 
-The amount is in whole DRG. The fee is ZQWX and is paid by the sender. The
+The amount is in whole T0042. The fee is ZQWX and is paid by the sender. The
 recipient needs no setup: the token arrives in the same `assets` map as every
 other asset, and the address does not need to have registered anything.
 
@@ -370,7 +413,7 @@ A token with no pool still has balances and can be transferred, but there is no
 on-chain price. The DEX creates one pool per asset pair; the pool id is derived
 from the two asset ids, so the same pair cannot have two pools.
 
-This initial deposit pairs **50 ZQWX** (the omitted first side) with **100 DRG**
+This initial deposit pairs **50 ZQWX** (the omitted first side) with **100 T0042**
 (`--asset-b` is the token):
 
 ```bash
@@ -488,7 +531,7 @@ sccp dex remove-liquidity \
 Registration creates the asset and its initial supply. It does not create blocks
 or play games. The token is minted by the normal proof-of-work loop:
 
-1. Miners register for the token's **variant** (`dragonchess`), not for
+1. Miners register for the token's **variant** (`token-0042`), not for
    `standard` or `chess960`.
 2. The relay pairs those miners and certifies games under the token's ruleset,
    minimum plies, clock and opening book.
@@ -502,9 +545,10 @@ token with no miners keeps its initial supply and existing balances but never
 mints another coin. The operator flow for relay, miner registration, availability
 and proofs is in
 [`RUN_A_TESTNET_MINER.md`](../setup/RUN_A_TESTNET_MINER.md); this page stops at
-the asset and its first market. On the miner side, the token name is the value
-for `--variant`: use `--variant dragonchess` with both `miner register` and
-`miner run`, and give the miner the node's chain database through `--data-dir`.
+the asset and its first market. On the miner side, the derived variant name is
+the value for `--variant`: use `--variant token-0042` with both `miner register`
+and `miner run`, and give the miner the node's chain database through
+`--data-dir`.
 The relay gets the token's ruleset and clock from the node, so it needs no local
 token definition.
 
@@ -518,10 +562,11 @@ include miners whose on-chain registration names the new variant.
 
 Before you submit a registration on a network you care about:
 
-- **Name**: the slug is reserved forever, even if the token is never used.
+- **Ticket**: the four-digit ticket and its derived variant are reserved forever,
+  even if the token is never used.
 - **Ruleset**: `standard` and `chess960` play differently; a token cannot switch.
-- **Symbol and decimals**: both are part of the asset id. A different symbol or
-  decimal count is a different token, not an edit.
+- **Symbol and decimals**: the ticker is derived from the ticket, and the decimal
+  count is fixed. Both are part of the asset id, so neither can be edited.
 - **Supply**: `max_supply` and `halving_interval` are fixed together. You cannot
   add a cap later, remove one, or change the subsidy.
 - **Initial supply**: it is public, minted to the registering address, and counts
@@ -531,8 +576,8 @@ Before you submit a registration on a network you care about:
   [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md).
 
 There is no admin key to recover, freeze, burn or reissue the token. If the
-parameters are wrong, the only remedy is to register a new token with a new name
-and a new asset id.
+parameters are wrong, the only remedy is to register a new token with a new
+ticket and a new asset id.
 
 ---
 
@@ -540,7 +585,7 @@ and a new asset id.
 
 | Symptom | What it means |
 | --- | --- |
-| `unknown asset 'dragonchess'` from `dex quote`, `dex swap` or `dex create-pool` | Registered tokens are named by their **64-character asset id** on the DEX commands; built-in variants can still use their name or symbol. Get the id from `dex tokens --json` or the registration output. |
+| `unknown asset 'token-0042'` from `dex quote`, `dex swap` or `dex create-pool` | Registered tokens are named by their **64-character asset id** on the DEX commands; built-in variants can still use their name or symbol. Get the id from `dex tokens --json` or the registration output. |
 | `transaction ... already has a pending transaction with nonce N` | The previous transaction from that address is still in the mempool. Wait for it to be included. |
 | `the node serves 'devnet', not 'testnet'` | `--node` and the keyfile disagree. Point at the right node or pass the matching `--network`. |
 | `no chain database at ...` | The command could not read the node and fell back to `--data-dir`. Pass the URL of the node that serves the chain. |

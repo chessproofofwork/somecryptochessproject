@@ -54,7 +54,7 @@ import {
 } from "../components/Chrome";
 import { useNotice } from "../components/Notices";
 import { useWalletSession } from "../components/WalletSession";
-import { tokenBalance, tokenForVariant, tokensFor, variantLabel } from "../lib/assets";
+import { tokenBalance, tokenForVariant, variantLabel } from "../lib/assets";
 import { signCertificate } from "../lib/certificate";
 import { DOMAINS } from "../lib/canonical";
 import {
@@ -97,14 +97,9 @@ import {
 import { type CheckResult, verifyProof } from "../lib/verify";
 import { VariantGame } from "../lib/variantGame";
 import { useNode } from "../node";
-import type {
-  Color,
-  GameView,
-  NetworkParams,
-  RelayMatchView,
-  WinProof,
-} from "../types";
 import { useNow, useResource } from "../useResource";
+import { useTokenRegistry } from "../useTokenRegistry";
+import type { Color, NetworkParams, RelayMatchView, WinProof } from "../types";
 
 /** The engine string this seat registers. It is what the certificate commits to. */
 const ENGINE = "sccp-web/hand-play-1";
@@ -330,15 +325,14 @@ function Table({
   const reloadAccount = account.reload;
   const accountData = account.data;
   const epochData = epochView.data;
-  const tokens = tokensFor(params);
+  const tokens = useTokenRegistry().tokens;
   const registeredVariant =
     accountData !== undefined && accountData.registered_until_epoch !== null
       ? (accountData.variant ?? "standard")
       : null;
   const variant = registeredVariant ?? selectedVariant ?? tokens[0]?.variant ?? "standard";
-  const variantParams = params?.variants?.find((candidate) => candidate.name === variant);
-  const minPlies = variantParams?.min_plies ?? params?.min_plies ?? 1;
   const prizeToken = tokenForVariant(tokens, variant);
+  const minPlies = prizeToken?.minPlies ?? params?.min_plies ?? 1;
 
   const reloadStatus = status.reload;
   const act = useCallback(

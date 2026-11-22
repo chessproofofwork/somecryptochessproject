@@ -31,6 +31,7 @@ from sccp.config import (
     DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
+    TimeControlPeriod,
     VariantParams,
 )
 from sccp.crypto.address import encode_address
@@ -89,8 +90,8 @@ MAX_LAG_GRACE_MS: Final = 1_000
 
 OPPOSITE: Final[dict[Color, Color]] = {"white": "black", "black": "white"}
 
-_TIME_CONTROL_TAG_PATTERN: Final = re.compile(
-    r"(?P<initial>[0-9]+)\+(?P<bonus>[0-9]+)(?P<delay>d)?\Z"
+_TIME_CONTROL_SEGMENT_PATTERN: Final = re.compile(
+    r"(?:(?P<moves>[0-9]+)/)?(?P<initial>[0-9]+)\+(?P<bonus>[0-9]+)(?P<delay>d)?\Z"
 )
 
 
@@ -99,14 +100,71 @@ def opposite(seat: Color) -> Color:
     return OPPOSITE[seat]
 
 
-def _deduction_ms(elapsed_ms: int, lag_grace_ms: int, control: TimeControl) -> int:
+def _deduction_ms(elapsed_ms: int, lag_grace_ms: int, delay_ms: int) -> int:
     """The part of ``elapsed_ms`` charged to the mover.
 
     A delay is free time at the start of every turn, so it is subtracted from
     the elapsed time exactly like the relay's lag grace. A move made inside the
     delay costs nothing; unused delay is not carried to the next turn.
     """
-    return max(0, elapsed_ms - lag_grace_ms - control.delay_ms)
+    return max(0, elapsed_ms - lag_grace_ms - delay_ms)
+
+
+def period_index(control: TimeControl, ply: int) -> int:
+    """Which period of ``control`` applies at ``ply`` (0 is the base period)."""
+    if not control.periods or control.first_period_moves is None:
+        return 0
+    remaining = ply - control.first_period_moves * 2
+    if remaining < 0:
+        return 0
+    for index, period in enumerate(control.periods, start=1):
+        if remaining < period.moves * 2:
+            return index
+        remaining -= period.moves * 2
+    return len(control.periods)
+
+
+def period_at(control: TimeControl, ply: int) -> TimeControl | TimeControlPeriod:
+    """The clock parameters in force at ``ply``."""
+    index = period_index(control, ply)
+    return control if index == 0 else control.periods[index - 1]
+
+
+def period_bonus_at(control: TimeControl, ply: int) -> int:
+    """Millis added to *both* clocks exactly when move ``ply`` is reached.
+
+    The first period starts at ply 0 with the base ``initial_ms``; each later
+    period contributes its ``initial_ms`` on the ply that starts it.
+    """
+    if not control.periods or control.first_period_moves is None:
+        return 0
+    boundary = control.first_period_moves * 2
+    for period in control.periods:
+        if ply == boundary:
+            return period.initial_ms
+        boundary += period.moves * 2
+    return 0
+
+
+def bonus_through(control: TimeControl, ply: int) -> int:
+    """Total period time added to each clock by the time ``ply`` is reached.
+
+    A clock-evidence window may start after one or more period boundaries. The
+    witness receipts then carry the accumulated period time, so verification
+    has to add every bonus at or before the window before it can compare an
+    idle clock. This is also the total a verifier can reconstruct for a PGN
+    whose clock evidence starts mid-game.
+    """
+    if not control.periods or control.first_period_moves is None:
+        return 0
+    boundary = control.first_period_moves * 2
+    total = 0
+    for period in control.periods:
+        if boundary > ply:
+            break
+        total += period.initial_ms
+        boundary += period.moves * 2
+    return total
 
 
 def time_control_for(variant: VariantParams) -> TimeControl:
@@ -115,6 +173,8 @@ def time_control_for(variant: VariantParams) -> TimeControl:
         initial_ms=variant.time_control_initial_ms,
         increment_ms=variant.time_control_increment_ms,
         delay_ms=variant.time_control_delay_ms,
+        first_period_moves=variant.time_control_first_moves,
+        periods=variant.time_control_periods,
     )
 
 
@@ -142,12 +202,30 @@ def validate_time_control(
         )
     if control.increment_ms and control.delay_ms:
         raise ClockError("a time control uses an increment or a delay, not both")
-    upper = control.initial_ms + control.increment_ms * max_plies
+    added = 0
+    increments = [control.increment_ms]
+    total_moves = control.first_period_moves or (max_plies // 2)
+    for period in control.periods:
+        if period.increment_ms and period.delay_ms:
+            raise ClockError("a time control uses an increment or a delay, not both")
+        added += period.initial_ms
+        increments.append(period.increment_ms)
+        total_moves += period.moves
+    if total_moves > max_plies // 2:
+        raise ClockError(
+            f"time control periods cover {total_moves} moves, above max_plies={max_plies}"
+        )
+    upper = control.initial_ms + added + max(increments) * max_plies
     if upper > MAX_CLOCK_MS:
         raise ClockError(
             f"time control exceeds {MAX_CLOCK_MS} ms for max_plies={max_plies}: "
-            f"{control.initial_ms} + {control.increment_ms} * {max_plies} = {upper}"
+            f"{control.initial_ms} + {added} + {max(increments)} * {max_plies} = {upper}"
         )
+
+
+def _format_period(initial_ms: int, bonus_ms: int, *, delay: bool) -> str:
+    suffix = "d" if delay else ""
+    return f"{initial_ms // 1000}+{bonus_ms // 1000}{suffix}"
 
 
 def time_control_tag(control: TimeControl) -> str:
@@ -155,36 +233,99 @@ def time_control_tag(control: TimeControl) -> str:
 
     ``600+5`` is an increment, ``600+5d`` is a delay, and ``600+0`` is sudden
     death. The ``d`` suffix is what python-chess and common PGN tools use to
-    distinguish a delay from an increment of the same length.
+    distinguish a delay from an increment of the same length. FIDE-style
+    multi-period controls use the standard colon-separated form, for example
+    ``40/5400+0:20/1800+30``: 40 moves at 90 minutes, then a 20-move period of
+    30 minutes with a 30-second increment. Every later period states its move
+    count so the tag is lossless and the added time lands on one ply.
     """
-    if control.delay_ms:
-        return f"{control.initial_ms // 1000}+{control.delay_ms // 1000}d"
-    return f"{control.initial_ms // 1000}+{control.increment_ms // 1000}"
+    delay = bool(control.delay_ms)
+    first = _format_period(
+        control.initial_ms, control.delay_ms if delay else control.increment_ms, delay=delay
+    )
+    if not control.periods or control.first_period_moves is None:
+        return first
+    segments = [f"{control.first_period_moves}/{first}"]
+    for period in control.periods:
+        period_delay = bool(period.delay_ms)
+        rendered = _format_period(
+            period.initial_ms,
+            period.delay_ms if period_delay else period.increment_ms,
+            delay=period_delay,
+        )
+        segments.append(f"{period.moves}/{rendered}")
+    return ":".join(segments)
 
 
 def time_control_from_tag(tag: str) -> TimeControl:
-    """Parse a PGN ``TimeControl`` tag, rejecting fractional seconds and junk."""
-    match = _TIME_CONTROL_TAG_PATTERN.fullmatch(tag)
-    if match is None:
+    """Parse a PGN ``TimeControl`` tag, rejecting fractional seconds and junk.
+
+    Both the single-period form (``600+5``) and the FIDE multi-period form
+    (``40/5400+0:20/1800+30``) are accepted. Every later period must name its
+    length in moves; a bare trailing segment would be ambiguous about when the
+    added time starts and how long the period lasts.
+    """
+    raw_segments = tag.split(":")
+    if not raw_segments or any(not segment for segment in raw_segments):
         raise ClockError(f"invalid TimeControl tag: {tag!r}")
-    initial_seconds = int(match.group("initial"))
-    bonus_seconds = int(match.group("bonus"))
-    is_delay = match.group("delay") is not None
-    if initial_seconds < 1:
+    matches = [_TIME_CONTROL_SEGMENT_PATTERN.fullmatch(segment) for segment in raw_segments]
+    if any(match is None for match in matches):
         raise ClockError(f"invalid TimeControl tag: {tag!r}")
-    if is_delay and bonus_seconds == 0:
-        raise ClockError(f"invalid TimeControl tag: {tag!r}; a delay must be positive")
-    worst_case = initial_seconds * 1000
-    if not is_delay:
-        worst_case += bonus_seconds * 1000 * MAX_PLIES_LIMIT
+    parsed = [match for match in matches if match is not None]
+
+    def fields(match: re.Match[str]) -> tuple[int, int, bool, int | None]:
+        initial_seconds = int(match.group("initial"))
+        bonus_seconds = int(match.group("bonus"))
+        is_delay = match.group("delay") is not None
+        moves = int(match.group("moves")) if match.group("moves") is not None else None
+        if initial_seconds < 1:
+            raise ClockError(f"invalid TimeControl tag: {tag!r}")
+        if is_delay and bonus_seconds == 0:
+            raise ClockError(f"invalid TimeControl tag: {tag!r}; a delay must be positive")
+        return initial_seconds, bonus_seconds, is_delay, moves
+
+    first_initial, first_bonus, first_delay, first_moves = fields(parsed[0])
+    if len(parsed) == 1:
+        if first_moves is not None:
+            raise ClockError(f"invalid TimeControl tag: {tag!r}; a move limit needs a later period")
+        periods: tuple[TimeControlPeriod, ...] = ()
+        first_period_moves = None
+    elif first_moves is None:
+        raise ClockError(f"invalid TimeControl tag: {tag!r}; the first period needs a move limit")
+    else:
+        later: list[TimeControlPeriod] = []
+        for match in parsed[1:]:
+            initial, bonus, is_delay, moves = fields(match)
+            if moves is None:
+                raise ClockError(
+                    f"invalid TimeControl tag: {tag!r}; every later period needs a move limit"
+                )
+            later.append(
+                TimeControlPeriod(
+                    moves=moves,
+                    initial_ms=initial * 1000,
+                    increment_ms=0 if is_delay else bonus * 1000,
+                    delay_ms=bonus * 1000 if is_delay else 0,
+                )
+            )
+        periods = tuple(later)
+        first_period_moves = first_moves
+
+    worst_case = first_initial * 1000
+    for period in periods:
+        worst_case += period.initial_ms + max(period.increment_ms, 0) * MAX_PLIES_LIMIT
+    if not first_delay:
+        worst_case += first_bonus * 1000 * MAX_PLIES_LIMIT
     if worst_case > MAX_CLOCK_MS:
         raise ClockError(
             f"TimeControl tag {tag!r} exceeds MAX_CLOCK_MS for max_plies={MAX_PLIES_LIMIT}"
         )
     return TimeControl(
-        initial_ms=initial_seconds * 1000,
-        increment_ms=0 if is_delay else bonus_seconds * 1000,
-        delay_ms=bonus_seconds * 1000 if is_delay else DEFAULT_TIME_CONTROL_DELAY_MS,
+        initial_ms=first_initial * 1000,
+        increment_ms=0 if first_delay else first_bonus * 1000,
+        delay_ms=first_bonus * 1000 if first_delay else DEFAULT_TIME_CONTROL_DELAY_MS,
+        first_period_moves=first_period_moves,
+        periods=periods,
     )
 
 
@@ -237,6 +378,8 @@ class MatchClock:
     turn_started_at_ms: int
     lag_grace_ms: int = DEFAULT_LAG_GRACE_MS
     started: bool = True
+    ply: int = 0
+    """Moves played so far, used to select the FIDE time-control period."""
 
     @classmethod
     def start(
@@ -245,18 +388,30 @@ class MatchClock:
         *,
         now_ms: int,
         lag_grace_ms: int = DEFAULT_LAG_GRACE_MS,
+        ply: int = 0,
     ) -> MatchClock:
-        """Start both clocks at ``control.initial_ms`` with White to move."""
+        """Start both clocks with White to move.
+
+        ``ply`` is the number of board plies already played when the clocks
+        start. The certified opening is not charged to either clock, but its
+        moves still count toward FIDE period boundaries, so a session started
+        after a 4-ply opening passes ``ply=4`` and receives any period bonus
+        that boundary had already unlocked.
+        """
         _check_grace(lag_grace_ms)
         if now_ms < 0:
             raise ClockError("now_ms must not be negative")
+        if ply < 0:
+            raise ClockError("ply must not be negative")
+        initial = control.initial_ms + bonus_through(control, ply)
         return cls(
             control=control,
-            white_ms=control.initial_ms,
-            black_ms=control.initial_ms,
+            white_ms=initial,
+            black_ms=initial,
             turn="white",
             turn_started_at_ms=now_ms,
             lag_grace_ms=lag_grace_ms,
+            ply=ply,
         )
 
     def elapsed_ms(self, now_ms: int) -> int:
@@ -273,7 +428,8 @@ class MatchClock:
         """
         if not self.started:
             return {"white": self.white_ms, "black": self.black_ms}
-        deduction = _deduction_ms(self.elapsed_ms(now_ms), self.lag_grace_ms, self.control)
+        period = period_at(self.control, self.ply)
+        deduction = _deduction_ms(self.elapsed_ms(now_ms), self.lag_grace_ms, period.delay_ms)
         current = self.white_ms if self.turn == "white" else self.black_ms
         remaining = max(0, current - deduction)
         if self.turn == "white":
@@ -297,12 +453,13 @@ class MatchClock:
         if not self.started:
             raise ClockError("the match clock has not started")
         started_at = max(self.turn_started_at_ms, now_ms)
-        deduction = _deduction_ms(self.elapsed_ms(now_ms), self.lag_grace_ms, self.control)
+        period = period_at(self.control, self.ply)
+        deduction = _deduction_ms(self.elapsed_ms(now_ms), self.lag_grace_ms, period.delay_ms)
         current = self.white_ms if self.turn == "white" else self.black_ms
         after = current - deduction
         if after <= 0:
             raise ClockError(f"{self.turn} has no time left: {current} ms - {deduction} ms <= 0")
-        after += self.control.increment_ms
+        after += period.increment_ms
         if self.turn == "white":
             self.white_ms = after
         else:
@@ -311,6 +468,14 @@ class MatchClock:
         # Never move the turn boundary backwards: a clock source that steps back
         # must not give the next mover more elapsed time than the previous one.
         self.turn_started_at_ms = started_at
+        self.ply += 1
+        # A FIDE time control adds its next-period time to both seats together
+        # when the move limit is reached, after the mover's own increment.
+        bonus = period_bonus_at(self.control, self.ply)
+        if bonus:
+            self.white_ms += bonus
+            self.black_ms += bonus
+            after += bonus
         return after
 
     def flag(self, now_ms: int) -> Color | None:
@@ -797,22 +962,33 @@ def verify_clock_evidence(
         black_after = receipt.black_ms
         actual_after = white_after if mover_seat == "white" else black_after
         if previous_received is None:
-            # The first receipt has no verifiable turn-start timestamp, but the
-            # idle clock must still be untouched and neither clock may grow
-            # beyond one increment.
-            ceiling = control.initial_ms + control.increment_ms
-            if not 0 < white_after <= ceiling:
+            # The first receipt is the absolute arithmetic anchor. When the
+            # window starts at the first post-opening move, the idle clock is
+            # still at the starting value (including any period bonus the
+            # opening crossed); a later suffix has already spent time, so both
+            # clocks come from the signed receipt itself. The witness quorum
+            # and clock checkpoint anchor those absolute values.
+            if not 0 < white_after <= MAX_CLOCK_MS:
                 raise ClockError("first receipt's white clock is out of range")
-            if not 0 < black_after <= ceiling:
+            if not 0 < black_after <= MAX_CLOCK_MS:
                 raise ClockError("first receipt's black clock is out of range")
-            idle: Color = opposite(mover_seat)
+            idle = opposite(mover_seat)
             actual_idle = white_after if idle == "white" else black_after
-            if actual_idle != control.initial_ms:
-                raise ClockError("receipt changed the clock of the idle side")
+            running = {"white": white_after, "black": black_after}
+            if window_start == opening_plies:
+                base = control.initial_ms + bonus_through(control, receipt.ply + 1)
+                if actual_idle != base:
+                    raise ClockError("receipt changed the clock of the idle side")
+                running = {"white": base, "black": base}
+                running[mover_seat] = actual_after
         else:
             elapsed = receipt.received_at_ms - previous_received
-            deduction = _deduction_ms(elapsed, lag_grace_ms, control)
-            expected_after = running[mover_seat] - deduction + control.increment_ms
+            period = period_at(control, receipt.ply)
+            # The receipt records the position after this move, so its period
+            # boundary is the one reached by ``receipt.ply + 1`` plies.
+            bonus = period_bonus_at(control, receipt.ply + 1)
+            deduction = _deduction_ms(elapsed, lag_grace_ms, period.delay_ms)
+            expected_after = running[mover_seat] - deduction + period.increment_ms + bonus
             if expected_after <= 0:
                 raise ClockError(
                     f"clock arithmetic says {mover_seat} flagged before ply {receipt.ply}"
@@ -824,16 +1000,20 @@ def verify_clock_evidence(
                 )
             idle = opposite(mover_seat)
             actual_idle = white_after if idle == "white" else black_after
-            if actual_idle != running[idle]:
+            if actual_idle != running[idle] + bonus:
                 raise ClockError("receipt changed the clock of the idle side")
-        running[mover_seat] = actual_after
+            running[mover_seat] = actual_after
+            running[idle] += bonus
         previous_received = receipt.received_at_ms
 
     if previous_received is not None:
         final_elapsed = final.received_at_ms - previous_received
         if final_elapsed < 0:
             raise ClockError("flag receipt predates the last move receipt")
-        expected_flagged = running[flagged] - _deduction_ms(final_elapsed, lag_grace_ms, control)
+        final_period = period_at(control, plies)
+        expected_flagged = running[flagged] - _deduction_ms(
+            final_elapsed, lag_grace_ms, final_period.delay_ms
+        )
         if expected_flagged > 0:
             raise ClockError(
                 "flag receipt arrives before the flagged clock reaches zero "
@@ -843,9 +1023,11 @@ def verify_clock_evidence(
         if actual_winner != running[winner_seat]:
             raise ClockError("flag receipt changed the winner's clock")
     else:
-        # No post-opening moves: the winner must still be at the initial clock.
-        # A normal relay rejects this one-ply case at flag time.
-        if winner_ms != control.initial_ms:
+        # No post-opening moves: the winner must still be at the initial clock,
+        # plus any period time the certified opening had already unlocked. A
+        # normal relay rejects this one-ply case at flag time.
+        base = control.initial_ms + bonus_through(control, plies)
+        if winner_ms != base:
             raise ClockError("flag receipt without move receipts changed the winner's clock")
 
 

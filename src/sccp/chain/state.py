@@ -553,6 +553,17 @@ class TokenRecord:
     registered_at_height: int
     initial_supply: int = 0
 
+    @property
+    def ticket(self) -> str | None:
+        """The four-digit ticket this token was registered under."""
+        return self.variant.ticket
+
+    @property
+    def token_id(self) -> str:
+        """The network-assigned id (the variant's immutable asset id)."""
+        assert self.variant.asset is not None
+        return self.variant.asset
+
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name:
             raise StateError("a token needs a variant name")
@@ -891,6 +902,28 @@ class State:
         return self.params.variant_names() + tuple(
             name for name in sorted(self.tokens) if name not in self.params.variant_names()
         )
+
+    def token_tickets(self) -> frozenset[str]:
+        """Every four-digit ticket already claimed on this chain."""
+        return frozenset(
+            token.variant.ticket
+            for token in self.tokens.values()
+            if token.variant.ticket is not None
+        )
+
+    def token_by_ticket(self, ticket: str) -> TokenRecord | None:
+        """Resolve a registered token by its four-digit ticket."""
+        for token in self.tokens.values():
+            if token.variant.ticket == ticket:
+                return token
+        return None
+
+    def token_by_id(self, token_id: str) -> TokenRecord | None:
+        """Resolve a registered token by the network-assigned asset id."""
+        for token in self.tokens.values():
+            if token.variant.asset == token_id:
+                return token
+        return None
 
     def variant_for_asset(self, asset: str) -> VariantParams:
         """Resolve the variant that mints ``asset`` (native ZQWX is standard)."""
