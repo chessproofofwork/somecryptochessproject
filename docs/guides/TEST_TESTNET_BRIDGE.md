@@ -47,8 +47,8 @@ There is no shared public Sepolia contract in this repository to point at, so
 each deployment needs its own `EthHtlc` address.
 
 > **Everything here is test value.** Sepolia ETH and testnet ZQWX have no
-> monetary value. Never reuse a mainnet key, and never point a mainnet node at
-> this contract.
+> monetary value. Never reuse a key that holds real funds, and never point a
+> mainnet node at this contract.
 
 ---
 
@@ -62,8 +62,10 @@ You need:
 - **Foundry** (`forge`, `cast`) to deploy and inspect the contract — install it
   from <https://book.getfoundry.sh/getting-started/installation>;
 - a Sepolia RPC endpoint and Sepolia ETH for gas and the swap;
-- MetaMask (or another EIP-1193 wallet), two browser profiles, and a fresh
-  Sepolia test account for each role (section 2.1);
+- MetaMask (or another EIP-1193 wallet), two browser profiles, and a dedicated
+  test account for each role — the same `0x` address exists on mainnet and
+  Sepolia, so "test account" means an account you do not use for real funds
+  (section 2.1);
 - a deployer account if you deploy `EthHtlc` (section 2.2);
 - two `testnet` SCCP keyfiles, one per role.
 
@@ -122,11 +124,27 @@ no registration and can receive ETH as soon as someone sends it. The private key
 and recovery phrase control the address, so never share them or reuse a key that
 holds real funds.
 
-You need two bridge addresses (maker and taker), plus a deployer address if you
-are deploying `EthHtlc`. If you already have dedicated Sepolia test accounts,
-reuse them and skip the creation steps; do not use a mainnet key.
+There is no separate "Sepolia address" or "testnet ETH address". The same
+keypair produces the same `0x...` address on Ethereum Mainnet (chain `1`) and
+Sepolia (chain `11155111`), and on every other EVM network. An address is not
+itself testnet or mainnet: the network selected in MetaMask decides which chain a
+transaction uses, and therefore whether it spends test ETH or real ETH.
 
-### 2.1 Create the maker and taker addresses
+| Network | Chain id | Account address | ETH shown |
+| --- | ---: | --- | --- |
+| Ethereum Mainnet | `1` | same `0x...` | real ETH |
+| Sepolia | `11155111` | same `0x...` | test ETH from a faucet |
+
+A faucet credits Sepolia only; it does not add to that address's mainnet
+balance. If someone sends mainnet ETH to the address, the funds arrive on
+mainnet and are real.
+
+You need two bridge accounts (maker and taker), plus a deployer account if you
+are deploying `EthHtlc`. Use dedicated test accounts whose keys you control. If
+you already have suitable test accounts, reuse them; do not use an account that
+holds real funds.
+
+### 2.1 Create the maker and taker accounts
 
 The Bridge page signs through an EIP-1193 wallet, so MetaMask is the reference
 setup. Create a **separate test wallet in each browser profile** (profile A is
@@ -136,7 +154,8 @@ the maker and profile B is the taker in section 6):
 2. Choose **Create a new wallet**, set a password, and write the Secret Recovery
    Phrase down offline. Do not use a phrase that holds real funds.
 3. Rename the first account `maker` under **Account details → Name**.
-4. Copy its address from the account selector. It is `0x` plus 40 hex characters.
+4. Copy its address from the account selector. It is `0x` plus 40 hex
+   characters, and the same address is valid on every EVM network.
 5. Repeat steps 1–4 in profile B and name that account `taker`.
 6. Record both public addresses:
 
@@ -144,6 +163,10 @@ the maker and profile B is the taker in section 6):
 export ETH_MAKER=0x...
 export ETH_TAKER=0x...
 ```
+
+These are ordinary Ethereum addresses, not testnet-only addresses. MetaMask may
+still show Ethereum Mainnet or an all-networks view first; section 2.3 selects
+Sepolia. The address itself does not change.
 
 Two separate test wallets are simpler than sharing one recovery phrase between
 profiles: each profile has its own MetaMask storage, and it is harder to sign
@@ -188,12 +211,32 @@ cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY"
 ```
 
 Fund `DEPLOYER_ADDRESS` with Sepolia ETH in section 2.4. The address is public;
-the private key controls it, so do not commit or share the key.
+the private key controls it, so do not commit or share the key. The generated
+address is valid on every EVM network; it also exists on mainnet, but keep this
+key test-only and fund it on Sepolia.
 
-### 2.3 Add Sepolia to the browser wallet
+### 2.3 Show Sepolia in MetaMask and select it
 
-MetaMask usually knows Sepolia already. If it does not, add it manually. The RPC
-URL comes from section 2.5, so you can skip this until then:
+Sepolia is built into MetaMask, but test networks are hidden until you enable
+them. You are not creating another account or a testnet-only address; you are
+telling MetaMask which chain to read for the account you already created.
+
+In each browser profile:
+
+1. Open the network selector at the top of MetaMask — or the menu in the
+   top-right corner, then **Networks**.
+2. Scroll to the bottom of the network list and turn on **Show test networks**.
+3. Select **Sepolia**.
+4. Confirm the selector shows **Sepolia**, and that the account is still
+   `ETH_MAKER` in profile A or `ETH_TAKER` in profile B.
+
+The address shown is exactly the same `0x...` string as before. Switch back to
+**Ethereum Mainnet** and the address is still the same; only the selected network
+and the balance change. MetaMask does not merge the two balances.
+
+If **Sepolia** still does not appear, add it from the same **Networks** screen
+with **Add a custom network**. The RPC URL comes from section 2.5, so you can
+skip this until then:
 
 | Field | Value |
 | --- | --- |
@@ -203,8 +246,21 @@ URL comes from section 2.5, so you can skip this until then:
 | Currency symbol | `ETH` |
 | Block explorer | `https://sepolia.etherscan.io` |
 
-Each profile must select its own address: `ETH_MAKER` in profile A and
+> **Select the network, not a different address.** A `0x...` address is not
+> inherently mainnet or Sepolia. If MetaMask is showing Ethereum Mainnet while
+> the faucet credits Sepolia, the test ETH stays on Sepolia; it does not move.
+> Before every lock or claim, check that the network selector says **Sepolia**.
+
+The Bridge page's **Connect Ethereum** button also asks MetaMask to switch to
+Sepolia, and — when the node publishes an RPC — can add it if the wallet does not
+know it. The steps above are the fallback, and the page rejects the wrong chain
+rather than signing on it.
+
+Each profile must select its own account: `ETH_MAKER` in profile A and
 `ETH_TAKER` in profile B. Never import a key that holds real funds.
+
+Never send Sepolia ETH to an exchange deposit address, even if the `0x...`
+string is valid there. Exchanges generally do not credit testnet transfers.
 
 ### 2.4 Get Sepolia ETH
 
@@ -222,15 +278,18 @@ and drip sizes change, so check the page rather than assuming a fixed amount:
 
 Never pay for Sepolia ETH; any site selling it is a scam. Faucets are
 rate-limited, so if one rejects your wallet, try another before asking the
-testnet operator for a grant.
+testnet operator for a grant. A faucet credits Sepolia only; it does not top up
+the same address on mainnet.
 
 Fund every address you created: maker, taker, and the deployer if you are
 deploying. With the example order below, the taker locks `0.01 ETH` and needs
 gas; the maker needs gas only to claim; the deployer needs gas to deploy. A
 `0.1 ETH` drip to each address is more than enough. Request the drip to each
-address. Maker and taker balances appear in MetaMask; the `cast balance` check
-below covers every address. If a faucet only connects a wallet, use its address
-flow; never expose a private key to a faucet.
+`0x...` address. After section 2.3 selects Sepolia, maker and taker balances
+appear in MetaMask; if another network is selected, it shows that network's
+balance for the same address instead. The `cast balance` check below covers every
+address. If a faucet only connects a wallet, use its address flow; never expose a
+private key to a faucet.
 
 ### 2.5 Get an RPC endpoint
 
@@ -263,6 +322,10 @@ cast balance "$ETH_TAKER" --ether --rpc-url "$SEPOLIA_RPC_URL"
 # if you created a deployer:
 cast balance "$DEPLOYER_ADDRESS" --ether --rpc-url "$SEPOLIA_RPC_URL"
 ```
+
+`cast balance` queries `SEPOLIA_RPC_URL`, so it reads Sepolia even if MetaMask is
+currently on another network. If MetaMask and `cast` disagree, check the selected
+network and account in MetaMask first.
 
 A zero balance means the drip has not arrived yet; it does not mean the address
 is invalid.
@@ -527,7 +590,7 @@ In profile B:
 
 1. Open `#/bridge → Buy ZQWX` and open the taker's SCCP wallet if prompted.
 2. Select the maker's `20 ZQWX` order. Check the price, maker and order expiry.
-3. Press **Connect Ethereum** and choose the taker account.
+3. Press **Connect Ethereum**, choose the taker account, and approve Sepolia.
 4. Keep **6 hours** for the ETH lock, or choose 12 or 24. Do not use a shorter
    lock: the SCCP leg must expire at least 24 blocks before the ETH leg.
 5. Press **Lock ETH and take order**. MetaMask signs `lock(hashlock, timelock,
@@ -668,9 +731,12 @@ consensus state and stays visible at `#/accounts/<address>` and through
 | `/v1/bridge` says `"configured": false` | node has no `SCCP_ETH_HTLC_CONTRACT` | set it and restart the node (section 4) |
 | The page says **ETH not configured** | same, or the page is talking to another node | check `$SCCP_NODE/v1/bridge`, then reload |
 | The page says **Sepolia ready** but cannot add the network | `eth_rpc_url` is `null` | set `SCCP_ETH_RPC_URL` and restart |
+| MetaMask does not list Sepolia | test networks are hidden | turn on **Show test networks** and select Sepolia (section 2.3) |
+| MetaMask shows a mainnet balance after the Sepolia faucet | Ethereum Mainnet is selected, or the wrong account is active | switch to Sepolia and confirm the address (section 2.3) |
+| MetaMask shows ETH but `cast balance` shows zero | different account, different address, or the faucet transaction is not mined | compare the `0x...` address and check the transaction on Sepolia Etherscan |
 | `switch the Ethereum wallet to Sepolia (chain 11155111)` | MetaMask is on another chain | switch to Sepolia, or add it with the table in section 2.3 |
-| `the wallet is on chain 1, expected 11155111` | wrong network selected | switch MetaMask to Sepolia |
-| `insufficient funds for gas * price + value` | the taker has no Sepolia ETH | use a faucet in section 2.4 |
+| `the wallet is on chain 1, expected 11155111` | wrong network selected | switch MetaMask to Sepolia; the address is the same on both chains |
+| `insufficient funds for gas * price + value` | the selected account has no Sepolia ETH | check the network and address, then use a faucet in section 2.4 |
 | `the ETH lock was not sent by the taker` | the selected MetaMask account is not the take's `taker_eth` | reconnect the account that locked the ETH |
 | `the ETH transaction did not call the bridge contract` | node and user are looking at different contracts | restore the correct `SCCP_ETH_HTLC_CONTRACT`; do not lock ZQWX |
 | `the ETH lock carries a different hashlock or timelock` | stale local swap or a mismatched transaction | do not lock ZQWX; refund the ETH after its timelock |
@@ -705,7 +771,11 @@ confirmation depth in place of Anvil's instant blocks.
 
 ## 10. Safety checklist
 
-- [ ] The Ethereum accounts are dedicated test accounts, not mainnet keys.
+- [ ] The Ethereum accounts are dedicated test accounts, not accounts used for
+      real funds. Their addresses also exist on mainnet.
+- [ ] MetaMask is on **Sepolia** (chain `11155111`), not Ethereum Mainnet, before
+      every lock and claim. The address is identical on both networks; the
+      balance and transaction are not.
 - [ ] Each MetaMask test wallet's Secret Recovery Phrase is backed up offline.
 - [ ] The deployer private key is stored outside the repository, in a password
       manager or ignored keyfile.
@@ -759,6 +829,9 @@ variables and redeploy; do not edit the VM's chain database.
 ### User flow
 
 ```text
+MetaMask: Show test networks -> select Sepolia (same 0x account)
+       |
+       v
 Sepolia faucet -> MetaMask maker and taker accounts
        |
        v
@@ -788,6 +861,8 @@ curl -sS "$SCCP_NODE/v1/htlcs"  | jq
 
 ## Related documentation
 
+- [MetaMask: view testnets](https://support.metamask.com/configure/networks/how-to-view-testnets-in-metamask/)
+  — enabling **Show test networks** and selecting Sepolia.
 - [`TEST_DEVNET_BRIDGE_DEX.md`](TEST_DEVNET_BRIDGE_DEX.md) — the same bridge on
   Anvil, plus the DEX and Chess960 flows, with a CLI path for both legs.
 - [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — keyfiles, the
