@@ -7,6 +7,29 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-21
+
+### Changed
+
+- **Mainnet's bootstrap grant is 2 basis points instead of 1.** The single
+  `sccp-bootstrap` tranche in `genesis/mainnet-premine.json` now allocates
+  4,200 ZQWX (2 bps of the 21,000,000 ZQWX cap), and
+  `scripts/make_genesis.py` pins the manifest total to exactly two basis points.
+  The initial standard-chess k=3 roster - four miners at 500 ZQWX plus three
+  clock witnesses at 50 ZQWX - needs 2,150 ZQWX, leaving 2,050 for fees,
+  slashed-bond top-ups and additional miners. It is a bootstrap budget, not
+  enough to fund full target throughput at k=3; the roster is expected to grow
+  from mined subsidies and fees.
+- **Mainnet launches standard-chess mining first.** C960 remains mined-only and
+  has no genesis allocation. A later C960 launch is not a way to avoid holding
+  ZQWX: C960 operators still need native coins for transaction fees and the
+  10-ZQWX timeout bond.
+- **The mainnet genesis hash is re-pinned.** `genesis/mainnet.json` now carries
+  4,200 ZQWX and `MAINNET.genesis_hash` is
+  `81220e4bdc81b01651cd1b87bd6aa1c83bea6d9caaf16e1d88658110423a670a`. The
+  README, `PROTOCOL.md`, `BIG_PICTURE.md` and `WHITEPAPER.md` document the
+  allocation and the standard-first launch plan.
+
 ## [0.36.6] - 2026-11-21
 
 ### Added

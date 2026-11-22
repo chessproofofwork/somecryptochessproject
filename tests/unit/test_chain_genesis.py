@@ -389,11 +389,11 @@ def test_the_document_round_trips_pools_and_htlcs() -> None:
     assert next(iter(state.htlcs.values())).status is HtlcStatus.CLAIMED
 
 
-def test_the_committed_mainnet_premine_is_one_basis_point() -> None:
+def test_the_committed_mainnet_premine_is_two_basis_points() -> None:
     _block, state = load_genesis(GENESIS_DIR / "mainnet.json", MAINNET)
     assert MAINNET.max_money is not None
-    assert state.minted == MAINNET.max_money * 1 // 10_000
-    assert state.minted == 2_100 * COINS
+    assert state.minted == MAINNET.max_money * 2 // 10_000
+    assert state.minted == 4_200 * COINS
     assert state.minted_assets == {}
 
 

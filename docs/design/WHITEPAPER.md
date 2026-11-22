@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.36.6 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.37.0 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
@@ -242,7 +242,7 @@ There are three parameter sets:
 | Network | Purpose | Address prefix | Genesis |
 | --- | --- | --- | --- |
 | `testnet` | Public, valueless integration network | `sccpt1...` | Pinned testnet genesis with a faucet allocation, a seeded ZQWX/C960 pool and a completed SCCP HTLC |
-| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 1-basis-point (2,100 ZQWX) bootstrap grant |
+| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 2-basis-point (4,200 ZQWX) bootstrap grant |
 | `devnet` | Deterministic in-process tests and demos | `sccpt1...` | Pinned deterministic genesis with a faucet allocation |
 
 The network id is inside transaction hashes, game hashes, certificates,
@@ -1592,11 +1592,12 @@ root. It is loaded from a pinned document; its hash must equal
 `params.genesis_hash`. A network with no pinned hash still parses the document,
 but production callers are expected to pin it.
 
-The genesis state contains the initial allocations. Mainnet allocates 1 basis
-point of the ZQWX cap — 2,100 ZQWX — as a bootstrap grant and no variant supply;
-its public address is in `genesis/mainnet-premine.json`. Testnet and devnet
-include a faucet allocation under a published deterministic key, and testnet
-also seeds a ZQWX/C960 pool
+The genesis state contains the initial allocations. Mainnet allocates 2 basis
+points of the ZQWX cap — 4,200 ZQWX — as a bootstrap grant and no variant supply;
+its public address is in `genesis/mainnet-premine.json`. The launch plan is
+standard-chess mining first, and the grant is sized for the initial k=3 roster;
+C960 remains mined-only. Testnet and devnet include a faucet allocation under a
+published deterministic key, and testnet also seeds a ZQWX/C960 pool
 and a completed ZQWX bridge HTLC. Mainnet has no faucet. Every later block must
 descend from the genesis block; a document with a different genesis hash is a
 different chain.
@@ -1795,11 +1796,13 @@ A block's cost has three parts:
 
 The reward is the block subsidy plus fees. On mainnet the subsidy starts at 50
 coins and halves every 210,000 blocks, with a 21,000,000-coin cap. Genesis
-allocates 1 basis point of that cap (2,100 ZQWX) as a bootstrap grant and no
-variant supply, so every C960 in existence is mined. The private key is not in
-the repository and the on-chain grant is auditable in
-`genesis/mainnet-premine.json`. Testnet and
-devnet rewards are valueless.
+allocates 2 basis points of that cap (4,200 ZQWX) as a bootstrap grant and no
+variant supply, so every C960 in existence is mined. The grant covers the initial
+standard-chess k=3 roster (2,150 ZQWX) and leaves 2,050 for fees, top-ups and
+additional miners; it is not sized for full target throughput, so the roster is
+expected to grow from mined subsidies. The private key is not in the repository
+and the on-chain grant is auditable in `genesis/mainnet-premine.json`. Testnet
+and devnet rewards are valueless.
 
 A stall is the one loss a seat can choose instead of playing on, so it has its
 own price: finalising a `time_forfeit` claim charges the flagged seat 10% of the
@@ -2101,8 +2104,8 @@ sccp --data-dir ./data faucet send --network testnet \
 
 The faucet is a local command that submits a transfer from the published
 deterministic genesis key. It is not a public service and it does not exist on
-mainnet. Mainnet parameters have no faucet; their genesis premine is described
-in [section 14.8](#148-genesis) and `genesis/mainnet-premine.json`.
+mainnet. Mainnet parameters have no faucet; their 2-bps genesis premine is
+described in [section 14.8](#148-genesis) and `genesis/mainnet-premine.json`.
 
 ### 18.5 Register and commit availability
 

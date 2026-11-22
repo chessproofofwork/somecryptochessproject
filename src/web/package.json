@@ -1,7 +1,7 @@
 {
   "name": "sccp-web",
   "private": true,
-  "version": "0.36.6",
+  "version": "0.37.0",
   "description": "ZQWX block explorer and testnet table, built with React Native for Web and Material Design",
   "type": "module",
   "scripts": {

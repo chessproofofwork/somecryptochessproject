@@ -1280,13 +1280,15 @@ amount in escrow, `claimed` debits the sender and credits the beneficiary, and
 that opens its hashlock. Genesis pools and HTLCs are limited to height 0 and are
 part of `state_root`.
 
-Mainnet allocates **1 basis point of the ZQWX cap** — 2,100 ZQWX — at genesis as
+Mainnet allocates **2 basis points of the ZQWX cap** — 4,200 ZQWX — at genesis as
 a bootstrap grant, and **no variant supply**: every C960 in existence is mined
-(or, on testnet only, seeded as demo liquidity). The public address and basis
-point live in `genesis/mainnet-premine.json`; the private key is not part of the
-repository. `scripts/make_genesis.py` refuses to generate a document unless the
-manifest's tranches total exactly that one basis point, so neither an accidental
-mint nor a silently dropped grant can change the chain.
+(or, on testnet only, seeded as demo liquidity). The grant is sized for the
+initial standard-chess k=3 roster and is not a variant allocation; C960 remains
+mined-only. The public address and basis points live in
+`genesis/mainnet-premine.json`; the private key is not part of the repository.
+`scripts/make_genesis.py` refuses to generate a document unless the manifest's
+tranches total exactly those two basis points, so neither an accidental mint nor
+a silently dropped grant can change the chain.
 
 Testnet also seeds a ZQWX/C960 pool with 5 coins per side and one completed
 1-ZQWX HTLC, using published demo keys, so `GET /v1/pools` and `GET /v1/htlcs`

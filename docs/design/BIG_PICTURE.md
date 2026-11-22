@@ -1,6 +1,6 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status (tree at 0.36.6).** Implemented except for the optional `wETH`
+> **Status (tree at 0.37.0).** Implemented except for the optional `wETH`
 > federation and the items marked **not built**. The browser wallet (section 4),
 > variant assets (section 5), the native DEX (section 6) and the trustless
 > ETH<->SCCP HTLC bridge (section 7) are in the tree; the bridge contract is
@@ -41,7 +41,7 @@ That gives four deliverables, in dependency order:
 | Native DEX | pools, LP positions and swaps between on-chain assets | new transaction types, `pools` in state | 0.24.0, shipped |
 | ETH<->ZQWX bridge | HTLC atomic swaps; no custodian, no wrapped peg | new transaction types, `htlcs` in state, one Ethereum contract | 0.24.0, shipped |
 
-All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.36.6. The
+All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.37.0. The
 `sccp/v2` fork this document assumed did not happen: `PROTOCOL_VERSION` is still
 1, the domains stayed `sccp/v1/...`, and `PROTOCOL.md` documents the new
 transaction types as part of v1 (section 5.1).
@@ -129,9 +129,13 @@ curve are `VariantParams` fields, so they can diverge later only by a fork. Addi
 a third variant is a protocol release plus its own genesis tranche, not a config
 edit.
 
-Mainnet genesis pre-allocates 1 basis point of the ZQWX cap (2,100 ZQWX) as a
+Mainnet genesis pre-allocates 2 basis points of the ZQWX cap (4,200 ZQWX) as a
 bootstrap grant and no variant supply: C960 is mined, and only testnet seeds
-demo liquidity. The grant is public in `genesis/mainnet-premine.json`; see
+demo liquidity. The launch plan is standard-chess mining first; the grant funds
+the initial k=3 miner and clock-witness bonds (2,150 ZQWX) and leaves 2,050 for
+fees, top-ups and additional miners. C960 mining follows once bootstrap blocks
+produce spendable ZQWX, and C960 operators still need ZQWX for fees and timeout
+bonds. The grant is public in `genesis/mainnet-premine.json`; see
 [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 
 ### 3.3 The token is the games

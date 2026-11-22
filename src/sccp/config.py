@@ -431,7 +431,7 @@ MAINNET: Final = NetworkParams(
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
     max_tx_bytes=131_072,
-    genesis_hash="7339dc6f84f80e78f4694246deb9733f93fd22b855ece60a80d0a2bdb087c547",
+    genesis_hash="81220e4bdc81b01651cd1b87bd6aa1c83bea6d9caaf16e1d88658110423a670a",
 )
 
 DEVNET: Final = NetworkParams.model_validate(
