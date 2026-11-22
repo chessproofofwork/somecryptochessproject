@@ -242,6 +242,8 @@ __marimo__/
 /chaindata/
 /data-play/
 /.secrets/
+/.secrets/mainnet-premine-2bps.key
+/.secrets/passphrase.txt
 *.key
 !tests/fixtures/*.key
 

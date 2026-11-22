@@ -7,6 +7,16 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The mainnet 2-bps premine moved to a fresh key before launch.** The single
+  `sccp-bootstrap` tranche in `genesis/mainnet-premine.json` now pays to
+  `sccp1qxl7upkxas5hhz5enrt5ydmzlymzzw58umrncd5pgtt9795pshtvqchkd0n`, and
+  `MAINNET.genesis_hash` is
+  `8032b9c30796495c91a18c9db3bd1600e0dcbd8452e15948109eaa818a0a4ec2`. The
+  keyfile and its passphrase are local only under `.secrets/`, which is
+  git-ignored; no private key material is committed.
+
 ## [0.37.0] - 2026-11-21
 
 ### Changed
