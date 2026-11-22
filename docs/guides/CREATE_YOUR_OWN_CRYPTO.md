@@ -22,7 +22,7 @@ undone.
 | `sccp` installed | See [`INSTALL.md`](INSTALL.md) for the shared install and node setup. |
 | A funded keyfile | The registration pays one network fee in native **ZQWX**. The fee comes from the spendable balance; `--initial-supply` is minted, not paid for. |
 | A node | The CLI reads the account and nonce from it, then submits the signed transaction to it. |
-| A token ticket, a name and a ticker | The ticket is the unique registration serial (the CLI generates one if omitted); the name and ticker are display metadata. The supply rules are fixed at registration. |
+| A token ticket, a name and a ticker | The ticket is the unique registration serial (the CLI generates one if omitted); the name and ticker are stored in the on-chain registration record as display metadata. The supply rules are fixed at registration. |
 
 Create and fund a wallet first if you have not already:
 
@@ -86,7 +86,9 @@ collide:
 | Book version (with `--opening`) | `token-0042` |
 
 You also choose the **display name** (`--name`) and **ticker** (`--ticker`), for
-example `Gold Coin` and `GOLD`. Neither is identity: the name and ticker are
+example `Gold Coin` and `GOLD`. Both are written into the token's on-chain
+registration record and become immutable with it, so a node replaying the chain
+always sees the same values. Neither is identity, though: the name and ticker are
 display metadata and may be reused by another token. Only the 64-hex token id
 identifies the asset, so two tokens can share both a name and a ticker and still
 be different assets. The node resolves a name or ticker only when exactly one
@@ -384,6 +386,48 @@ Gold Coin [token-0042] (GOLD) ticket 0042 standard asset <64-hex-asset-id> cap 2
 `10_000_000_000` is 100 whole GOLD at 8 decimals. The cap is shown in whole
 coins because `max_supply` is stored that way.
 
+### Check whether wallets will show it
+
+Registration makes the token exist on-chain. It does **not** make every wallet
+display it. The token API returns an `approved` flag, and wallets use that flag
+as a local display policy:
+
+```bash
+curl -sS "$NODE/v1/tokens/0042" | jq '{display_name, symbol, approved}'
+```
+
+```json
+{
+  "display_name": "Gold Coin",
+  "symbol": "GOLD",
+  "approved": false
+}
+```
+
+The display name and ticker still come from the chain record. `approved` only
+says whether this particular node operator chose to surface the token; it does
+not change or replace the name.
+
+A node started without `--approved-token` approves every registered token. A node
+started with one or more `--approved-token` flags approves only those references;
+pass it to `sccp node run` as `--approved-token 0042` (the flag is repeatable).
+The flag accepts a ticket, a token id or the internal variant name
+(`token-0042`), not a display name or ticker. Approval is node configuration, not
+consensus state: another node can approve a different set, and restarting a node
+with a different list changes only what that node advertises.
+
+The web wallet also keeps a browser-local approved list. Looking a token up by
+ticket or token id and choosing **Keep this token** lets that browser keep it even
+when the node reports `approved: false`. Both lists are filters over the chain
+registry; neither is a second place to edit the name, ticker or supply.
+
+The `dex tokens` command lists every registered token regardless of approval. Use
+the JSON form when you need the flag:
+
+```bash
+sccp --json dex tokens --node "$NODE" | jq '.tokens[] | {ticket, display_name, approved}'
+```
+
 `wallet balance` reads the token from the account's `assets` map and shows it as
 a shortened asset id, because the static network parameters do not contain
 tokens created after genesis:
@@ -591,9 +635,9 @@ Before you submit a registration on a network you care about:
 - **Ticket**: the registration serial and its internal variant are reserved
   forever, even if the token is never used.
 - **Ruleset**: `standard` and `chess960` play differently; a token cannot switch.
-- **Name, ticker and decimals**: the display name and ticker are fixed on this
-  record (another token may reuse them), and the decimals are part of the asset
-  id. None can be edited.
+- **Name, ticker and decimals**: the display name and ticker are fixed in the
+  on-chain registration record (another token may reuse them), and the decimals
+  are part of the asset id. None can be edited.
 - **Supply**: `max_supply` and `halving_interval` are fixed together. You cannot
   add a cap later, remove one, or change the subsidy.
 - **Initial supply**: it is public, minted to the registering address, and counts
@@ -613,6 +657,7 @@ ticket and a new asset id.
 | Symptom | What it means |
 | --- | --- |
 | `unknown asset 'token-0042'` from `dex quote`, `dex swap` or `dex create-pool` | Registered tokens, C960 included, are named by their **64-character asset id** on the DEX commands; only native ZQWX can still use a name. Get the id from `dex tokens --json` or the registration output. |
+| The token is on-chain but missing from the wallet | The node may report `approved: false` and this browser has not pinned the token. Look it up by ticket or token id and choose **Keep this token**; see [Check whether wallets will show it](#check-whether-wallets-will-show-it). |
 | `transaction ... already has a pending transaction with nonce N` | The previous transaction from that address is still in the mempool. Wait for it to be included. |
 | `the node serves 'devnet', not 'testnet'` | `--node` and the keyfile disagree. Point at the right node or pass the matching `--network`. |
 | `no chain database at ...` | The command could not read the node and fell back to `--data-dir`. Pass the URL of the node that serves the chain. |
