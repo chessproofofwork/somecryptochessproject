@@ -116,7 +116,17 @@ def build_match_vectors() -> dict[str, object]:
     the transcript both seats signed. Nothing here is test-only — it is the
     same call sequence ``sccp devnet up`` uses.
     """
-    params = DEVNET.model_copy(update={"min_plies": 1})
+    params = DEVNET.model_copy(
+        update={
+            "min_plies": 1,
+            # A copied record keeps its own threshold; the web vectors play a
+            # short scholar's mate, so every variant has to match the one-ply
+            # fixture schedule.
+            "variants": tuple(
+                variant.model_copy(update={"min_plies": 1}) for variant in DEVNET.variants
+            ),
+        }
+    )
     book = books_from_document(TEST_BOOK)[params.book_version]
     keys = {name: hybrid_keypair_from_seed(seed) for name, (seed, _) in _devnet_accounts().items()}
     addresses = {name: address for name, (_, address) in _devnet_accounts().items()}

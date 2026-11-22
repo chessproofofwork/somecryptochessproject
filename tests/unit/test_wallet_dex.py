@@ -13,9 +13,9 @@ from typing import Any
 import pytest
 
 from sccp.chain import dex
-from sccp.chain.state import Pool, State
+from sccp.chain.state import Pool, State, TokenRecord
 from sccp.chain.tx import apply_transaction, validate_transaction
-from sccp.config import CHESS960_ASSET_ID, DEVNET
+from sccp.config import C960, C960_ASSET_ID, C960_VARIANT, DEVNET
 from sccp.errors import WalletServiceError
 from sccp.protocol.models import TxType
 from sccp.wallet.service import WalletService
@@ -26,11 +26,17 @@ HEIGHT = 5
 
 def _state(accounts: Mapping[str, Any]) -> State:
     state = State(params=DEVNET, height=HEIGHT - 1, timestamps=[1_700_000_000])
+    state.tokens[C960_VARIANT] = TokenRecord(
+        name=C960_VARIANT,
+        variant=C960,
+        owner=next(iter(accounts.values())).address,
+        registered_at_height=0,
+    )
     for account in accounts.values():
         entry = state.ensure(account.address)
         entry.public_key = account.keypair.public_key_hex
         entry.balance = 1_000 * COINS
-        entry.assets[CHESS960_ASSET_ID] = 100 * COINS
+        entry.assets[C960_ASSET_ID] = 100 * COINS
     return state
 
 
@@ -50,17 +56,17 @@ def test_create_pool_builds_the_canonical_pair_and_validates(
         alice.keypair,
         asset_a=None,
         amount_a=10 * COINS,
-        asset_b=CHESS960_ASSET_ID,
+        asset_b=C960_ASSET_ID,
         amount_b=20 * COINS,
     )
 
     assert tx.type is TxType.CREATE_POOL
     assert "asset_a" not in tx.payload
-    assert tx.payload["asset_b"] == CHESS960_ASSET_ID
+    assert tx.payload["asset_b"] == C960_ASSET_ID
     assert (tx.payload["amount_a"], tx.payload["amount_b"]) == (10 * COINS, 20 * COINS)
     _apply(state, tx, HEIGHT)
 
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
     assert state.pools[pool_id].shares[alice.address] == dex.initial_shares(10 * COINS, 20 * COINS)
 
 
@@ -71,7 +77,7 @@ def test_add_swap_and_remove_build_the_same_state_transitions(
     wallet = WalletService(DEVNET, state)
     alice = protocol_accounts["alice"]
     bob = protocol_accounts["bob"]
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
 
     _apply(
         state,
@@ -79,7 +85,7 @@ def test_add_swap_and_remove_build_the_same_state_transitions(
             alice.keypair,
             asset_a=None,
             amount_a=10 * COINS,
-            asset_b=CHESS960_ASSET_ID,
+            asset_b=C960_ASSET_ID,
             amount_b=20 * COINS,
         ),
         HEIGHT,
@@ -107,7 +113,7 @@ def test_add_swap_and_remove_build_the_same_state_transitions(
         ),
         HEIGHT + 2,
     )
-    assert state.asset_balance(bob.address, CHESS960_ASSET_ID) == 100 * COINS + quote
+    assert state.asset_balance(bob.address, C960_ASSET_ID) == 100 * COINS + quote
 
     owned = state.pools[pool_id].shares[alice.address]
     _apply(
@@ -122,7 +128,7 @@ def test_the_builders_refuse_obvious_mistakes(protocol_accounts: Mapping[str, An
     state = _state(protocol_accounts)
     wallet = WalletService(DEVNET, state)
     alice = protocol_accounts["alice"]
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
 
     with pytest.raises(WalletServiceError, match="two different assets"):
         wallet.build_create_pool(
@@ -137,7 +143,7 @@ def test_the_builders_refuse_obvious_mistakes(protocol_accounts: Mapping[str, An
             alice.keypair,
             asset_a=None,
             amount_a=COINS,
-            asset_b=CHESS960_ASSET_ID,
+            asset_b=C960_ASSET_ID,
             amount_b=1_000 * COINS,
         )
     with pytest.raises(WalletServiceError, match="pool id"):
@@ -162,14 +168,14 @@ def test_swap_builder_carries_token_input_and_guards_the_quote(
     alice = protocol_accounts["alice"]
     bob = protocol_accounts["bob"]
     carol = protocol_accounts["carol"]
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
     _apply(
         state,
         wallet.build_create_pool(
             alice.keypair,
             asset_a=None,
             amount_a=10 * COINS,
-            asset_b=CHESS960_ASSET_ID,
+            asset_b=C960_ASSET_ID,
             amount_b=20 * COINS,
         ),
         HEIGHT,
@@ -179,11 +185,11 @@ def test_swap_builder_carries_token_input_and_guards_the_quote(
     tx = wallet.build_swap(
         bob.keypair,
         pool_id=pool_id,
-        asset_in=CHESS960_ASSET_ID,
+        asset_in=C960_ASSET_ID,
         amount_in=COINS,
         min_amount_out=quote,
     )
-    assert tx.payload["asset_in"] == CHESS960_ASSET_ID
+    assert tx.payload["asset_in"] == C960_ASSET_ID
     _apply(state, tx, HEIGHT + 1)
 
     with pytest.raises(WalletServiceError, match="positive"):
@@ -242,7 +248,7 @@ def test_swap_builder_carries_token_input_and_guards_the_quote(
         wallet.build_swap(
             carol.keypair,
             pool_id=pool_id,
-            asset_in=CHESS960_ASSET_ID,
+            asset_in=C960_ASSET_ID,
             amount_in=COINS,
             min_amount_out=0,
         )
@@ -284,14 +290,14 @@ def test_liquidity_and_create_pool_builders_refuse_bad_deposits(
     alice = protocol_accounts["alice"]
     bob = protocol_accounts["bob"]
     carol = protocol_accounts["carol"]
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
     _apply(
         state,
         wallet.build_create_pool(
             alice.keypair,
             asset_a=None,
             amount_a=10 * COINS,
-            asset_b=CHESS960_ASSET_ID,
+            asset_b=C960_ASSET_ID,
             amount_b=20 * COINS,
         ),
         HEIGHT,
@@ -302,7 +308,7 @@ def test_liquidity_and_create_pool_builders_refuse_bad_deposits(
             alice.keypair,
             asset_a=None,
             amount_a=10 * COINS,
-            asset_b=CHESS960_ASSET_ID,
+            asset_b=C960_ASSET_ID,
             amount_b=20 * COINS,
         )
     with pytest.raises(WalletServiceError, match="positive"):
@@ -310,7 +316,7 @@ def test_liquidity_and_create_pool_builders_refuse_bad_deposits(
             alice.keypair,
             asset_a=None,
             amount_a=0,
-            asset_b=CHESS960_ASSET_ID,
+            asset_b=C960_ASSET_ID,
             amount_b=20 * COINS,
         )
     with pytest.raises(WalletServiceError, match="positive"):

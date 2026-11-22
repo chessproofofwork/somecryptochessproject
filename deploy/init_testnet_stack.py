@@ -27,7 +27,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from sccp.config import TESTNET, NetworkParams
+from sccp.config import C960_VARIANT, TESTNET, NetworkParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed
 from sccp.crypto.wallet import KdfParams, create_wallet
@@ -129,14 +129,15 @@ def _witness(index: int, directory: Path, params: NetworkParams) -> StackWitness
 
 
 def _variant_for(index: int) -> str:
-    """First pair standard, second pair Chess960."""
-    return "standard" if index < 2 else "chess960"
+    """First pair standard, second pair the C960 custom token."""
+    return "standard" if index < 2 else C960_VARIANT
 
 
 def _miner(index: int, directory: Path, params: NetworkParams) -> StackMiner:
     keypair = hybrid_keypair_from_seed(miner_seed(index))
     variant = _variant_for(index)
-    params.variant(variant)
+    if variant != C960_VARIANT:
+        params.variant(variant)
     return StackMiner(
         name=f"miner-{index + 1}",
         variant=variant,

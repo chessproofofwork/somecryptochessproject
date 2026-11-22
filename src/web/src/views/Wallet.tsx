@@ -42,8 +42,9 @@ import {
   StatusPill,
 } from "../components/Chrome";
 import { useWalletSession } from "../components/WalletSession";
+import { TokenLookup } from "../components/TokenLookup";
 import { labelFor, readContacts } from "../lib/contacts";
-import { tokenForAsset, tokenImmature, tokensFor, tokenBalance } from "../lib/assets";
+import { tokenForAsset, tokenImmature, tokenBalance } from "../lib/assets";
 import { downloadText, keyfileName } from "../lib/download";
 import {
   formatAmount,
@@ -57,6 +58,7 @@ import { keyfileText } from "../lib/keystore";
 import { AUTO_LOCK_CHOICES } from "../lib/settings";
 import { useNode } from "../node";
 import { useResource } from "../useResource";
+import { useTokenRegistry } from "../useTokenRegistry";
 import { FaucetPanel } from "./wallet/Faucet";
 import { HistoryPanel } from "./wallet/History";
 import { SendPanel } from "./wallet/Send";
@@ -71,6 +73,7 @@ export function Wallet({
   view: "overview" | "send" | "receive" | "faucet" | "history" | "settings";
 }): ReactNode {
   const { status, params, network } = useNode();
+  const registry = useTokenRegistry();
   const {
     session,
     stored,
@@ -176,7 +179,7 @@ export function Wallet({
     }
 
     const { record, keypair } = session;
-    const tokens = tokensFor(params.data);
+    const tokens = registry.tokens;
 
     if (view === "send") {
       if (accountView === null || params.data === undefined) {
@@ -469,6 +472,20 @@ export function Wallet({
             </KeyValue>
           </Section>
         )}
+        <Section
+          title="Approved tokens"
+          subtitle="the node's approved list plus any token this browser looked up and kept"
+        >
+          {registry.registered.error !== undefined && (
+            <FailureNotice error={registry.registered.error} />
+          )}
+          <TokenLookup
+            network={network}
+            approved={registry.approved}
+            onApprove={registry.approve}
+            onUnapprove={registry.unapprove}
+          />
+        </Section>
         <HelperText type="info" visible>
           The node has no transaction-history endpoint yet, so this page shows committed balances
           and the ledger actions this browser is still waiting on; the History tab scans blocks for

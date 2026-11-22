@@ -1,6 +1,6 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status (tree at 0.36.6).** Implemented except for the optional `wETH`
+> **Status (tree at 0.37.0).** Implemented except for the optional `wETH`
 > federation and the items marked **not built**. The browser wallet (section 4),
 > variant assets (section 5), the native DEX (section 6) and the trustless
 > ETH<->SCCP HTLC bridge (section 7) are in the tree; the bridge contract is
@@ -41,7 +41,7 @@ That gives four deliverables, in dependency order:
 | Native DEX | pools, LP positions and swaps between on-chain assets | new transaction types, `pools` in state | 0.24.0, shipped |
 | ETH<->ZQWX bridge | HTLC atomic swaps; no custodian, no wrapped peg | new transaction types, `htlcs` in state, one Ethereum contract | 0.24.0, shipped |
 
-All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.36.6. The
+All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.37.0. The
 `sccp/v2` fork this document assumed did not happen: `PROTOCOL_VERSION` is still
 1, the domains stayed `sccp/v1/...`, and `PROTOCOL.md` documents the new
 transaction types as part of v1 (section 5.1).
@@ -83,12 +83,15 @@ What this document set out to add, and where it landed:
   210,000 blocks, 8 decimals (`UNITS_PER_COIN = 100_000_000`). None of this
   changes; standard chess is not one variant among many but the chain's own
   unit of account.
-- **A variant asset is minted by the coinbase of that variant's proofs.** The
-  one exception is a fixed genesis allocation: 5% of each variant's cap, public
-  and auditable, for liquidity and ecosystem incentives. There is no sale and no
-  administrative mint after genesis. If nobody settles variant games, no variant
-  token is mined -- C960 today, since a variant exists only if the network defines
-  it (only `chess` and `chess960` are accepted; §5.4).
+- **A custom-token asset is minted by the coinbase of that token's proofs.**
+  Genesis registers C960 but allocates no supply, so every C960 is mined; testnet
+  additionally seeds demo liquidity. There is no sale and no administrative mint
+  after genesis. If nobody settles that token's games, no token is mined. C960 is
+  one registration among any others the chain accepts. Registration can name only
+  an existing ruleset (`standard`, `chess960`, or one of the
+  python-chess variants: `antichess`, `atomic`, `crazyhouse`, `giveaway`,
+  `horde`, `kingofthehill`, `racingkings`, `suicide`, `threecheck`; §5.4), so it
+  adds a token without adding executable code.
 - **Assets are consensus objects, not contracts.** An asset has an id, a supply
   counter and a minting rule. It has no bytecode, no issuer privileges and no
   upgrade path, so there is nothing for an issuer to rug and nothing for a
@@ -96,42 +99,48 @@ What this document set out to add, and where it landed:
 
 ### 3.2 Asset identity
 
-An asset id is the domain hash of its immutable parameters. As shipped
-(`config.py: CHESS960_ASSET_ID`):
+An asset id is the domain hash of its immutable identity. Only standard chess is
+a built-in network asset (`asset` is `None`, so proofs mint native ZQWX). Every
+other asset, C960 included, is a chain-registered token and commits to its
+unique registration serial and ruleset:
 
 ```text
-asset_id = H("sccp/v1/asset", {symbol, name, decimals, variant})
+asset_id = H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})
 ```
 
-The id commits to the variant that mints the token and to its display
-parameters; `max_supply`, `halving_interval` and the subsidy schedule are
-`VariantParams` fields fixed per network, so changing them is a protocol
-release and not something an asset id has to carry. Ids are derived, so two
-nodes cannot disagree about which asset a transfer touches, and the symbol is
-display only: consensus never compares it. `src/web` builds its token list from
-`GET /v1/params` (`lib/assets.ts`), so a wallet can only print a symbol the
-network itself defines; an asset id the params do not name is rendered as
-`asset` with its id beside it, never mapped to a guessed symbol. Because the
-universe is closed, a lookalike token has no route into the UI at all.
+The id commits to the registration that created the token and to its
+consensus-relevant rules; `max_supply`, `halving_interval` and the subsidy
+schedule live in `VariantParams` and are fixed by the registration transaction.
+The id is derived, so two nodes cannot disagree about which asset a transfer
+touches, and the name and ticker are display only: consensus never compares
+them. Two tokens may therefore share a display name and ticker and still have
+different ids. `GET /v1/params` names native ZQWX; chain-registered tokens,
+C960 among them, are published by `GET /v1/tokens`, and an asset id neither
+endpoint names is rendered as `asset` with its id beside it, never mapped to a
+guessed symbol.
 
 Shipped and proposed parameters (decisions 1 and 3 in section 12):
 
 | Asset | Symbol | Minted by | `max_supply` | Decimals | Status |
 | --- | --- | --- | --- | --- | --- |
 | ZQWX | ZQWX | standard-chess proofs | 21,000,000 | 8 | shipped |
-| Chess960 | C960 | chess960 proofs | 21,000,000 | 8 | shipped (0.24.0) |
+| Chess960 | C960 | chess960 proofs | 21,000,000 | 8 | shipped as custom token (ticket `0960`) |
 | Crazyhouse | CZH | crazyhouse proofs | 21,000,000 | 8 | **not built** |
 
-Each variant carries its own cap so ZQWX's schedule is untouched. Giving every
-variant the same cap and halving interval makes "one variant is one chain's worth
-of scarcity" legible at launch; `max_supply`, `halving_interval` and the subsidy
-curve are `VariantParams` fields, so they can diverge later only by a fork. Adding
-a third variant is a protocol release plus its own genesis tranche, not a config
-edit.
+Each token carries its own cap so ZQWX's schedule is untouched. Giving C960 the
+same cap and halving interval makes "one token is one chain's worth of scarcity"
+legible at launch; every other registration chooses its own values. C960 is a
+genesis-registered custom token, not a `NetworkParams` entry: its record is the
+same `TokenRecord` a `register_token` transaction creates, and its internal
+variant is `token-0960`.
 
-Mainnet genesis pre-allocates 1 basis point of the ZQWX cap (2,100 ZQWX) as a
-bootstrap grant and no variant supply: C960 is mined, and only testnet seeds
-demo liquidity. The grant is public in `genesis/mainnet-premine.json`; see
+Mainnet genesis pre-allocates 2 basis points of the ZQWX cap (4,200 ZQWX) as a
+bootstrap grant and no token supply: C960 is mined, and only testnet seeds demo
+liquidity. The launch plan is standard-chess mining first; the grant funds the
+initial k=3 miner and clock-witness bonds (2,150 ZQWX) and leaves 2,050 for fees,
+top-ups and additional miners. C960 mining follows once bootstrap blocks produce
+spendable ZQWX, and C960 operators still need ZQWX for fees and timeout bonds.
+The grant is public in `genesis/mainnet-premine.json`; see
 [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 
 ### 3.3 The token is the games
@@ -346,12 +355,13 @@ every block. It could not be, as stated: a bonded balance is held outside
 `balance`, and `slash_evidence` destroys a witness bond outright
 (`chain/timeout.py: apply_slash`). The cap is enforced where the token is
 created instead -- `variant_subsidy` clamps every mint to
-`max_supply - minted_assets[asset]` (`chain/block.py`) -- while the load-time
-checks in `State.__post_init__` and the per-op checks in `chain/dex.py` keep
-reserves, shares and keys well formed. Snapshot and restore carry the new maps;
-the state root changed when the fields landed, so the switchover was a breaking
-state change rather than a payload addition, and the golden chain, the pinned
-genesis hashes and the web vectors were regenerated with it (0.24.0 and 0.25.0).
+`max_supply * 10**decimals - minted_assets[asset]` (`chain/block.py`) -- while the
+load-time checks in `State.__post_init__` and the per-op checks in `chain/dex.py`
+keep reserves, shares and keys well formed. Snapshot and restore carry the new
+maps; the state root changed when the fields landed, so the switchover was a
+breaking state change rather than a payload addition, and the golden chain, the
+pinned genesis hashes and the web vectors were regenerated with it (0.24.0 and
+0.25.0).
 
 0.33.0 adds a **native-only** `State.burned` display counter for the timeout
 stall slash and the clock-witness bond slash. It is persisted in snapshots and
@@ -373,34 +383,56 @@ as zero; a fresh replay from genesis counts every historical slash.
 | `htlc_claim` | new | `{htlc_id, preimage, public_key}` |
 | `htlc_refund` | new | `{htlc_id, public_key}` |
 | `register` | extended | `{public_key, endpoint, engine, bond, variant?}`; `variant` defaults to `standard` and is fixed until the account unregisters |
+| `register_token` | new | `{ticket, display_name, symbol, ruleset, openings?, subsidy, decimals?, initial_supply?, halving_interval?, max_supply?, min_plies?, max_games_per_block?, opening_book?, time_control_initial_ms?, time_control_increment_ms?, time_control_delay_ms?, time_control_first_moves?, time_control_periods?, public_key}`; adds an immutable variant token and a derived asset id |
 | `availability` | unchanged | `{epoch, max_games, commitment, public_key}`; the variant comes from the account, so a registration plays one discipline |
 
-There is deliberately **no `create_asset` transaction.** The asset set is fixed by
-`NetworkParams`, which is what makes a variant token a claim on a game corpus
-rather than a promise by an issuer, and it removes lookalike and spam assets by
-construction. New assets are a protocol release, not a transaction.
+Workstream B shipped with **no `create_asset` transaction**: the asset set was
+fixed by `NetworkParams`, which made a variant token a claim on a game corpus
+rather than a promise by an issuer, and removed lookalike and spam assets by
+construction. Registration now closes that gap without reopening it. Any funded
+account may submit `register_token` with an unused `ticket`; the payload claims
+a unique registration serial, chooses display metadata, names an existing
+ruleset, and fixes every issuance and clock parameter in the same transaction.
+A ticket is 16 lowercase hex characters, so eight random bytes give a 2^64
+namespace; the four-digit form is retained for C960 and pre-existing
+registrations. The ticket derives the internal variant `token-<ticket>` and salts
+the asset id; the name and ticker are display only and may repeat, so two
+tokens can share them and still be distinct assets. No issuer key or mutable
+metadata exists to trust afterwards. The registering key receives
+`initial_supply`. The result is permissionless discovery with the same derived,
+collision-resistant identity the closed set had.
 
 ### 5.4 Variants in consensus
 
-`NetworkParams` gained `variants: tuple[VariantParams, ...]`, with standard chess
-first and unchanged. As shipped (`config.py`), a variant is:
+`NetworkParams` retains `variants: tuple[VariantParams, ...]` for the built-in
+standard entry and legacy chains, but the shipped networks leave it empty: only
+standard chess is native. Every other variant, C960 included, is a
+`TokenRecord` in `State.tokens`. As shipped (`config.py`), a variant is:
 
 ```python
 @dataclass(frozen=True)
 class VariantParams:
-    name: str                 # "standard", "chess960"
-    rules: str                # "chess" | "chess960" -- validated
+    name: str                 # "standard" or a token's "token-0042"
+    ticket: str | None        # 16-hex or four-digit serial; None for standard
+    rules: str                # PGN Rules tag; validated against the ruleset
+    ruleset: str | None       # registered ruleset; None means the variant's own
     asset: str | None         # asset id hex; None for standard, which mints ZQWX
-    symbol: str               # "C960"
-    display_name: str
+    symbol: str               # user-chosen ticker; display only, may repeat
+    display_name: str         # user-chosen name; display only, may repeat
     decimals: int
     subsidy: int
     halving_interval: int | None
     max_supply: int | None    # set together with halving_interval
     min_plies: int
     max_games_per_block: int  # declared and served, not consulted by consensus
-    opening_book: str         # book id, or "none"
+    opening_book: str         # book id, or "none"; token lines default to token-<ticket>
+    openings: tuple[tuple[str, ...], ...]  # token SAN lines; empty uses the book when it fits
 ```
+
+A chain-registered token lives in `State.tokens`, keyed by its internal variant
+name `token-<ticket>`; a block resolves a proof against the standard entry plus
+that registry, while balances and pools use the token id. C960 is installed by
+the genesis document as `token-0960`, exactly like any other custom token.
 
 Rules that follow from it:
 
@@ -907,10 +939,13 @@ receipts for producing them.
 - **EVM compatibility.** No `eth_*` endpoints, no chain-id registration, no
   ERC-20 or Solidity on the SCCP node, no MetaMask network switch. The one
   Solidity file is the counterparty HTLC contract and it runs on Ethereum.
-- **Permissionless asset issuance.** No `create_asset`, no ICO and no token
-  sale. Assets are protocol-defined; the only pre-issued supply is the fixed,
-  public genesis allocation described in
-  [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
+- **A general token or smart-contract platform.** No `create_asset`, no ICO, no
+  token sale and no issuer-controlled asset. `register_token` adds one immutable
+  variant token that names an existing ruleset and fixes its issuance in the
+  transaction; there is no token code, admin key or mutable metadata. The only
+  supply created outside proofs is the fixed, public genesis allocation
+  described in [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents) plus a
+  registration's `initial_supply`, which is minted under the same cap.
 - **A custodial bridge or deposit addresses.** The HTLC path needs neither. An
   exchange that wants to list ZQWX integrates against the same transactions.
 - **An AMM over external assets before `wETH`.** No oracle, and no wrapped asset
@@ -937,7 +972,7 @@ column says otherwise.
 | 7 | First bridge chains | Ethereum mainnet / an L2 | mainnet plus one L2 (Base), because claim gas dominates small trades | open; the mapping that exists is devnet→Anvil 31337, testnet→Sepolia 11155111, mainnet→Ethereum 1 |
 | 8 | Timelock margin | 10 / 20 blocks on mainnet | 20 blocks (~200 min), 24 on devnet/testnet | yes, `sccp_margin` per environment |
 | 9 | Order transport | node REST / gossip | REST first, gossip later, same signed body | yes, REST only |
-| 10 | Symbols | ticker collision handling | symbol is display only; the token list is keyed by asset id | yes, `lib/assets.ts` |
+| 10 | Symbols | ticker collision handling | symbol and display name are display only; the token list is keyed by asset id and duplicate names and tickers are allowed | yes, `lib/assets.ts` |
 
 ## 13. References
 

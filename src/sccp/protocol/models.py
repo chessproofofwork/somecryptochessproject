@@ -33,11 +33,13 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from sccp.config import (
+    DEFAULT_TIME_CONTROL_DELAY_MS,
     DEFAULT_TIME_CONTROL_INCREMENT_MS,
     DEFAULT_TIME_CONTROL_INITIAL_MS,
     MAX_CLOCK_MS,
     MAX_PLIES_LIMIT,
     STANDARD_VARIANT,
+    TimeControlPeriod,
 )
 from sccp.errors import ProtocolError
 
@@ -105,6 +107,7 @@ class TxType(StrEnum):
     HTLC_LOCK = "htlc_lock"
     HTLC_CLAIM = "htlc_claim"
     HTLC_REFUND = "htlc_refund"
+    REGISTER_TOKEN = "register_token"
 
 
 class Transaction(ProtocolModel):
@@ -131,23 +134,59 @@ class Transaction(ProtocolModel):
 class TimeControl(ProtocolModel):
     """One fixed chess clock control (PROTOCOL.md section 8.4).
 
-    Both values are whole seconds expressed in milliseconds, so the PGN
-    ``TimeControl`` tag is lossless. The complete ``initial + increment * plies``
-    bound is checked against the network's ``max_plies`` by
+    All values are whole seconds expressed in milliseconds, so the PGN
+    ``TimeControl`` tag is lossless. A control uses an **increment** (Fischer:
+    time is added after each move), a **delay** (the first ``delay_ms`` of each
+    turn is free), or neither (**sudden death**). Increment and delay are
+    mutually exclusive. The complete ``initial + increment * plies`` bound is
+    checked against the network's ``max_plies`` by
     :func:`sccp.protocol.clocks.validate_time_control`; this model enforces the
     protocol-wide worst case as soon as it is constructed.
     """
 
     initial_ms: int = Field(ge=1_000, multiple_of=1_000)
-    increment_ms: int = Field(ge=0, multiple_of=1_000)
+    increment_ms: int = Field(default=0, ge=0, multiple_of=1_000)
+    delay_ms: int = Field(
+        default=DEFAULT_TIME_CONTROL_DELAY_MS, ge=0, le=MAX_CLOCK_MS, multiple_of=1_000
+    )
+    first_period_moves: int | None = Field(default=None, ge=1, le=MAX_PLIES_LIMIT // 2)
+    """Full moves in the first period when ``periods`` is non-empty."""
+    periods: tuple[TimeControlPeriod, ...] = ()
+    """Later periods of a FIDE-style sudden-death control, in order.
+
+    Each period adds its ``initial_ms`` to both clocks when it starts and then
+    uses its own increment or delay. An empty tuple is the ordinary
+    single-period control, where the base fields last the whole game.
+    """
 
     @model_validator(mode="after")
     def _check_worst_case(self) -> TimeControl:
-        if self.initial_ms + self.increment_ms * MAX_PLIES_LIMIT > MAX_CLOCK_MS:
+        if self.increment_ms and self.delay_ms:
+            raise ProtocolError("a time control uses an increment or a delay, not both")
+        if bool(self.periods) != (self.first_period_moves is not None):
+            raise ProtocolError(
+                "a multi-period time control needs first_period_moves and at least one period"
+            )
+        total_moves = self.first_period_moves or (MAX_PLIES_LIMIT // 2)
+        added = 0
+        increments = [self.increment_ms]
+        for period in self.periods:
+            if period.increment_ms and period.delay_ms:
+                raise ProtocolError("a time control uses an increment or a delay, not both")
+            total_moves += period.moves
+            added += period.initial_ms
+            increments.append(period.increment_ms)
+        if total_moves > MAX_PLIES_LIMIT // 2:
+            raise ProtocolError(
+                f"time control periods cover {total_moves} moves, "
+                f"above the {MAX_PLIES_LIMIT // 2}-move protocol ceiling"
+            )
+        worst_case = self.initial_ms + added + max(increments) * MAX_PLIES_LIMIT
+        if worst_case > MAX_CLOCK_MS:
             raise ProtocolError(
                 "time control exceeds MAX_CLOCK_MS for max_plies="
-                f"{MAX_PLIES_LIMIT}: {self.initial_ms} + {self.increment_ms} * "
-                f"{MAX_PLIES_LIMIT} > {MAX_CLOCK_MS}"
+                f"{MAX_PLIES_LIMIT}: {self.initial_ms} + {added} + "
+                f"{max(increments)} * {MAX_PLIES_LIMIT} > {MAX_CLOCK_MS}"
             )
         return self
 
@@ -253,6 +292,7 @@ class MatchCertificate(ProtocolModel):
         default_factory=lambda: TimeControl(
             initial_ms=DEFAULT_TIME_CONTROL_INITIAL_MS,
             increment_ms=DEFAULT_TIME_CONTROL_INCREMENT_MS,
+            delay_ms=DEFAULT_TIME_CONTROL_DELAY_MS,
         )
     )
     start_signatures: dict[Color, LedgerSignatureHex] = Field(default_factory=dict)

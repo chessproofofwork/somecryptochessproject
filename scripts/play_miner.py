@@ -1469,8 +1469,12 @@ def format_clock(ms: int) -> str:
 
 
 def _control_text(control: TimeControl) -> str:
-    """``10+0``, with the units spelled out for a player rather than a bot."""
-    return f"{control.initial_ms // 60_000}+{control.increment_ms // 1_000} per side"
+    """``10+0``, ``10+5`` or ``10+5d``, with the units spelled out for a player."""
+    minutes, seconds = divmod(control.initial_ms // 1_000, 60)
+    initial = str(minutes) if seconds == 0 else f"{minutes}:{seconds:02d}"
+    if control.delay_ms:
+        return f"{initial}+{control.delay_ms // 1_000}d per side"
+    return f"{initial}+{control.increment_ms // 1_000} per side"
 
 
 def _clock_line(view: MatchView) -> str:

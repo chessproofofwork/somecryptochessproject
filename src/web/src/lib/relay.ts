@@ -110,7 +110,7 @@ export interface RelayStatus {
   round: number | null;
   round_seconds: number;
   timed: boolean;
-  time_control: { initial_ms: number; increment_ms: number };
+  time_control: { initial_ms: number; increment_ms: number; delay_ms?: number };
   witness: string | null;
 }
 

@@ -7,6 +7,86 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **A custom token has a user-chosen name and ticker, and names may repeat.** A
+  `register_token` claims a unique `ticket`, but the ticket is a registration
+  serial, not a ticker: it derives the internal variant `token-<ticket>` and
+  salts the token id while `display_name` and `symbol` are display metadata. A
+  ticket is 16 lowercase hex characters (a 2^64 namespace); four-digit short
+  tickets remain valid for C960 and pre-existing registrations. `sccp dex
+  register-token` takes `--name` and `--ticker` alongside `--ticket` and
+  generates a 16-hex ticket when `--ticket` is omitted. Two tokens may share both
+  a name and a ticker and remain distinct because their ids differ; a lookup by
+  a shared name or ticker is reported as ambiguous.
+- **Token clocks support increment, delay and sudden death.** A custom token can
+  now declare `time_control_delay_ms` alongside the initial time and increment.
+  Delay is free time at the start of every turn (`300+5d` in a PGN), increment
+  adds time after every move (`300+5`), and `300+0` is sudden death; a control
+  uses one bonus mode or the other, never both. `sccp dex register-token`
+  accepts a single `--time-control 300+5d` tag as well as the three millisecond
+  flags, and the node API, certificate payload, clock receipts, timeout
+  arithmetic, relay, miners and explorer all carry the chosen control.
+- **FIDE-style multi-period clocks count opening plies without charging them.**
+  A token can declare `time_control_first_moves` and later `time_control_periods`
+  (for example `40/5400+0:20/1800+30`). Each period's initial time is added to
+  both clocks at its ply boundary, not used to reset them. The certified opening
+  advances the board and can unlock a period, but neither seat pays for those
+  moves; the relay starts the first timed turn with the opening's accumulated
+  period time already credited. Clock evidence remains a suffix: its first
+  signed receipt anchors both absolute clocks, while every later receipt is
+  checked against the period in force at its total board ply.
+- **A registered token can carry its own opening book, with a verifiable
+  fallback.** Lines declared at registration are canonicalised to SAN and
+  selected like a packaged book. A line that does not replay legally from the
+  token ruleset's start is replaced by the ruleset's fixed initial position with
+  `book_version = "none"`, `line_id = 0` and no moves, so relay, miner and
+  transcript verification agree on the same deterministic opening.
+
+### Changed
+
+- **C960 is now an ordinary custom token, not a built-in asset.** `NetworkParams`
+  no longer ships a `chess960` variant: only native standard chess is built in.
+  Every genesis document registers C960 as a normal `TokenRecord` with ticket
+  `0960`, display name `Chess960`, ticker `C960` and the `chess960` ruleset, so
+  its internal variant is `token-0960` and its asset id is derived from the same
+  `{kind, ticket, decimals, ruleset}` hash as every other registration. Balances,
+  pools, transfers, miners, relays, witnesses and the explorer therefore use the
+  custom-token path for C960; the genesis records are re-pinned and the CLI/deploy
+  commands use `--variant token-0960` and the 64-hex C960 asset id on DEX
+  commands.
+- **The mainnet 2-bps premine moved to a fresh key before launch.** The single
+  `sccp-bootstrap` tranche in `genesis/mainnet-premine.json` now pays to
+  `sccp1qxl7upkxas5hhz5enrt5ydmzlymzzw58umrncd5pgtt9795pshtvqchkd0n`, and
+  `MAINNET.genesis_hash` is
+  `e7949a3123a042ffcd683bfa6cd8beab0507b51f99b882a4dc7fe0646bf5d628` after the
+  C960 token record was added at height 0. The keyfile and its passphrase are
+  local only under `.secrets/`, which is git-ignored; no private key material is
+  committed.
+
+## [0.37.0] - 2026-11-21
+
+### Changed
+
+- **Mainnet's bootstrap grant is 2 basis points instead of 1.** The single
+  `sccp-bootstrap` tranche in `genesis/mainnet-premine.json` now allocates
+  4,200 ZQWX (2 bps of the 21,000,000 ZQWX cap), and
+  `scripts/make_genesis.py` pins the manifest total to exactly two basis points.
+  The initial standard-chess k=3 roster - four miners at 500 ZQWX plus three
+  clock witnesses at 50 ZQWX - needs 2,150 ZQWX, leaving 2,050 for fees,
+  slashed-bond top-ups and additional miners. It is a bootstrap budget, not
+  enough to fund full target throughput at k=3; the roster is expected to grow
+  from mined subsidies and fees.
+- **Mainnet launches standard-chess mining first.** C960 remains mined-only and
+  has no genesis allocation. A later C960 launch is not a way to avoid holding
+  ZQWX: C960 operators still need native coins for transaction fees and the
+  10-ZQWX timeout bond.
+- **The mainnet genesis hash is re-pinned.** `genesis/mainnet.json` now carries
+  4,200 ZQWX and `MAINNET.genesis_hash` is
+  `81220e4bdc81b01651cd1b87bd6aa1c83bea6d9caaf16e1d88658110423a670a`. The
+  README, `PROTOCOL.md`, `BIG_PICTURE.md` and `WHITEPAPER.md` document the
+  allocation and the standard-first launch plan.
+
 ## [0.36.6] - 2026-11-21
 
 ### Added

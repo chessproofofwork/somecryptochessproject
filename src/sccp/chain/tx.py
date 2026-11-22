@@ -17,13 +17,37 @@ spendable balance and never from a bond.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from enum import StrEnum
 from typing import NoReturn
 
+from pydantic import ValidationError
+
 from sccp.chain import dex
-from sccp.chain.state import HtlcRecord, HtlcStatus, Pool, State, epoch_of, first_matchable_epoch
-from sccp.config import NetworkParams
+from sccp.chain.state import (
+    HtlcRecord,
+    HtlcStatus,
+    Pool,
+    State,
+    TokenRecord,
+    epoch_of,
+    first_matchable_epoch,
+)
+from sccp.chess.rulesets import canonical_opening_line, ruleset_for
+from sccp.config import (
+    DEFAULT_TIME_CONTROL_DELAY_MS,
+    DEFAULT_TIME_CONTROL_INCREMENT_MS,
+    DEFAULT_TIME_CONTROL_INITIAL_MS,
+    TOKEN_TICKET_PATTERN,
+    NetworkParams,
+    TimeControlPeriod,
+    VariantParams,
+    derive_token_asset_id,
+    derive_variant_asset_id,
+    token_variant_name,
+    units_per_coin,
+)
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import (
     HYBRID_PUBLIC_KEY_SIZE,
@@ -45,6 +69,12 @@ from sccp.serialization import Domain, canonical_json, domain_hex, normalize
 
 MAX_SAFE_TEXT: int = 256
 """Upper bound for the free-text fields a payload may carry."""
+
+MAX_TOKEN_AMOUNT: int = 2**63 - 1
+"""Largest integer a token field may carry, so no ledger arithmetic overflows."""
+
+TOKEN_NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}\Z")
+"""Variant and ruleset names are lowercase slugs; they appear in URLs and CLIs."""
 
 
 class TxFailure(StrEnum):
@@ -229,6 +259,24 @@ def _field_text(payload: Mapping[str, object], key: str, *, required: bool = Tru
     return value
 
 
+def _field_token_name(payload: Mapping[str, object], key: str) -> str:
+    value = _field_text(payload, key)
+    assert value is not None
+    if TOKEN_NAME_PATTERN.fullmatch(value) is None:
+        _fail(
+            TxFailure.SCHEMA,
+            f"payload field {key!r} must be a lowercase slug of 1-32 letters, digits, '-' or '_'",
+        )
+    return value
+
+
+def _field_optional_int(payload: Mapping[str, object], key: str, *, minimum: int = 1) -> int | None:
+    """An optional positive integer; absent means the protocol default."""
+    if key not in payload:
+        return None
+    return _field_int(payload, key, minimum=minimum)
+
+
 def _field_address(payload: Mapping[str, object], key: str, params: NetworkParams) -> str:
     value = _field_text(payload, key)
     if value is None or not validate_address(value, params):
@@ -306,7 +354,7 @@ def _require_trade_funds(
         )
 
 
-def _field_trade_asset(payload: Mapping[str, object], key: str, params: NetworkParams) -> str:
+def _field_trade_asset(payload: Mapping[str, object], key: str, state: State) -> str:
     """Read a pool side: an omitted key is native ZQWX, a value is an asset id."""
     value = payload.get(key)
     if value is None:
@@ -316,7 +364,7 @@ def _field_trade_asset(payload: Mapping[str, object], key: str, params: NetworkP
     if not isinstance(value, str) or not value:
         _fail(TxFailure.SCHEMA, f"payload field {key!r} must be an asset id")
     try:
-        variant = params.variant_for_asset(value)
+        variant = state.variant_for_asset(value)
     except ConfigError as exc:
         _fail(TxFailure.TYPE, str(exc))
     if variant.native:
@@ -367,6 +415,30 @@ ALLOWED: dict[TxType, frozenset[str]] = {
     ),
     TxType.HTLC_CLAIM: frozenset({"htlc_id", "preimage", "public_key"}),
     TxType.HTLC_REFUND: frozenset({"htlc_id", "public_key"}),
+    TxType.REGISTER_TOKEN: frozenset(
+        {
+            "ticket",
+            "variant",
+            "ruleset",
+            "symbol",
+            "display_name",
+            "openings",
+            "decimals",
+            "initial_supply",
+            "subsidy",
+            "halving_interval",
+            "max_supply",
+            "min_plies",
+            "max_games_per_block",
+            "opening_book",
+            "time_control_initial_ms",
+            "time_control_increment_ms",
+            "time_control_delay_ms",
+            "time_control_first_moves",
+            "time_control_periods",
+            "public_key",
+        }
+    ),
 }
 """Exactly which payload keys each type may carry."""
 
@@ -384,7 +456,7 @@ def _validate_transfer(params: NetworkParams, state: State, tx: Transaction, hei
     if not isinstance(asset, str) or not asset:
         _fail(TxFailure.SCHEMA, "payload field 'asset' must be an asset id")
     try:
-        variant = params.variant_for_asset(asset)
+        variant = state.variant_for_asset(asset)
     except ConfigError as exc:
         _fail(TxFailure.TYPE, str(exc))
     if variant.native:
@@ -408,7 +480,7 @@ def _validate_register(params: NetworkParams, state: State, tx: Transaction, hei
     if not isinstance(variant, str) or not variant:
         _fail(TxFailure.SCHEMA, "payload field 'variant' must be a variant name")
     try:
-        params.variant(variant)
+        state.variant(variant)
     except ConfigError as exc:
         _fail(TxFailure.TYPE, str(exc))
     if bond < params.min_bond:
@@ -429,6 +501,233 @@ def _validate_register(params: NetworkParams, state: State, tx: Transaction, hei
         _fail(TxFailure.REGISTRATION, f"{tx.sender} is banned until height {account.banned_until}")
     _require_balance(state, tx.sender, bond + tx.fee, "the registration bond")
     assert endpoint is not None and engine is not None
+
+
+def _field_ticket(payload: Mapping[str, object]) -> str:
+    """A ticket is a unique registration serial: 16-hex or a short four-digit id."""
+    ticket = payload.get("ticket")
+    if not isinstance(ticket, str) or re.fullmatch(TOKEN_TICKET_PATTERN, ticket) is None:
+        _fail(
+            TxFailure.SCHEMA,
+            "payload field 'ticket' must be four digits or 16 lowercase hex characters",
+        )
+    return ticket
+
+
+def _field_openings(
+    payload: Mapping[str, object], ruleset_name: str
+) -> tuple[tuple[str, ...], ...]:
+    """Token opening lines, canonicalised from SAN or UCI by the ruleset."""
+    raw = payload.get("openings")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or len(raw) > 256:
+        _fail(TxFailure.SCHEMA, "payload field 'openings' must be an array of at most 256 lines")
+    lines: list[tuple[str, ...]] = []
+    for index, line in enumerate(raw):
+        if isinstance(line, str):
+            tokens: list[str] | str = line
+        elif isinstance(line, list) and all(isinstance(move, str) for move in line):
+            tokens = line
+        else:
+            _fail(
+                TxFailure.SCHEMA,
+                f"opening {index} must be a SAN string or an array of SAN moves",
+            )
+        try:
+            canonical = canonical_opening_line(ruleset_name, tokens)
+        except ConfigError as exc:
+            _fail(TxFailure.TYPE, f"opening {index}: {exc}")
+        if len(canonical) > 12:
+            _fail(TxFailure.TYPE, f"opening {index} has more than 12 plies")
+        lines.append(canonical)
+    return tuple(lines)
+
+
+def _field_time_control_periods(
+    payload: Mapping[str, object],
+) -> tuple[int | None, tuple[TimeControlPeriod, ...]]:
+    """Parse the FIDE-style later periods carried by a token registration."""
+    first_moves = (
+        _field_int(payload, "time_control_first_moves", minimum=1)
+        if "time_control_first_moves" in payload
+        else None
+    )
+    raw = payload.get("time_control_periods")
+    if raw is None:
+        periods: tuple[TimeControlPeriod, ...] = ()
+    elif not isinstance(raw, list) or len(raw) > 64:
+        _fail(
+            TxFailure.SCHEMA,
+            "payload field 'time_control_periods' must be an array of at most 64 periods",
+        )
+    else:
+        parsed: list[TimeControlPeriod] = []
+        for index, period in enumerate(raw):
+            if not isinstance(period, Mapping):
+                _fail(TxFailure.SCHEMA, f"time-control period {index} must be an object")
+            try:
+                parsed.append(TimeControlPeriod.model_validate(period))
+            except ValidationError as exc:
+                detail = "; ".join(error["msg"] for error in exc.errors())
+                _fail(TxFailure.SCHEMA, f"time-control period {index}: {detail}")
+        periods = tuple(parsed)
+    return first_moves, periods
+
+
+def _parse_token_registration(
+    params: NetworkParams, payload: Mapping[str, object]
+) -> tuple[VariantParams, int]:
+    """Build the token a ``register_token`` payload describes.
+
+    Both validation and application call this function, so the definition that
+    is checked is byte-for-byte the definition that is stored. A ticketed token
+    uses the ticket as a unique registration serial and keeps the user-chosen
+    name and ticker as display metadata; the legacy name-based payload is still
+    accepted for pre-ticket chains.
+    """
+    symbol: str | None
+    display_name: str | None
+    if "ticket" in payload:
+        ticket = _field_ticket(payload)
+        if "variant" in payload:
+            _fail(
+                TxFailure.SCHEMA,
+                "a ticketed token derives its internal variant name from the ticket; "
+                "remove 'variant'",
+            )
+        name = token_variant_name(ticket)
+        symbol = _field_text(payload, "symbol")
+        display_name = _field_text(payload, "display_name")
+    else:
+        ticket = None
+        name = _field_token_name(payload, "variant")
+        symbol = _field_text(payload, "symbol")
+        display_name = _field_text(payload, "display_name")
+    assert symbol is not None and display_name is not None
+    ruleset_name = _field_token_name(payload, "ruleset")
+    try:
+        ruleset = ruleset_for(ruleset_name)
+    except ConfigError as exc:
+        _fail(TxFailure.TYPE, str(exc))
+    openings = _field_openings(payload, ruleset.name)
+    first_period_moves, periods = _field_time_control_periods(payload)
+
+    initial_supply = (
+        _field_int(payload, "initial_supply", minimum=0) if "initial_supply" in payload else 0
+    )
+    subsidy = _field_int(payload, "subsidy", minimum=1)
+    decimals = _field_int(payload, "decimals", minimum=0) if "decimals" in payload else 8
+    halving_interval = _field_optional_int(payload, "halving_interval")
+    max_supply = _field_optional_int(payload, "max_supply")
+    min_plies = (
+        _field_int(payload, "min_plies", minimum=1) if "min_plies" in payload else params.min_plies
+    )
+    max_games_per_block = (
+        _field_int(payload, "max_games_per_block", minimum=1)
+        if "max_games_per_block" in payload
+        else 1
+    )
+    opening_book = (
+        _field_text(payload, "opening_book")
+        if "opening_book" in payload
+        else (f"token-{ticket}" if ticket is not None and openings else params.book_version)
+    )
+    initial_ms = (
+        _field_int(payload, "time_control_initial_ms", minimum=1)
+        if "time_control_initial_ms" in payload
+        else DEFAULT_TIME_CONTROL_INITIAL_MS
+    )
+    increment_ms = (
+        _field_int(payload, "time_control_increment_ms", minimum=0)
+        if "time_control_increment_ms" in payload
+        else DEFAULT_TIME_CONTROL_INCREMENT_MS
+    )
+    delay_ms = (
+        _field_int(payload, "time_control_delay_ms", minimum=0)
+        if "time_control_delay_ms" in payload
+        else DEFAULT_TIME_CONTROL_DELAY_MS
+    )
+    for label, value in (
+        ("initial_supply", initial_supply),
+        ("subsidy", subsidy),
+        ("max_supply", max_supply),
+    ):
+        if value is not None and value > MAX_TOKEN_AMOUNT:
+            _fail(TxFailure.TYPE, f"{label} exceeds the {MAX_TOKEN_AMOUNT}-unit ceiling")
+    if min_plies > params.max_plies:
+        _fail(
+            TxFailure.TYPE,
+            f"min_plies {min_plies} exceeds the network's max_plies {params.max_plies}",
+        )
+    if max_supply is not None and initial_supply > max_supply * units_per_coin(decimals):
+        _fail(
+            TxFailure.TYPE,
+            f"initial_supply {initial_supply} exceeds the {max_supply}-coin supply cap",
+        )
+
+    asset = (
+        derive_token_asset_id(ticket, decimals, ruleset_name)
+        if ticket is not None
+        else derive_variant_asset_id(name, symbol, decimals, ruleset_name)
+    )
+    try:
+        token = VariantParams(
+            name=name,
+            ticket=ticket,
+            rules=ruleset.pgn_rules,
+            ruleset=ruleset_name,
+            asset=asset,
+            symbol=symbol,
+            display_name=display_name,
+            decimals=decimals,
+            subsidy=subsidy,
+            halving_interval=halving_interval,
+            max_supply=max_supply,
+            min_plies=min_plies,
+            max_games_per_block=max_games_per_block,
+            opening_book=opening_book or params.book_version,
+            time_control_initial_ms=initial_ms,
+            time_control_increment_ms=increment_ms,
+            time_control_delay_ms=delay_ms,
+            time_control_first_moves=first_period_moves,
+            time_control_periods=periods,
+            openings=openings,
+        )
+    except ValidationError as exc:
+        detail = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'token'}: {error['msg']}"
+            for error in exc.errors()
+        )
+        _fail(TxFailure.SCHEMA, f"invalid token parameters: {detail}")
+    return token, initial_supply
+
+
+def _validate_register_token(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    """Validate a permissionless token registration.
+
+    A registration fixes every consensus-relevant token parameter at creation
+    time. There is no issuer key and no later mutation: the derived asset id
+    commits to the unique ticket, decimals and ruleset, so a transfer or a DEX
+    pool names exactly one token definition while display names and tickers may
+    repeat.
+    """
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.REGISTER_TOKEN])
+    token, _ = _parse_token_registration(params, tx.payload)
+    if token.ticket is not None and token.ticket in state.token_tickets():
+        _fail(TxFailure.TYPE, f"ticket {token.ticket} is already registered")
+    if token.name in state.variant_names():
+        _fail(
+            TxFailure.TYPE,
+            f"variant {token.name!r} is already known; a token's variant name must be new",
+        )
+    if any(candidate.asset == token.asset for candidate in state.params.variants) or any(
+        existing.variant.asset == token.asset for existing in state.tokens.values()
+    ):
+        _fail(TxFailure.TYPE, f"asset id {token.asset} is already registered")
+    _require_balance(state, tx.sender, tx.fee, "the token registration fee")
 
 
 def _validate_register_witness(
@@ -546,8 +845,8 @@ def _validate_create_pool(
     params: NetworkParams, state: State, tx: Transaction, height: int
 ) -> None:
     _check_unknown_keys(tx.payload, ALLOWED[TxType.CREATE_POOL])
-    asset_a = _field_trade_asset(tx.payload, "asset_a", params)
-    asset_b = _field_trade_asset(tx.payload, "asset_b", params)
+    asset_a = _field_trade_asset(tx.payload, "asset_a", state)
+    asset_b = _field_trade_asset(tx.payload, "asset_b", state)
     amount_a = _field_int(tx.payload, "amount_a", minimum=1)
     amount_b = _field_int(tx.payload, "amount_b", minimum=1)
     if asset_a == asset_b:
@@ -603,7 +902,7 @@ def _validate_swap(params: NetworkParams, state: State, tx: Transaction, height:
     pool = state.pools.get(pool_id)
     if pool is None:
         _fail(TxFailure.TYPE, f"unknown pool {pool_id}")
-    asset_in = _field_trade_asset(tx.payload, "asset_in", params)
+    asset_in = _field_trade_asset(tx.payload, "asset_in", state)
     if asset_in not in (pool.asset_a, pool.asset_b):
         _fail(TxFailure.TYPE, f"{asset_in or 'ZQWX'} is not a side of pool {pool_id}")
     amount_in = _field_int(tx.payload, "amount_in", minimum=1)
@@ -655,7 +954,7 @@ def _validate_htlc_lock(params: NetworkParams, state: State, tx: Transaction, he
         )
     _field_address(tx.payload, "beneficiary", params)
     amount = _field_int(tx.payload, "amount", minimum=1)
-    asset = _field_trade_asset(tx.payload, "asset", params)
+    asset = _field_trade_asset(tx.payload, "asset", state)
     _require_trade_funds(state, tx.sender, asset, amount, tx.fee, "the htlc lock")
 
 
@@ -718,6 +1017,7 @@ VALIDATORS = {
     TxType.HTLC_LOCK: _validate_htlc_lock,
     TxType.HTLC_CLAIM: _validate_htlc_claim,
     TxType.HTLC_REFUND: _validate_htlc_refund,
+    TxType.REGISTER_TOKEN: _validate_register_token,
 }
 """Handlers for every type that :func:`validate_transaction` owns outright."""
 
@@ -753,6 +1053,22 @@ def _apply_register(state: State, tx: Transaction, height: int) -> None:
     account.registered_until_epoch = (
         epoch_of(height, state.params) + state.params.registration_epochs
     )
+
+
+def _apply_register_token(state: State, tx: Transaction, height: int) -> None:
+    token, initial_supply = _parse_token_registration(state.params, tx.payload)
+    record = TokenRecord(
+        name=token.name,
+        variant=token,
+        owner=tx.sender,
+        registered_at_height=height,
+        initial_supply=initial_supply,
+    )
+    state.tokens[token.name] = record
+    if initial_supply:
+        assert token.asset is not None
+        state.credit_asset(tx.sender, token.asset, initial_supply)
+        state.minted_assets[token.asset] = state.minted_assets.get(token.asset, 0) + initial_supply
 
 
 def _apply_register_witness(state: State, tx: Transaction, height: int) -> None:
@@ -844,8 +1160,8 @@ def _apply_slash_evidence(state: State, tx: Transaction, height: int) -> None:
 
 
 def _apply_create_pool(state: State, tx: Transaction, height: int) -> None:
-    asset_a = _field_trade_asset(tx.payload, "asset_a", state.params)
-    asset_b = _field_trade_asset(tx.payload, "asset_b", state.params)
+    asset_a = _field_trade_asset(tx.payload, "asset_a", state)
+    asset_b = _field_trade_asset(tx.payload, "asset_b", state)
     amount_a = _field_int(tx.payload, "amount_a", minimum=1)
     amount_b = _field_int(tx.payload, "amount_b", minimum=1)
     asset_a, amount_a, asset_b, amount_b = dex.normalize_pair(asset_a, amount_a, asset_b, amount_b)
@@ -902,7 +1218,7 @@ def _apply_remove_liquidity(state: State, tx: Transaction, height: int) -> None:
 def _apply_swap(state: State, tx: Transaction, height: int) -> None:
     pool_id = _field_digest(tx.payload, "pool_id")
     pool = state.pools[pool_id]
-    asset_in = _field_trade_asset(tx.payload, "asset_in", state.params)
+    asset_in = _field_trade_asset(tx.payload, "asset_in", state)
     amount_in = _field_int(tx.payload, "amount_in", minimum=1)
     if asset_in == pool.asset_a:
         reserve_in, reserve_out = pool.reserve_a, pool.reserve_b
@@ -922,7 +1238,7 @@ def _apply_swap(state: State, tx: Transaction, height: int) -> None:
 
 def _apply_htlc_lock(state: State, tx: Transaction, height: int) -> None:
     lock_id = htlc_id(tx.sender, tx.nonce)
-    asset = _field_trade_asset(tx.payload, "asset", state.params)
+    asset = _field_trade_asset(tx.payload, "asset", state)
     amount = _field_int(tx.payload, "amount", minimum=1)
     _debit_trade_asset(state, tx.sender, asset, amount)
     state.htlcs[lock_id] = HtlcRecord(
@@ -973,6 +1289,7 @@ APPLIERS = {
     TxType.HTLC_LOCK: _apply_htlc_lock,
     TxType.HTLC_CLAIM: _apply_htlc_claim,
     TxType.HTLC_REFUND: _apply_htlc_refund,
+    TxType.REGISTER_TOKEN: _apply_register_token,
 }
 """State transitions for every accepted transaction type."""
 

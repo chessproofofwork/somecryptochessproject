@@ -206,6 +206,8 @@ services:
       - /stack/keys/witness-2.key
       - --relay
       - http://relay:8646
+      - --node
+      - http://node:8645
       - --host
       - 0.0.0.0
       - --port
@@ -250,6 +252,8 @@ services:
       - /stack/keys/witness-3.key
       - --relay
       - http://relay:8646
+      - --node
+      - http://node:8645
       - --host
       - 0.0.0.0
       - --port
@@ -479,7 +483,7 @@ services:
     restart: unless-stopped
 
   # The Chess960 pair. Stockfish runs with UCI_Chess960 because the miner passes
-  # --variant chess960 to open_engine; python-chess turns the option on from each
+  # --variant token-0960 to open_engine; python-chess turns the option on from each
   # board (it owns the option), and the relay selects the start position from the
   # epoch beacon, so both seats rebuild the same board from the certificate.
   miner-3:

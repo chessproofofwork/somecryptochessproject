@@ -241,6 +241,18 @@ def test_play_game_uses_the_token_time_control() -> None:
     )
     assert '[TimeControl "180+2"]' in game.pgn
 
+    delayed = standard.model_copy(
+        update={"time_control_increment_ms": 0, "time_control_delay_ms": 3_000}
+    )
+    params = NetworkParams(**{**DEVNET.model_dump(), "variants": [delayed.model_dump()]})
+    game = play_game(
+        ScriptedEngine(["f3", "g4"]),
+        ScriptedEngine(["e5", "Qh4#"]),
+        params=params,
+        limit=LIMIT,
+    )
+    assert '[TimeControl "180+3d"]' in game.pgn
+
 
 def test_resigned_game_pgn_validates() -> None:
     line = OpeningLine("v1", 0, "single move", ("e4",))

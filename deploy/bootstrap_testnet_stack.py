@@ -38,7 +38,7 @@ from sccp.chain.genesis import faucet_keypair, zero_address
 from sccp.chain.mempool import Mempool
 from sccp.chain.state import epoch_start_height
 from sccp.chess.engines import EngineError, engine_fingerprint
-from sccp.config import TESTNET, NetworkParams, coins_to_units
+from sccp.config import C960_VARIANT, TESTNET, NetworkParams, coins_to_units
 from sccp.crypto.pq import HybridKeypair
 from sccp.crypto.wallet import load_wallet
 from sccp.errors import SccpError
@@ -210,7 +210,8 @@ def load_stack(directory: Path) -> tuple[BootstrapMiner, ...]:
         assert isinstance(keyfile, str)
         assert isinstance(nonce_secret, str)
         try:
-            TESTNET.variant(variant)
+            if variant != C960_VARIANT:
+                TESTNET.variant(variant)
         except SccpError as exc:
             raise BootstrapError(f"{name}: {exc}") from exc
         try:

@@ -818,6 +818,43 @@ def test_node_run_serves_the_app(data_dir: Path, monkeypatch: pytest.MonkeyPatch
     assert isinstance(served["app"], FastAPI)
 
 
+def test_node_run_forwards_approved_token_flags(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The node's approved registry is operator input, not a default guess."""
+    import uvicorn
+
+    from sccp.node.service import NodeService
+
+    seen: dict[str, Any] = {}
+    original = NodeService.open.__func__
+
+    def spy(cls: Any, network: Any, **kwargs: Any) -> NodeService:
+        seen["approved_tokens"] = kwargs.get("approved_tokens")
+        return original(cls, network, **kwargs)
+
+    monkeypatch.setattr(NodeService, "open", classmethod(spy))
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    token_id = "a" * 64
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "node",
+            "run",
+            "--network",
+            "devnet",
+            "--approved-token",
+            "0042",
+            "--approved-token",
+            token_id,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert seen["approved_tokens"] == ["0042", token_id]
+
+
 def test_node_run_validates_the_mining_options(data_dir: Path) -> None:
     missing = runner.invoke(
         app, ["--data-dir", str(data_dir), "node", "run", "--network", "devnet", "--mine"]
@@ -2089,16 +2126,128 @@ def test_devnet_up_accepts_only_mock_engines() -> None:
     assert "only supports --engines mock" in rejected.output
 
 
+def test_miner_register_accepts_a_chain_registered_token_variant(
+    data_dir: Path,
+    faucet_key: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A miner joins a token by naming the variant the chain registered.
+
+    ``NetworkParams`` only knows the built-ins; the registration validator in
+    ``WalletService`` resolves the local chain's token registry, so the CLI must
+    not reject the token name before that lookup runs.
+    """
+    from contextlib import contextmanager
+
+    import sccp.cli as cli
+    from sccp.chain.state import TokenRecord
+    from sccp.config import VariantParams, derive_variant_asset_id
+    from sccp.node.service import NodeService
+
+    token = VariantParams(
+        name="dragonchess",
+        rules="chess",
+        ruleset="standard",
+        asset=derive_variant_asset_id("dragonchess", "DRG", 8, "standard"),
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=50 * UNITS_PER_COIN,
+        min_plies=DEVNET.min_plies,
+    )
+    service = NodeService.open(DEVNET)
+    service.chain.state.tokens[token.name] = TokenRecord(
+        name=token.name,
+        variant=token,
+        owner=read_header(faucet_key).address,
+        registered_at_height=0,
+    )
+
+    @contextmanager
+    def local_node(_ctx: Any, _network: str | None) -> Any:
+        yield service
+
+    monkeypatch.setattr(cli, "_local_node", local_node)
+    try:
+        result = runner.invoke(
+            app,
+            [
+                "--data-dir",
+                str(data_dir),
+                "miner",
+                "register",
+                "--network",
+                "devnet",
+                "--key",
+                str(faucet_key),
+                "--endpoint",
+                "tcp://alice.example:8646",
+                "--bond",
+                "10",
+                "--variant",
+                token.name,
+            ],
+            env=env,
+        )
+    finally:
+        service.close()
+
+    assert result.exit_code == 0, result.output
+    assert recorded_node[-1].payload["variant"] == token.name
+    assert "registered" in result.stdout
+
+
 def test_dex_and_bridge_series_are_available_from_the_cli() -> None:
     dex = runner.invoke(app, ["dex", "--help"])
     assert dex.exit_code == 0, dex.output
-    for command in ("create-pool", "add-liquidity", "remove-liquidity", "swap", "quote"):
+    for command in (
+        "create-pool",
+        "add-liquidity",
+        "remove-liquidity",
+        "swap",
+        "quote",
+        "tokens",
+        "register-token",
+    ):
         assert command in dex.stdout
 
     bridge = runner.invoke(app, ["bridge", "--help"])
     assert bridge.exit_code == 0, bridge.output
     for command in ("sell", "take", "lock", "claim", "refund", "eth-lock", "eth-claim"):
         assert command in bridge.stdout
+
+
+def test_dex_tokens_names_the_ticket_and_the_display_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sccp.cli as cli
+
+    token_id = "a" * 64
+    document = {
+        "network": "devnet",
+        "tokens": [
+            {
+                "name": "token-0042",
+                "ticket": "0042",
+                "display_name": "Gold Coin",
+                "symbol": "GOLD",
+                "ruleset": "standard",
+                "asset": token_id,
+                "max_supply": 21_000_000,
+                "minted": 10,
+                "initial_supply": 10,
+                "subsidy": 5,
+                "decimals": 8,
+            }
+        ],
+    }
+    monkeypatch.setattr(cli, "_node_document", lambda *_args: document)
+    result = runner.invoke(app, ["dex", "tokens", "--node", "http://node.test:8645"])
+    assert result.exit_code == 0, result.output
+    assert (
+        f"Gold Coin [token-0042] (GOLD) ticket 0042 standard asset {token_id} cap 21000000 coins"
+    ) in result.stdout
 
 
 def test_sccp_network_env_selects_the_network_when_no_flag_is_given(
@@ -2154,7 +2303,7 @@ def test_dex_create_pool_builds_a_signed_transaction_from_the_node_account(
             "--amount-a",
             "50",
             "--asset-b",
-            "C960",
+            CHESS960_ASSET_ID,
             "--amount-b",
             "50",
             "--node",
@@ -2173,6 +2322,243 @@ def test_dex_create_pool_builds_a_signed_transaction_from_the_node_account(
     assert tx.payload["asset_b"] == CHESS960_ASSET_ID
     assert tx.payload["amount_a"] == 50 * UNITS_PER_COIN
     assert tx.payload["amount_b"] == 50 * UNITS_PER_COIN
+
+
+def test_dex_create_pool_accepts_a_registered_tokens_asset_id(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    """A token created after genesis is named by the id registration derived.
+
+    It cannot be in ``NetworkParams``, so the CLI must pass the 64-character id
+    through to the pool instead of rejecting it as an unknown variant.
+    """
+    from sccp.config import derive_variant_asset_id
+
+    key = tmp_path / "lp.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    asset = derive_variant_asset_id("dragonchess", "DRG", 8, "standard")
+    node_accounts[address] = {
+        **account_document(address, spendable=200 * UNITS_PER_COIN, nonce=7),
+        "assets": {asset: 50 * UNITS_PER_COIN},
+    }
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(tmp_path / "no-chain"),
+            "dex",
+            "create-pool",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--amount-a",
+            "50",
+            "--asset-b",
+            asset,
+            "--amount-b",
+            "50",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "create_pool"
+    assert len(payload["pool_id"]) == 64
+    assert len(recorded_node) == 1
+    tx = recorded_node[0]
+    assert tx.payload["asset_b"] == asset
+    assert tx.payload["amount_b"] == 50 * UNITS_PER_COIN
+
+
+def test_dex_register_token_builds_and_broadcasts_a_signed_registration(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    from sccp.config import derive_token_asset_id
+
+    key = tmp_path / "issuer.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    node_accounts[address] = account_document(address, spendable=200 * UNITS_PER_COIN, nonce=7)
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(tmp_path / "no-chain"),
+            "dex",
+            "register-token",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--ticket",
+            "0042",
+            "--name",
+            "Gold Coin",
+            "--ticker",
+            "GOLD",
+            "--ruleset",
+            "standard",
+            "--subsidy",
+            "50",
+            "--initial-supply",
+            "100",
+            "--max-supply",
+            "21000000",
+            "--halving-interval",
+            "210000",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    expected = derive_token_asset_id("0042", 8, "standard")
+    assert payload["ticket"] == "0042"
+    assert payload["variant"] == "token-0042"
+    assert payload["name"] == "Gold Coin"
+    assert payload["symbol"] == "GOLD"
+    assert payload["asset"] == expected
+    assert payload["type"] == "register_token"
+    assert len(recorded_node) == 1
+    tx = recorded_node[0]
+    assert tx.nonce == 7
+    assert tx.payload["ticket"] == "0042"
+    assert tx.payload["display_name"] == "Gold Coin"
+    assert tx.payload["symbol"] == "GOLD"
+    assert "variant" not in tx.payload
+    assert tx.payload["subsidy"] == 50 * UNITS_PER_COIN
+    assert tx.payload["initial_supply"] == 100 * UNITS_PER_COIN
+    assert tx.payload["max_supply"] == 21_000_000
+    assert tx.payload["halving_interval"] == 210_000
+    assert tx.payload["time_control_initial_ms"] == 600_000
+    assert tx.payload["time_control_increment_ms"] == 0
+    assert tx.payload["time_control_delay_ms"] == 0
+    assert payload["time_control"] == {"initial_ms": 600_000, "increment_ms": 0}
+
+
+def test_dex_register_token_generates_a_16_hex_ticket_when_omitted(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    from sccp.config import derive_token_asset_id
+
+    key = tmp_path / "generated-ticket.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    node_accounts[address] = account_document(address, spendable=200 * UNITS_PER_COIN, nonce=7)
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(tmp_path / "no-chain"),
+            "dex",
+            "register-token",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--name",
+            "Generated Ticket Coin",
+            "--ticker",
+            "GEN",
+            "--ruleset",
+            "standard",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    ticket = payload["ticket"]
+    assert isinstance(ticket, str)
+    assert len(ticket) == 16
+    assert set(ticket) <= set("0123456789abcdef")
+    assert payload["variant"] == f"token-{ticket}"
+    assert payload["asset"] == derive_token_asset_id(ticket, 8, "standard")
+    assert recorded_node[0].payload["ticket"] == ticket
+
+
+def test_dex_register_token_accepts_a_pgn_time_control(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    key = tmp_path / "issuer-delay.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    node_accounts[address] = account_document(address, spendable=200 * UNITS_PER_COIN, nonce=7)
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(tmp_path / "no-chain"),
+            "dex",
+            "register-token",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--ticket",
+            "0043",
+            "--name",
+            "Silver Coin",
+            "--ticker",
+            "SLV",
+            "--ruleset",
+            "standard",
+            "--time-control",
+            "300+5d",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["time_control"] == {
+        "initial_ms": 300_000,
+        "increment_ms": 0,
+        "delay_ms": 5_000,
+    }
+    assert len(recorded_node) == 1
+    assert recorded_node[0].payload["time_control_initial_ms"] == 300_000
+    assert recorded_node[0].payload["time_control_increment_ms"] == 0
+    assert recorded_node[0].payload["time_control_delay_ms"] == 5_000
 
 
 def test_bridge_secret_prints_a_matching_pair() -> None:

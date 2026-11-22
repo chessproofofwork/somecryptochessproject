@@ -42,8 +42,9 @@ from pydantic import Field
 from sccp.chess.openings import OpeningBook, OpeningLine, book_for, load_book
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import Termination, canonical_game_hash, outcome_result
+from sccp.chess.rulesets import ruleset_for
 from sccp.chess.variants import board_for_variant, start_position_for
-from sccp.config import STANDARD_VARIANT, NetworkParams, get_network
+from sccp.config import STANDARD_VARIANT, NetworkParams, VariantParams, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import (
     HybridKeypair,
@@ -89,11 +90,13 @@ from sccp.protocol.models import (
 )
 from sccp.protocol.pairing import RosterEntry, pair
 from sccp.protocol.transcript import (
+    book_opening_ref,
     certificate_payload,
     create_certificate,
     opening_hash,
     render_transcript_pgn,
     result_payload,
+    token_opening_ref,
 )
 from sccp.serialization import Domain
 
@@ -236,6 +239,7 @@ def _clock_document(clock: MatchClock | None) -> dict[str, object] | None:
         "turn_started_at_ms": clock.turn_started_at_ms,
         "lag_grace_ms": clock.lag_grace_ms,
         "started": clock.started,
+        "ply": clock.ply,
     }
 
 
@@ -249,6 +253,9 @@ def _clock_from_document(document: object, control: TimeControl) -> MatchClock |
     if turn not in ("white", "black"):
         raise RelayError("stored match clock has an invalid turn")
     try:
+        ply = int(document.get("ply", 0))
+        if ply < 0:
+            raise ValueError("ply must not be negative")
         return MatchClock(
             control=control,
             white_ms=int(document["white_ms"]),
@@ -257,6 +264,7 @@ def _clock_from_document(document: object, control: TimeControl) -> MatchClock |
             turn_started_at_ms=int(document["turn_started_at_ms"]),
             lag_grace_ms=int(document.get("lag_grace_ms", DEFAULT_LAG_GRACE_MS)),
             started=bool(document.get("started", True)),
+            ply=ply,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise RelayError(f"stored match clock is invalid: {exc}") from None
@@ -332,8 +340,17 @@ class MatchSession:
         }
 
     @classmethod
-    def from_document(cls, document: Mapping[str, Any]) -> MatchSession:
-        """Rebuild a session, replaying its SAN list to recover the board."""
+    def from_document(
+        cls,
+        document: Mapping[str, Any],
+        *,
+        variants: Mapping[str, VariantParams] | None = None,
+    ) -> MatchSession:
+        """Rebuild a session, replaying its SAN list to recover the board.
+
+        ``variants`` resolves a chain-registered token to the ruleset that
+        decides how to replay it; ``None`` means the built-in registry.
+        """
         try:
             matchup = Matchup.model_validate(document["matchup"])
             certificate = MatchCertificate.model_validate(document["certificate"])
@@ -355,7 +372,10 @@ class MatchSession:
         except (KeyError, TypeError, ValueError) as exc:
             raise RelayError(f"stored match session is invalid: {exc}") from None
 
-        board = board_for_variant(certificate.variant, certificate.opening.start_fen)
+        ruleset_name = certificate.variant
+        if variants is not None and certificate.variant in variants:
+            ruleset_name = variants[certificate.variant].ruleset or certificate.variant
+        board = board_for_variant(ruleset_name, certificate.opening.start_fen)
         try:
             for san in san_moves:
                 board.push(board.parse_san(san))
@@ -492,6 +512,7 @@ class Matchmaker:
         public_keys: Mapping[str, str],
         engines: Mapping[str, str],
         book: OpeningBook | None = None,
+        variants: Mapping[str, VariantParams] | None = None,
         store: Path | None = None,
         clock: Callable[[], int] | None = None,
         clock_ms: Callable[[], int] | None = None,
@@ -514,6 +535,10 @@ class Matchmaker:
 
         self.beacon = beacon
         self.book = book if book is not None else book_for(params)
+        self._variants: dict[str, VariantParams] = {item.name: item for item in params.variants}
+        if variants is not None:
+            self._validate_token_variants(variants)
+            self._variants.update(variants)
         self._public_keys = dict(public_keys)
         self._engines = dict(engines)
         self._store = store
@@ -552,6 +577,19 @@ class Matchmaker:
             return None
         return encode_address(self.witness_keypair.public_key_bytes, self.params)
 
+    @property
+    def variants(self) -> dict[str, VariantParams]:
+        """Every variant this relay can match, including registered tokens."""
+        with self._lock:
+            return dict(self._variants)
+
+    def _variant(self, name: str) -> VariantParams:
+        """Resolve a roster variant, accepting chain-registered tokens."""
+        selected = self._variants.get(name)
+        if selected is None:
+            raise RelayError(f"unknown variant {name!r}; this relay has no token for it")
+        return selected
+
     def advance_epoch(
         self,
         beacon: Beacon,
@@ -559,6 +597,7 @@ class Matchmaker:
         roster: Mapping[str, RosterEntry] | Sequence[RosterEntry],
         public_keys: Mapping[str, str],
         engines: Mapping[str, str],
+        variants: Mapping[str, VariantParams] | None = None,
     ) -> bool:
         """Move the relay onto a later epoch's beacon and roster.
 
@@ -566,8 +605,10 @@ class Matchmaker:
         deployment that follows the node (``--node``) can keep opening rounds
         epoch after epoch instead of replaying a single baked-in roster. Sessions
         of the epoch that just ended keep their own beacon and finish normally;
-        only round numbering restarts. Returns ``True`` when the relay moved and
-        ``False`` when it was already on ``beacon.epoch`` or later.
+        only round numbering restarts. ``variants`` adds token registrations the
+        chain has accumulated since the relay started. Returns ``True`` when the
+        relay moved and ``False`` when it was already on ``beacon.epoch`` or
+        later.
         """
         if beacon.network != self.params.network_id:
             raise RelayError(
@@ -578,6 +619,9 @@ class Matchmaker:
                 return False
             entries = list(roster.values()) if isinstance(roster, Mapping) else list(roster)
             validated = self._validated_roster(entries, public_keys, engines)
+            if variants is not None:
+                self._validate_token_variants(variants)
+                self._variants.update(variants)
             self.beacon = beacon
             self._roster = validated
             self._public_keys = dict(public_keys)
@@ -588,6 +632,30 @@ class Matchmaker:
             self._rounds_opened.clear()
             self._persist_locked()
             return True
+
+    def set_variants(self, variants: Mapping[str, VariantParams]) -> None:
+        """Add chain-registered tokens the relay may now match."""
+        self._validate_token_variants(variants)
+        with self._lock:
+            if all(self._variants.get(name) == item for name, item in variants.items()):
+                return
+            self._variants.update(variants)
+            self._persist_locked()
+
+    def _validate_token_variants(self, variants: Mapping[str, VariantParams]) -> None:
+        """Refuse a token that would shadow a built-in variant's parameters."""
+        built_in = set(self.params.variant_names())
+        for name, item in variants.items():
+            if name in built_in:
+                if item != self.params.variant(name):
+                    raise RelayError(
+                        f"a registered token cannot redefine built-in variant {name!r}"
+                    )
+                continue
+            if item.name != name:
+                raise RelayError(f"token {name!r} carries the variant name {item.name!r}")
+            if item.native:
+                raise RelayError(f"registered token {name!r} needs a derived asset id")
 
     @property
     def roster(self) -> dict[str, RosterEntry]:
@@ -646,13 +714,31 @@ class Matchmaker:
                 f"relay store {self._store} belongs to network {document.get('network')!r}"
             )
         now_ms = self._now_ms()
+        raw_variants = document.get("variants", [])
+        if not isinstance(raw_variants, list):
+            raise RelayError(f"relay store {self._store} has a malformed variant list")
+        built_in = set(self.params.variant_names())
+        for raw in raw_variants:
+            if not isinstance(raw, Mapping):
+                raise RelayError(f"relay store {self._store} has a malformed variant")
+            try:
+                variant = VariantParams.model_validate(raw)
+            except ValueError as exc:
+                raise RelayError(
+                    f"relay store {self._store} has an invalid variant: {exc}"
+                ) from None
+            if variant.name in built_in:
+                raise RelayError(
+                    f"relay store {self._store} cannot redefine built-in variant {variant.name!r}"
+                )
+            self._variants[variant.name] = variant
         raw_sessions = document.get("sessions", [])
         if not isinstance(raw_sessions, list):
             raise RelayError(f"relay store {self._store} has a malformed session list")
         for raw in raw_sessions:
             if not isinstance(raw, Mapping):
                 raise RelayError(f"relay store {self._store} has a malformed session")
-            session = MatchSession.from_document(raw)
+            session = MatchSession.from_document(raw, variants=self._variants)
             if session.matchup.network != self.params.network_id:
                 raise RelayError(f"stored match {session.matchup.match_id} is for another network")
             self._sessions[session.matchup.match_id] = session
@@ -682,6 +768,11 @@ class Matchmaker:
         document = {
             "format": STORE_FORMAT,
             "network": self.params.network_id,
+            "variants": [
+                variant.model_dump(mode="json")
+                for name, variant in sorted(self._variants.items())
+                if name not in self.params.variant_names()
+            ],
             "sessions": [
                 session.to_document()
                 for session in sorted(
@@ -757,6 +848,7 @@ class Matchmaker:
             session.certificate.time_control,
             now_ms=now_ms,
             lag_grace_ms=self.lag_grace_ms,
+            ply=len(session.san_moves),
         )
         clock.turn = session.turn
         session.clock = clock
@@ -841,6 +933,7 @@ class Matchmaker:
             session.board,
             result=result,
             termination=termination,
+            variants=self._variants,
         )
         session.result = GameResult(
             network=self.params.network_id,
@@ -953,39 +1046,53 @@ class Matchmaker:
             now = self._now()
             created: list[MatchSession] = []
             for matchup in matchups:
-                variant_params = self.params.variant(matchup.variant)
-                opening: OpeningLine | OpeningRef
-                selected = start_position_for(matchup.variant, beacon_bytes, matchup.match_id)
-                if selected is not None:
-                    opening = OpeningRef(
-                        book_version=selected.book_version,
-                        line_id=selected.line_id,
-                        hash=opening_hash(
-                            selected.book_version,
-                            selected.line_id,
-                            selected.moves,
+                variant_params = self._variant(matchup.variant)
+                ruleset_name = variant_params.ruleset or variant_params.name
+                opening: OpeningLine | OpeningRef | None = token_opening_ref(
+                    variant_params,
+                    beacon_bytes,
+                    matchup.match_id,
+                    rules=ruleset_for(ruleset_name),
+                )
+                if opening is None:
+                    selected = start_position_for(ruleset_name, beacon_bytes, matchup.match_id)
+                    if selected is not None:
+                        opening = OpeningRef(
+                            book_version=selected.book_version,
+                            line_id=selected.line_id,
+                            hash=opening_hash(
+                                selected.book_version,
+                                selected.line_id,
+                                selected.moves,
+                                start_fen=selected.start_fen,
+                                variant=matchup.variant,
+                            ),
+                            moves=selected.moves,
                             start_fen=selected.start_fen,
                             variant=matchup.variant,
-                        ),
-                        moves=selected.moves,
-                        start_fen=selected.start_fen,
-                        variant=matchup.variant,
-                    )
-                else:
-                    book = (
-                        self.book
-                        if self.book.version == variant_params.opening_book
-                        else load_book(variant_params.opening_book)
-                    )
-                    opening = book.select(beacon_bytes, matchup.match_id)
+                        )
+                    else:
+                        book = (
+                            self.book
+                            if self.book.version == variant_params.opening_book
+                            else load_book(variant_params.opening_book)
+                        )
+                        opening = book_opening_ref(
+                            matchup.variant,
+                            ruleset_for(ruleset_name),
+                            book,
+                            beacon_bytes,
+                            matchup.match_id,
+                        )
                 certificate = create_certificate(
                     matchup,
                     opening,
                     engine_white=self._engines[matchup.white],
                     engine_black=self._engines[matchup.black],
                     time_control=time_control_for(variant_params),
+                    variants=self._variants,
                 )
-                board = board_for_variant(matchup.variant, certificate.opening.start_fen)
+                board = board_for_variant(ruleset_name, certificate.opening.start_fen)
                 san_moves: list[str] = []
                 for san in opening.moves:
                     move = board.parse_san(san)
@@ -1344,6 +1451,7 @@ class Matchmaker:
         store: Path | None = None,
         book: OpeningBook | None = None,
         witness_keypair: HybridKeypair | None = None,
+        variants: Mapping[str, VariantParams] | None = None,
         clock: Callable[[], int] | None = None,
         clock_ms: Callable[[], int] | None = None,
         lag_grace_ms: int = DEFAULT_LAG_GRACE_MS,
@@ -1419,6 +1527,7 @@ class Matchmaker:
             public_keys=public_keys,
             engines=engines,
             book=book_for(params) if book is None else book,
+            variants=variants,
             store=store,
             clock=clock,
             clock_ms=clock_ms,
@@ -1480,12 +1589,12 @@ def create_app(matchmaker: Matchmaker, *, origins: Sequence[str] = ()) -> FastAP
             "open": sum(view.status in ("pending", "active") for view in views),
             "reputation": matchmaker.reputation(),
             "timed": TIMED_SESSIONS,
-            "time_control": time_control_for(
-                matchmaker.params.variant(STANDARD_VARIANT)
-            ).model_dump(mode="json"),
+            "time_control": time_control_for(matchmaker.variants[STANDARD_VARIANT]).model_dump(
+                mode="json"
+            ),
             "time_controls": {
-                name: time_control_for(matchmaker.params.variant(name)).model_dump(mode="json")
-                for name in matchmaker.params.variant_names()
+                name: time_control_for(params).model_dump(mode="json")
+                for name, params in matchmaker.variants.items()
             },
             "round": matchmaker.current_round,
             "round_seconds": matchmaker.round_seconds,

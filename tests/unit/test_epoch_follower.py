@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
+from sccp.config import NetworkParams, VariantParams, derive_variant_asset_id
 from sccp.errors import RelayError
 from sccp.miner.epoch_follower import EpochAdvance, EpochFollower
 from sccp.miner.matchmaker import Matchmaker
@@ -153,6 +155,58 @@ def test_unopened_epoch_waits_for_the_next_poll(signed_match) -> None:
     assert follower.step() is None
     assert node.asked == [EPOCH + 1]
     assert state.beacon.epoch == EPOCH
+
+
+def test_a_poll_teaches_the_relay_the_chain_s_registered_tokens(signed_match) -> None:
+    """A registration is readable before the epoch gate, so it is matchable now.
+
+    The relay cannot reconstruct a token's ruleset from its name, so it has to
+    learn the chain's parameters and merge them into its own registry.
+    """
+    node = _StubNode(height=0)
+    token = VariantParams(
+        name="dragonchess",
+        rules="chess",
+        ruleset="standard",
+        asset=derive_variant_asset_id("dragonchess", "DRG", 8, "standard"),
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=5,
+        min_plies=1,
+        opening_book=signed_match.params.book_version,
+    )
+    node.tokens = lambda: {"tokens": [token.model_dump(mode="json")]}  # type: ignore[method-assign]
+    follower, state = _follower(signed_match, node)
+    assert follower.step() is None
+    assert state.variants[token.name] == token
+
+    # The same list is a no-op, so polling never rewrites the relay's store.
+    assert follower.step() is None
+    assert state.variants[token.name] == token
+
+
+def test_a_poll_cannot_redefine_a_built_in_variant(signed_match) -> None:
+    """A node cannot use ``/v1/tokens`` to shadow the network's own parameters."""
+    built_in = VariantParams(
+        name="dragonchess",
+        rules="chess",
+        ruleset="standard",
+        asset=derive_variant_asset_id("dragonchess", "DRG", 8, "standard"),
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=1,
+        min_plies=1,
+    )
+    params = NetworkParams.model_validate(
+        {**signed_match.params.model_dump(), "variants": [built_in.model_dump()]}
+    )
+    signed_match = replace(signed_match, params=params)
+    node = _StubNode(height=0)
+    shadow = built_in.model_copy(update={"display_name": "Not really dragonchess"})
+    node.tokens = lambda: {"tokens": [shadow.model_dump(mode="json")]}  # type: ignore[method-assign]
+    follower, _ = _follower(signed_match, node)
+    with pytest.raises(RelayError, match="cannot redefine built-in variant"):
+        follower.step()
 
 
 def test_matchable_epoch_moves_the_beacon_and_roster(signed_match) -> None:

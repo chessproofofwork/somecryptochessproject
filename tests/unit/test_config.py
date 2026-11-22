@@ -8,7 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from sccp.config import (
-    CHESS960,
+    C960,
+    C960_VARIANT,
     DEVNET,
     MAINNET,
     NETWORKS,
@@ -16,9 +17,12 @@ from sccp.config import (
     UNITS_PER_COIN,
     NetworkParams,
     VariantParams,
+    c960_token,
     coins_to_units,
+    derive_token_asset_id,
     get_network,
     network_ids,
+    token_variant_name,
 )
 from sccp.errors import ConfigError, NetworkError
 
@@ -28,6 +32,73 @@ def test_registry_contains_all_networks() -> None:
     assert set(NETWORKS) == {"devnet", "mainnet", "testnet"}
     assert get_network("mainnet") is MAINNET
     assert get_network(TESTNET) is TESTNET
+
+
+def test_c960_is_a_custom_token_not_a_builtin_variant() -> None:
+    """Only standard chess is in NetworkParams; C960 has a registration serial."""
+    for params in (DEVNET, TESTNET, MAINNET):
+        assert params.variant_names() == ("standard",)
+    token = c960_token()
+    assert token.ticket == "0960"
+    assert token.name == "token-0960"
+    assert token.asset == derive_token_asset_id("0960", 8, "chess960")
+    assert token.ruleset == "chess960"
+
+
+def test_a_ticket_is_a_registration_serial_not_a_ticker() -> None:
+    """The ticket derives an internal key; the name and ticker stay metadata."""
+    assert token_variant_name("0042") == "token-0042"
+    long_ticket = "7f3a9c2e5b1d4068"
+    assert token_variant_name(long_ticket) == f"token-{long_ticket}"
+    with pytest.raises(ConfigError, match="four digits or 16 lowercase hex"):
+        token_variant_name("42")
+    with pytest.raises(ConfigError, match="four digits or 16 lowercase hex"):
+        token_variant_name("7f3a9c2e5b1d406")
+    with pytest.raises(ConfigError, match="four digits or 16 lowercase hex"):
+        token_variant_name("7F3A9C2E5B1D4068")
+    with pytest.raises(ConfigError, match="four digits or 16 lowercase hex"):
+        derive_token_asset_id("004a", 8, "standard")
+
+    first = derive_token_asset_id("0042", 8, "standard")
+    second = derive_token_asset_id("0043", 8, "standard")
+    long_first = derive_token_asset_id(long_ticket, 8, "standard")
+    assert first == derive_token_asset_id("0042", 8, "standard")
+    assert first != second
+    assert long_first == derive_token_asset_id(long_ticket, 8, "standard")
+    assert long_first != first
+
+    variant = VariantParams(
+        name="token-0042",
+        ticket="0042",
+        rules="chess",
+        ruleset="standard",
+        asset=first,
+        symbol="GOLD",
+        display_name="Gold Coin",
+        subsidy=1,
+        min_plies=1,
+    )
+    assert variant.ticket == "0042"
+    assert variant.symbol == "GOLD"
+    assert variant.display_name == "Gold Coin"
+    with pytest.raises(ValidationError, match="does not match ticket"):
+        VariantParams.model_validate({**variant.model_dump(), "name": "dragonchess"})
+
+
+def test_a_token_cannot_declare_an_opening_whose_game_already_ended() -> None:
+    with pytest.raises(ValidationError, match="not playable under ruleset 'standard'"):
+        VariantParams(
+            name="token-0123",
+            ticket="0123",
+            rules="chess",
+            ruleset="standard",
+            asset="b" * 64,
+            symbol="GOLD",
+            display_name="Gold Coin",
+            subsidy=1,
+            min_plies=1,
+            openings=(("f3", "e5", "g4", "Qh4#"),),
+        )
 
 
 @pytest.mark.parametrize(
@@ -83,10 +154,10 @@ def test_clock_and_timeout_parameters() -> None:
 
 def test_each_variant_declares_its_own_time_control() -> None:
     """A token controls its clock independently of the network default."""
-    assert TESTNET.variant("standard").time_control == (600_000, 0)
-    assert TESTNET.variant("chess960").time_control == (600_000, 0)
+    assert TESTNET.variant("standard").time_control == (600_000, 0, 0)
+    assert c960_token().time_control == (600_000, 0, 0)
 
-    faster_chess960 = CHESS960.model_copy(
+    faster_chess960 = C960.model_copy(
         update={"time_control_initial_ms": 300_000, "time_control_increment_ms": 5_000}
     )
     params = NetworkParams(
@@ -95,8 +166,19 @@ def test_each_variant_declares_its_own_time_control() -> None:
             "variants": [faster_chess960.model_dump()],
         }
     )
-    assert params.variant("chess960").time_control == (300_000, 5_000)
-    assert params.variant("standard").time_control == (600_000, 0)
+    assert params.variant(C960_VARIANT).time_control == (300_000, 5_000, 0)
+    assert params.variant("standard").time_control == (600_000, 0, 0)
+
+    delayed_chess960 = C960.model_copy(
+        update={"time_control_initial_ms": 180_000, "time_control_delay_ms": 2_000}
+    )
+    params = NetworkParams(
+        **{
+            **DEVNET.model_dump(),
+            "variants": [delayed_chess960.model_dump()],
+        }
+    )
+    assert params.variant(C960_VARIANT).time_control == (180_000, 0, 2_000)
 
     faster_standard = VariantParams(
         name="standard",
@@ -114,7 +196,7 @@ def test_each_variant_declares_its_own_time_control() -> None:
             "variants": [faster_standard.model_dump()],
         }
     )
-    assert params.variant("standard").time_control == (180_000, 2_000)
+    assert params.variant("standard").time_control == (180_000, 2_000, 0)
 
 
 @pytest.mark.parametrize(
@@ -122,20 +204,22 @@ def test_each_variant_declares_its_own_time_control() -> None:
     [
         {"time_control_initial_ms": 500},  # PGN tags carry whole seconds only
         {"time_control_increment_ms": 1_500},
+        {"time_control_delay_ms": 1_500},
         {"time_control_initial_ms": 86_400_001},
         {"time_control_initial_ms": 0},
         {"time_control_initial_ms": 86_000_000, "time_control_increment_ms": 1_000},
+        {"time_control_increment_ms": 1_000, "time_control_delay_ms": 1_000},
     ],
 )
 def test_variant_time_controls_are_bounded_and_lossless(override: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
-        VariantParams.model_validate({**CHESS960.model_dump(), **override})
+        VariantParams.model_validate({**C960.model_dump(), **override})
 
 
 def test_variant_must_be_registered() -> None:
     with pytest.raises(ValidationError):
         VariantParams.model_validate(
-            {**CHESS960.model_dump(), "name": "nine-sixty", "rules": "chess960"}
+            {**C960.model_dump(), "ruleset": "nine-sixty", "rules": "chess960"}
         )
 
 

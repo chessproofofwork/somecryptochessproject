@@ -54,7 +54,18 @@ from sccp.chess.engines import open_engine
 from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
 from sccp.chess.variants import is_chess960
-from sccp.config import NetworkParams, coins_to_units, format_coins, get_network
+from sccp.config import (
+    DEFAULT_TIME_CONTROL_DELAY_MS,
+    DEFAULT_TIME_CONTROL_INCREMENT_MS,
+    DEFAULT_TIME_CONTROL_INITIAL_MS,
+    NetworkParams,
+    VariantParams,
+    coins_to_units,
+    derive_token_asset_id,
+    format_coins,
+    get_network,
+    token_variant_name,
+)
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import hybrid_sign
 from sccp.crypto.wallet import (
@@ -73,14 +84,15 @@ from sccp.crypto.wallet import (
 from sccp.devnet import run_devnet
 from sccp.errors import SccpError, WalletServiceError
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient
-from sccp.miner.epoch_follower import EpochFollower
+from sccp.miner.epoch_follower import EpochFollower, _token_variants
 from sccp.miner.matchmaker import Matchmaker
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
 from sccp.node.app import create_app as create_node_app
 from sccp.node.app import web_dist_root
 from sccp.node.miner import NodeMiner, proof_summary
 from sccp.node.service import NodeService, sync_peers
-from sccp.protocol.models import Transaction, WinProof
+from sccp.protocol.clocks import time_control_from_tag, time_control_tag
+from sccp.protocol.models import TimeControl, Transaction, WinProof
 from sccp.protocol.verification import (
     ProofContext,
     context_from_document,
@@ -538,6 +550,15 @@ def _node_document(
     return payload
 
 
+def _node_variants(node: str, params: NetworkParams) -> dict[str, VariantParams]:
+    """Every variant token the node serves, keyed by variant name."""
+    document = _node_document(node, "/v1/tokens")
+    network = document.get("network")
+    if network is not None and network != params.network_id:
+        _fail(f"node serves {network!r}, but this command is on {params.network_id!r}")
+    return dict(_run(lambda: _token_variants(document)))
+
+
 def _document_text(document: Mapping[str, object], key: str) -> str:
     """Read a non-empty string field from a node document."""
     value = document.get(key)
@@ -562,25 +583,65 @@ def _wallet_for(ctx: typer.Context, key: Path, network: str | None) -> Wallet:
     return _run(lambda: load_wallet(key, passphrase))
 
 
-def _asset_symbol(params: NetworkParams, asset: str) -> str:
+def _asset_symbol(
+    params: NetworkParams, asset: str, symbols: Mapping[str, str] | None = None
+) -> str:
     """The printable symbol for an asset id, or a shortened id when unknown."""
+    if symbols is not None and asset in symbols:
+        return symbols[asset]
     for variant in params.variants:
         if variant.asset == asset:
             return variant.symbol
     return f"{asset[:8]}…"
 
 
+def _node_token_symbols(url: str) -> dict[str, str]:
+    """``asset id -> ticker`` from a node's token registry, or empty on failure.
+
+    The registry is what names custom tokens, C960 included. A balance command
+    should still print the shortened id when an older node does not serve it.
+    """
+    try:
+        response = httpx.get(f"{url.rstrip('/')}/v1/tokens", timeout=10.0)
+        response.raise_for_status()
+        document = response.json()
+    except (httpx.HTTPError, ValueError):
+        return {}
+    rows = document.get("tokens") if isinstance(document, Mapping) else None
+    if not isinstance(rows, list):
+        return {}
+    symbols: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        asset = row.get("asset")
+        symbol = row.get("symbol")
+        if isinstance(asset, str) and isinstance(symbol, str) and symbol:
+            symbols[asset] = symbol
+    return symbols
+
+
 def _asset_id(params: NetworkParams, asset: str | None) -> str:
-    """Resolve a CLI asset name to an id; native ZQWX is the empty string."""
+    """Resolve a CLI asset name to an id; native ZQWX is the empty string.
+
+    Only native ZQWX is in ``NetworkParams``. A chain-registered token, C960
+    included, is named by its derived 64-character asset id -- the id printed by
+    ``dex register-token`` and listed by ``dex tokens``.
+    """
     if asset is None or asset.strip() == "" or asset.upper() == "ZQWX":
         return dex.NATIVE_ASSET
     for variant in params.variants:
         if asset in (variant.asset, variant.name, variant.symbol):
             return variant.asset or dex.NATIVE_ASSET
+    if len(asset) == 64 and all(character in "0123456789abcdef" for character in asset):
+        return asset
     known = ", ".join(
         ["ZQWX", *(variant.symbol for variant in params.variants if not variant.native)]
     )
-    _fail(f"unknown asset {asset!r}; this network has: {known}")
+    _fail(
+        f"unknown asset {asset!r}; this network has {known}, and a registered token "
+        "is named by its 64-character asset id"
+    )
     raise AssertionError("unreachable")
 
 
@@ -931,6 +992,15 @@ def wallet_balance(
         immature_assets = {
             asset: units for asset, units in account.immature_assets.items() if units > 0
         }
+        symbols = (
+            _node_token_symbols(accounts.origin)
+            if accounts.origin.startswith("http")
+            else {
+                variant.asset: variant.symbol
+                for variant in accounts.service.state.variant_params().values()
+                if variant.asset is not None
+            }
+        )
         empty_chain = accounts.chain_height == 0 and balance.total == 0 and not assets
     if empty_chain:
         _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
@@ -955,7 +1025,8 @@ def wallet_balance(
     )
     for asset in sorted(set(assets) | set(immature_assets)):
         typer.echo(
-            f"  {_asset_symbol(params, asset)} spendable {_coins(assets.get(asset, 0))}, "
+            f"  {_asset_symbol(params, asset, symbols)} spendable "
+            f"{_coins(assets.get(asset, 0))}, "
             f"immature {_coins(immature_assets.get(asset, 0))}"
         )
 
@@ -1288,6 +1359,7 @@ def matchmaker_run(
             params=params,
             store=store,
             witness_keypair=witness,
+            variants=_node_variants(node, params) if node is not None else None,
         )
     )
     typer.echo(
@@ -1373,6 +1445,16 @@ def node_run(
             ),
         ),
     ] = 0.0,
+    approved_token: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--approved-token",
+            help=(
+                "Ticket, token id or internal variant name to approve for wallet "
+                "display (repeatable). Omit to approve every registered token."
+            ),
+        ),
+    ] = None,
     no_faucet: Annotated[
         bool,
         typer.Option("--no-faucet", help="Do not expose the testnet faucet endpoint."),
@@ -1442,6 +1524,7 @@ def node_run(
             params,
             genesis_path=genesis,
             storage=Storage(data_dir / "chain.sqlite"),
+            approved_tokens=approved_token,
         )
     )
     stop: Event | None = None
@@ -1544,6 +1627,13 @@ def witness_run(
         str,
         typer.Option("--relay", help="Matchmaking relay to observe."),
     ] = "http://127.0.0.1:8646",
+    node: Annotated[
+        str | None,
+        typer.Option(
+            "--node",
+            help="Node base URL; its /v1/tokens registry teaches the witness custom tokens.",
+        ),
+    ] = None,
     host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 8647,
     network: Annotated[
@@ -1589,7 +1679,14 @@ def witness_run(
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
     trusted = dict(_witness_keys(params, relay_witness_key or [], relay_witness_key_file or []))
-    service = WitnessService(params, wallet.signer, relay_url=relay, relay_keys=trusted)
+    variants = _node_variants(node, params) if node is not None else None
+    service = WitnessService(
+        params,
+        wallet.signer,
+        relay_url=relay,
+        relay_keys=trusted,
+        variants=variants,
+    )
     state = service.status()
     typer.echo(
         f"witness {state['address']} on {params.network_id} watching {relay} "
@@ -1695,7 +1792,10 @@ def miner_run(
         str,
         typer.Option(
             "--variant",
-            help="Chess variant this miner plays: standard or chess960.",
+            help=(
+                "Variant this miner plays: standard or a registered token's "
+                "internal name (token-<ticket>)."
+            ),
         ),
     ] = "standard",
     engine_profile: Annotated[
@@ -1804,15 +1904,19 @@ def miner_run(
         _fail("--move-delay-seconds cannot be negative", code=2)
     secret = _nonce_secret(nonce_secret, nonce_secret_file)
     params = _resolve_network(ctx, network)
-    _run(lambda: params.variant(variant))
+    variants = _node_variants(node, params) if node is not None else None
+    if variants is None or variant not in variants:
+        _run(lambda: params.variant(variant))
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
+    selected = variants.get(variant) if variants is not None else None
+    ruleset = selected.ruleset if selected is not None and selected.ruleset is not None else variant
     engine = _run(
         lambda: open_engine(
             engine_profile,
             binary=engine_path,
-            chess960=is_chess960(variant),
+            chess960=is_chess960(ruleset),
         )
     )
     witness_keys = _witness_keys(params, relay_witness_key or [], relay_witness_key_file or [])
@@ -1829,6 +1933,7 @@ def miner_run(
         witness_urls=tuple(witness_url or ()),
         resign_after_plies=resign_after_plies,
         variant=variant,
+        variants=variants,
         move_delay_seconds=move_delay_seconds,
         submit_timeout_claims=submit_timeout_claims,
     )
@@ -1925,7 +2030,10 @@ def miner_register(
         str,
         typer.Option(
             "--variant",
-            help="Chess variant this registration plays: standard or chess960.",
+            help=(
+                "Variant this registration plays: standard or a registered token's "
+                "internal name (token-<ticket>)."
+            ),
         ),
     ] = "standard",
     node: Annotated[
@@ -1942,7 +2050,6 @@ def miner_register(
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
     params = wallet.network_params
-    _run(lambda: params.variant(variant))
     with _local_node(ctx, params.network_id) as service:
         tx = _run(
             lambda: WalletService(params, service.chain.state, chain=service.chain).build_register(
@@ -2249,6 +2356,264 @@ def faucet_send(
     typer.echo(f"txid: {payload['txid']}")
 
 
+@dex_app.command("tokens")
+def dex_tokens(
+    ctx: typer.Context,
+    node: Annotated[str | None, typer.Option("--node", help="Node that serves the tokens.")] = None,
+) -> None:
+    """List every variant token registered on the node's chain."""
+    document = _node_document(node, "/v1/tokens")
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    rows = document.get("tokens")
+    if not isinstance(rows, list) or not rows:
+        typer.echo("no registered tokens on this chain")
+        return
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        maximum = row.get("max_supply")
+        cap = f" cap {maximum} coins" if maximum is not None else " uncapped"
+        ticket = row.get("ticket")
+        identity = f"ticket {ticket} " if isinstance(ticket, str) else ""
+        internal = row.get("name")
+        label = row.get("display_name") or internal
+        variant = f" [{internal}]" if internal is not None and internal != label else ""
+        typer.echo(
+            f"{label}{variant} ({row.get('symbol')}) {identity}{row.get('ruleset')} "
+            f"asset {row.get('asset')}{cap}"
+        )
+        typer.echo(
+            f"  minted {row.get('minted')} of initial {row.get('initial_supply')}, "
+            f"subsidy {row.get('subsidy')} base units every win, "
+            f"{row.get('decimals')} decimals"
+        )
+
+
+@dex_app.command("register-token")
+def dex_register_token(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile that registers and funds the token.")],
+    name: Annotated[
+        str,
+        typer.Option(
+            "--name",
+            help="Display name, e.g. 'Gold Coin'. Another token may use the same name.",
+        ),
+    ],
+    ticker: Annotated[
+        str,
+        typer.Option(
+            "--ticker",
+            help="Printable ticker, e.g. GOLD. It is display metadata and may be reused.",
+        ),
+    ],
+    ruleset: Annotated[
+        str,
+        typer.Option(
+            "--ruleset",
+            help=(
+                "Ruleset that settles the token's games: standard, chess960 or any "
+                "python-chess variant (antichess, atomic, crazyhouse, giveaway, "
+                "horde, kingofthehill, racingkings, suicide, threecheck)."
+            ),
+        ),
+    ],
+    ticket: Annotated[
+        str | None,
+        typer.Option(
+            "--ticket",
+            help=(
+                "Unique registration serial: 16 lowercase hex characters "
+                "(recommended) or a short four-digit id. Omit to generate one. "
+                "It salts the token id and derives the internal variant name; "
+                "it is not the ticker."
+            ),
+        ),
+    ] = None,
+    subsidy: Annotated[int, typer.Option("--subsidy", help="Reward per win, in whole coins.")] = 10,
+    initial_supply: Annotated[
+        int,
+        typer.Option(
+            "--initial-supply", help="Coins minted to the registering key, in whole coins."
+        ),
+    ] = 0,
+    max_supply: Annotated[
+        int | None,
+        typer.Option("--max-supply", help="Lifetime coin cap; requires --halving-interval."),
+    ] = None,
+    halving_interval: Annotated[
+        int | None,
+        typer.Option("--halving-interval", help="Blocks between subsidy halvings."),
+    ] = None,
+    min_plies: Annotated[
+        int | None,
+        typer.Option("--min-plies", help="Minimum game length (default: the network's)."),
+    ] = None,
+    max_games_per_block: Annotated[
+        int,
+        typer.Option("--max-games-per-block", help="Games this token rewards in one block."),
+    ] = 1,
+    opening_book: Annotated[
+        str | None,
+        typer.Option(
+            "--opening-book",
+            help="Opening-book version recorded for the token (default: the network's).",
+        ),
+    ] = None,
+    openings: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--opening",
+            help=(
+                "A token-specific opening line in SAN or UCI, e.g. 'e4 e5 Nf3'. "
+                "Repeat for several lines; the beacon selects one per match."
+            ),
+        ),
+    ] = None,
+    decimals: Annotated[
+        int, typer.Option("--decimals", help="Decimal places, fixed at registration.")
+    ] = 8,
+    time_control: Annotated[
+        str | None,
+        typer.Option(
+            "--time-control",
+            help=(
+                "PGN clock tag in whole seconds: '600+0' sudden death, '600+5' "
+                "increment, or '600+5d' delay. Cannot be combined with the raw "
+                "millisecond flags."
+            ),
+        ),
+    ] = None,
+    time_control_initial_ms: Annotated[
+        int | None,
+        typer.Option(
+            "--time-control-initial-ms",
+            help=f"Starting clock, in milliseconds (default: {DEFAULT_TIME_CONTROL_INITIAL_MS}).",
+        ),
+    ] = None,
+    time_control_increment_ms: Annotated[
+        int | None,
+        typer.Option(
+            "--time-control-increment-ms",
+            help=(
+                "Fischer increment added after every move, in milliseconds "
+                f"(default: {DEFAULT_TIME_CONTROL_INCREMENT_MS})."
+            ),
+        ),
+    ] = None,
+    time_control_delay_ms: Annotated[
+        int | None,
+        typer.Option(
+            "--time-control-delay-ms",
+            help=(
+                "Per-move delay that does not count down, in milliseconds "
+                f"(default: {DEFAULT_TIME_CONTROL_DELAY_MS}). Cannot be combined "
+                "with an increment."
+            ),
+        ),
+    ] = None,
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Register a token under a unique ticket; immutable once mined."""
+    if initial_supply < 0:
+        _fail("--initial-supply cannot be negative", code=2)
+    if subsidy <= 0:
+        _fail("--subsidy must be positive", code=2)
+    if ticket is None:
+        ticket = secrets.token_hex(8)
+    variant = _run(lambda: token_variant_name(ticket))
+    raw_clock = (time_control_initial_ms, time_control_increment_ms, time_control_delay_ms)
+    if time_control is not None:
+        if any(value is not None for value in raw_clock):
+            _fail(
+                "--time-control cannot be combined with --time-control-initial-ms, "
+                "--time-control-increment-ms or --time-control-delay-ms",
+                code=2,
+            )
+        control = _run(lambda: time_control_from_tag(time_control))
+    else:
+        control = _run(
+            lambda: TimeControl(
+                initial_ms=(
+                    DEFAULT_TIME_CONTROL_INITIAL_MS
+                    if time_control_initial_ms is None
+                    else time_control_initial_ms
+                ),
+                increment_ms=(
+                    DEFAULT_TIME_CONTROL_INCREMENT_MS
+                    if time_control_increment_ms is None
+                    else time_control_increment_ms
+                ),
+                delay_ms=(
+                    DEFAULT_TIME_CONTROL_DELAY_MS
+                    if time_control_delay_ms is None
+                    else time_control_delay_ms
+                ),
+            )
+        )
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_register_token(
+                wallet.signer,
+                ticket=ticket,
+                ruleset=ruleset,
+                symbol=ticker,
+                display_name=name,
+                subsidy=coins_to_units(subsidy, decimals=decimals),
+                initial_supply=coins_to_units(initial_supply, decimals=decimals),
+                decimals=decimals,
+                halving_interval=halving_interval,
+                max_supply=max_supply,
+                min_plies=min_plies,
+                max_games_per_block=max_games_per_block,
+                opening_book=opening_book,
+                openings=tuple(openings or ()),
+                time_control_initial_ms=control.initial_ms,
+                time_control_increment_ms=control.increment_ms,
+                time_control_delay_ms=control.delay_ms,
+                time_control_first_moves=control.first_period_moves,
+                time_control_periods=tuple(control.periods),
+                fee=fee,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    control_payload = {
+        "initial_ms": control.initial_ms,
+        "increment_ms": control.increment_ms,
+    }
+    if control.delay_ms:
+        control_payload["delay_ms"] = control.delay_ms
+    payload = {
+        **_transaction_summary(tx, receipt),
+        "ticket": ticket,
+        "variant": variant,
+        "asset": derive_token_asset_id(ticket, decimals, ruleset),
+        "name": name,
+        "symbol": ticker,
+        "ruleset": ruleset,
+        "initial_supply": coins_to_units(initial_supply, decimals=decimals),
+        "subsidy": coins_to_units(subsidy, decimals=decimals),
+        "time_control": control_payload,
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(
+        f"registered token {ticket} as {name} ({ticker}), variant {variant}, "
+        f"asset {payload['asset']}"
+    )
+    typer.echo(f"time control: {time_control_tag(control)}")
+    typer.echo(f"txid: {payload['txid']}")
+
+
 @dex_app.command("pools")
 def dex_pools(
     ctx: typer.Context,
@@ -2303,7 +2668,13 @@ def dex_quote(
     amount_in: Annotated[int, typer.Option("--amount-in", help="Input amount, in whole coins.")],
     asset_in: Annotated[
         str | None,
-        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for ZQWX)."),
+        typer.Option(
+            "--asset-in",
+            help=(
+                "Asset id, or a built-in variant name/symbol (omit for ZQWX); "
+                "registered tokens use their 64-character asset id."
+            ),
+        ),
     ] = None,
     slippage_bps: Annotated[
         int,
@@ -2355,11 +2726,23 @@ def dex_create_pool(
     amount_b: Annotated[int, typer.Option("--amount-b", help="Second side, in whole coins.")],
     asset_a: Annotated[
         str | None,
-        typer.Option("--asset-a", help="First asset id/name/symbol (omit for ZQWX)."),
+        typer.Option(
+            "--asset-a",
+            help=(
+                "First asset id, or a built-in variant name/symbol (omit for ZQWX); "
+                "registered tokens use their 64-character asset id."
+            ),
+        ),
     ] = None,
     asset_b: Annotated[
         str | None,
-        typer.Option("--asset-b", help="Second asset id/name/symbol (omit for ZQWX)."),
+        typer.Option(
+            "--asset-b",
+            help=(
+                "Second asset id, or a built-in variant name/symbol (omit for ZQWX); "
+                "registered tokens use their 64-character asset id."
+            ),
+        ),
     ] = None,
     fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
     node: Annotated[
@@ -2462,7 +2845,13 @@ def dex_swap(
     amount_in: Annotated[int, typer.Option("--amount-in", help="Input amount, in whole coins.")],
     asset_in: Annotated[
         str | None,
-        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for ZQWX)."),
+        typer.Option(
+            "--asset-in",
+            help=(
+                "Asset id, or a built-in variant name/symbol (omit for ZQWX); "
+                "registered tokens use their 64-character asset id."
+            ),
+        ),
     ] = None,
     min_out: Annotated[
         int | None,

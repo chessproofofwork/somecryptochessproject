@@ -16,14 +16,16 @@ import { fetchBlocks, fetchGames } from "../api";
 import { BlockTable, StatCard } from "../components/BlockTable";
 import { FailureNotice, Loading, Section } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
+import { TokenLookup } from "../components/TokenLookup";
 import { TokenTable } from "../components/TokenTable";
-import { tokensFor } from "../lib/assets";
 import { formatAge, formatAmount, formatInteger } from "../lib/format";
 import { useNode } from "../node";
+import { useTokenRegistry } from "../useTokenRegistry";
 import { useNow, useResource } from "../useResource";
 
 export function Dashboard(): ReactNode {
   const { status, params } = useNode();
+  const registry = useTokenRegistry();
   const blocks = useResource((signal) => fetchBlocks({ limit: 6, signal }), [], { pollMs: 5000 });
   const games = useResource((signal) => fetchGames({ signal }), [], { pollMs: 8000 });
   const now = useNow(1000);
@@ -31,7 +33,8 @@ export function Dashboard(): ReactNode {
   const wide = width >= 720;
 
   const tip = blocks.data?.blocks[0];
-  const tokens = tokensFor(params.data);
+  const tokens = registry.tokens;
+  const network = status.data?.network ?? null;
 
   return (
     <>
@@ -99,7 +102,16 @@ export function Dashboard(): ReactNode {
           title="Tokens"
           subtitle="one token per variant; totals exclude fees, and native ZQWX remains the fee currency"
         >
+          {registry.registered.error !== undefined && (
+            <FailureNotice error={registry.registered.error} />
+          )}
           <TokenTable tokens={tokens} status={status.data} tip={tip} />
+          <TokenLookup
+            network={network}
+            approved={registry.approved}
+            onApprove={registry.approve}
+            onUnapprove={registry.unapprove}
+          />
         </Section>
       )}
 

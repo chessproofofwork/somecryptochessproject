@@ -159,8 +159,17 @@ class SignedMatch:
 
 @pytest.fixture()
 def protocol_params() -> NetworkParams:
-    """Devnet parameters with a one-ply proof threshold."""
-    return DEVNET.model_copy(update={"min_plies": 1})
+    """Devnet parameters with a one-ply proof threshold.
+
+    ``model_copy`` would leave the embedded variant records at their production
+    thresholds, so the fixture revalidates the document: every variant has to
+    agree with the one-ply devnet schedule, or short test proofs built from a
+    variant's own ``min_plies`` would be refused.
+    """
+    document = DEVNET.model_dump()
+    document["min_plies"] = 1
+    document["variants"] = [{**variant, "min_plies": 1} for variant in document["variants"]]
+    return NetworkParams.model_validate(document)
 
 
 @pytest.fixture()

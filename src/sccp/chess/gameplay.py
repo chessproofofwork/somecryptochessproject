@@ -23,8 +23,9 @@ from sccp.chess.openings import OpeningLine
 from sccp.chess.pgn import GameResult, Termination, outcome_result
 from sccp.chess.rulesets import CHESS960_VARIANT, ruleset_for
 from sccp.chess.variants import board_for_variant, normalise_start_fen
-from sccp.config import STANDARD_VARIANT, NetworkParams
-from sccp.errors import GameError
+from sccp.config import STANDARD_VARIANT, NetworkParams, VariantParams
+from sccp.errors import ConfigError, GameError
+from sccp.protocol.clocks import time_control_for, time_control_tag
 
 EVENT_TAG: Final = "sccp match"
 RULES_TAG: Final = "chess"
@@ -141,6 +142,7 @@ def play_game(
     headers: Mapping[str, str] | None = None,
     variant: str = STANDARD_VARIANT,
     start_fen: str | None = None,
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> RawGame:
     """Play one game under ``params`` and return a :class:`RawGame`.
 
@@ -152,15 +154,19 @@ def play_game(
     ``chess.engine.Limit(nodes=params.nodes_per_move)``. Chess960 games must
     pass their ``start_fen``; the engine must advertise ``UCI_Chess960``
     (python-chess sets the option from the board before every position).
+    ``variants`` supplies chain-registered tokens, whose ruleset and clock are
+    not part of ``params``.
     """
     effort = limit if limit is not None else chess.engine.Limit(nodes=params.nodes_per_move)
-    canonical_start = normalise_start_fen(start_fen, variant)
-    board = board_for_variant(variant, canonical_start)
-    variant_params = params.variant(variant)
-    time_control = (
-        f"{variant_params.time_control_initial_ms // 1000}"
-        f"+{variant_params.time_control_increment_ms // 1000}"
-    )
+    registered = (variants or {}).get(variant)
+    try:
+        variant_params = registered if registered is not None else params.variant(variant)
+    except ConfigError as exc:
+        raise GameError(str(exc)) from None
+    ruleset_name = variant_params.ruleset or variant_params.name
+    canonical_start = normalise_start_fen(start_fen, ruleset_name)
+    board = board_for_variant(ruleset_name, canonical_start)
+    time_control = time_control_tag(time_control_for(variant_params))
     san_moves: list[str] = []
     opening_moves = opening.moves if isinstance(opening, OpeningLine) else tuple(opening or ())
 
@@ -222,7 +228,7 @@ def play_game(
             black=black,
             headers=headers,
             start_fen=canonical_start,
-            variant=variant,
+            variant=ruleset_name,
             time_control=time_control,
         ),
         result=result,

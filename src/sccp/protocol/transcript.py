@@ -20,7 +20,7 @@ from typing import Final, cast
 import chess
 import chess.pgn
 
-from sccp.chess.openings import OpeningLine
+from sccp.chess.openings import BEACON_BYTES, OpeningBook, OpeningLine
 from sccp.chess.pgn import (
     GameExpectations,
     ParsedGame,
@@ -30,13 +30,8 @@ from sccp.chess.pgn import (
 from sccp.chess.pgn import (
     GameResult as PgnResult,
 )
-from sccp.chess.rulesets import ruleset_for
-from sccp.chess.variants import (
-    board_for_variant,
-    normalise_start_fen,
-    variant_rules,
-)
-from sccp.config import STANDARD_VARIANT, NetworkParams
+from sccp.chess.rulesets import VariantRules, opening_line_fits, ruleset_for
+from sccp.config import STANDARD_VARIANT, NetworkParams, VariantParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import (
     HybridKeypair,
@@ -105,16 +100,141 @@ def opening_ref(line: OpeningLine) -> OpeningRef:
     )
 
 
-def validate_opening_ref(ref: OpeningRef) -> None:
+def token_opening_ref(
+    params: VariantParams,
+    beacon: bytes,
+    match_id: str,
+    *,
+    rules: VariantRules | None = None,
+) -> OpeningRef | None:
+    """Select one of a token's own opening lines for a match.
+
+    Returns ``None`` when the token declares no lines and therefore uses the
+    packaged book named by ``params.opening_book``. The selection rule is the
+    book's: ``SHA256(beacon || "opening" || match_id)[:8] % len(lines)``, so the
+    relay and every verifier derive the same line from chain state alone.
+    """
+    if not params.openings:
+        return None
+    if len(beacon) != BEACON_BYTES:
+        raise TranscriptError(f"beacon must be {BEACON_BYTES} bytes, got {len(beacon)}")
+    book = OpeningBook(
+        version=params.opening_book,
+        lines=tuple(
+            OpeningLine(
+                book_version=params.opening_book,
+                line_id=index,
+                name=f"{params.name} line {index}",
+                moves=moves,
+            )
+            for index, moves in enumerate(params.openings)
+        ),
+    )
+    line = book.select(beacon, match_id)
+    ruleset = rules if rules is not None else ruleset_for(params.ruleset or params.name)
+    if not ruleset.allow_book_moves:
+        raise TranscriptError(
+            f"token {params.name!r} declares openings, but {ruleset.name} starts "
+            "from a position and allows no book moves"
+        )
+    start_fen = ruleset.normalise_start_fen(None)
+    return OpeningRef(
+        book_version=line.book_version,
+        line_id=line.line_id,
+        hash=opening_hash(
+            line.book_version,
+            line.line_id,
+            line.moves,
+            start_fen=start_fen,
+            variant=params.name,
+        ),
+        moves=line.moves,
+        start_fen=start_fen,
+        variant=params.name,
+    )
+
+
+def _ruleset_for_variant(
+    variant: str, variants: Mapping[str, VariantParams] | None = None
+) -> VariantRules:
+    """Resolve the ruleset a variant name settles under.
+
+    Built-in variants are their own ruleset. A chain-registered token names a
+    ruleset explicitly, because consensus must never execute rules supplied by a
+    transaction.
+    """
+    params = (variants or {}).get(variant)
+    ruleset = params.ruleset if params is not None else None
+    return ruleset_for(ruleset or variant)
+
+
+def start_opening_ref(variant: str, rules: VariantRules) -> OpeningRef:
+    """The deterministic no-book start for ``rules`` under a token's name."""
+    start_fen = rules.normalise_start_fen(None)
+    return OpeningRef(
+        book_version="none",
+        line_id=0,
+        hash=opening_hash("none", 0, (), start_fen=start_fen, variant=variant),
+        moves=(),
+        start_fen=start_fen,
+        variant=variant,
+    )
+
+
+def book_opening_ref(
+    variant: str,
+    rules: VariantRules,
+    book: OpeningBook,
+    beacon: bytes,
+    match_id: str,
+) -> OpeningRef:
+    """Select a book line for ``variant``, or fall back to its fixed start.
+
+    Network books are authored for standard chess. A registered token can name
+    a ruleset whose fixed start rejects the selected line (Horde has no knights
+    to develop, for example). In that case the shared prefix is the ruleset's
+    own start: line 0, no moves and ``book_version`` ``none``. The relay and
+    every verifier derive that fallback from the same beacon and book.
+    """
+    line = book.select(beacon, match_id)
+    if not opening_line_fits(rules, line.moves):
+        return start_opening_ref(variant, rules)
+    start_fen = rules.normalise_start_fen(None)
+    return OpeningRef(
+        book_version=line.book_version,
+        line_id=line.line_id,
+        hash=opening_hash(
+            line.book_version,
+            line.line_id,
+            line.moves,
+            start_fen=start_fen,
+            variant=variant,
+        ),
+        moves=line.moves,
+        start_fen=start_fen,
+        variant=variant,
+    )
+
+
+def validate_opening_ref(
+    ref: OpeningRef,
+    *,
+    rules: VariantRules | None = None,
+    variants: Mapping[str, VariantParams] | None = None,
+) -> None:
     """Replay the line and check its canonical SAN, start FEN and hash.
 
     The certificate carries the line itself, so a verifier never needs a local
     copy of the book to know what prefix the game must have. A Chess960 opening
     has no moves: its start position is the prefix.
+
+    ``rules`` (or ``variants`` for a chain-registered token) supplies the
+    ruleset when ``ref.variant`` is not itself the name of a registered ruleset.
     """
+    ruleset = rules if rules is not None else _ruleset_for_variant(ref.variant, variants)
     try:
-        start_fen = normalise_start_fen(ref.start_fen, ref.variant)
-        board = board_for_variant(ref.variant, start_fen)
+        start_fen = ruleset.normalise_start_fen(ref.start_fen)
+        board = ruleset.board(start_fen)
     except ConfigError as exc:
         raise TranscriptError(f"opening {ref.line_id}: {exc}") from None
     if start_fen != ref.start_fen:
@@ -122,7 +242,7 @@ def validate_opening_ref(ref: OpeningRef) -> None:
             f"opening {ref.line_id} start FEN is {ref.start_fen}, "
             f"but the variant canonicalises it to {start_fen}"
         )
-    if not ruleset_for(ref.variant).allow_book_moves and ref.moves:
+    if not ruleset.allow_book_moves and ref.moves:
         raise TranscriptError(f"a {ref.variant} opening must not carry book moves")
     canonical: list[str] = []
     for number, san in enumerate(ref.moves, start=1):
@@ -163,14 +283,19 @@ def create_certificate(
     engine_white: str,
     engine_black: str,
     time_control: TimeControl = FIXED_TIME_CONTROL,
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> MatchCertificate:
-    """Build an unsigned certificate for ``matchup``."""
+    """Build an unsigned certificate for ``matchup``.
+
+    ``variants`` resolves a chain-registered token's ruleset; ``None`` means the
+    built-in variants in the registry.
+    """
     ref = opening_ref(opening) if isinstance(opening, OpeningLine) else opening
     if ref.variant != matchup.variant:
         raise TranscriptError(
             f"opening is for {ref.variant!r}, but the matchup is {matchup.variant!r}"
         )
-    validate_opening_ref(ref)
+    validate_opening_ref(ref, variants=variants)
     return MatchCertificate(
         network=matchup.network,
         match_id=matchup.match_id,
@@ -193,6 +318,14 @@ def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
     seat, so the colour assignment is covered without ambiguity. ``network`` is
     included so a certificate can never be replayed on another chain.
     """
+    control_payload: dict[str, int] = {
+        "initial_ms": cert.time_control.initial_ms,
+        "increment_ms": cert.time_control.increment_ms,
+    }
+    # Keep the v1 payload byte-for-byte unchanged for increment and sudden-death
+    # controls; a delay is added only when the token actually declares one.
+    if cert.time_control.delay_ms:
+        control_payload["delay_ms"] = cert.time_control.delay_ms
     payload: dict[str, object] = {
         "network": cert.network,
         "match_id": cert.match_id,
@@ -201,10 +334,7 @@ def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
         "seats": sorted((cert.white, cert.black)),
         "colors": {"white": cert.white, "black": cert.black},
         "opening_hash": cert.opening.hash,
-        "time_control": {
-            "initial_ms": cert.time_control.initial_ms,
-            "increment_ms": cert.time_control.increment_ms,
-        },
+        "time_control": control_payload,
         "engine_fingerprints": {
             "white": cert.engine_white,
             "black": cert.engine_black,
@@ -366,8 +496,11 @@ def expected_from_certificate(cert: MatchCertificate) -> GameExpectations:
     )
 
 
-def pgn_headers(cert: MatchCertificate) -> dict[str, str]:
+def pgn_headers(
+    cert: MatchCertificate, *, variants: Mapping[str, VariantParams] | None = None
+) -> dict[str, str]:
     """Protocol headers for a transcript PGN (section 3.1 of PROTOCOL.md)."""
+    rules = _ruleset_for_variant(cert.variant, variants)
     headers = {
         "Event": EVENT_TAG,
         "Site": SITE_TAG,
@@ -385,9 +518,8 @@ def pgn_headers(cert: MatchCertificate) -> dict[str, str]:
         "OpeningID": str(cert.opening.line_id),
         "OpeningHash": cert.opening.hash,
         "TimeControl": time_control_tag(cert.time_control),
-        "Rules": variant_rules(cert.variant),
+        "Rules": rules.pgn_rules,
     }
-    rules = ruleset_for(cert.variant)
     if rules.requires_start_fen:
         headers["FEN"] = cert.opening.start_fen
         headers["SetUp"] = "1"
@@ -402,10 +534,11 @@ def render_transcript_pgn(
     *,
     result: PgnResult | str,
     termination: Termination | str,
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> str:
     """Render a finished board with every protocol header filled in."""
     game = chess.pgn.Game.from_board(board)
-    headers = pgn_headers(cert)
+    headers = pgn_headers(cert, variants=variants)
     headers["Result"] = PgnResult(result).value
     headers["Termination"] = Termination(termination).value
     for tag, value in headers.items():
@@ -442,6 +575,7 @@ def build_win_proof(
     clock_evidence: ClockEvidence | None = None,
     move_evidence: MoveEvidence | None = None,
     timeout_claim_id: str | None = None,
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> WinProof:
     """Validate a game and wrap it into a :class:`WinProof`.
 
@@ -450,6 +584,9 @@ def build_win_proof(
     seats signed. The evidence arguments cover the two refused-result paths:
     ``clock_evidence`` plus an optional ``timeout_claim_id`` for a flag, and
     ``move_evidence`` for a refused checkmate.
+
+    ``variants`` extends the network's built-ins with chain-registered tokens,
+    whose ``min_plies`` and ruleset are not part of ``params``.
     """
     if cert.network != params.network_id:
         raise TranscriptError(
@@ -468,6 +605,7 @@ def build_win_proof(
         expected=expected_from_certificate(cert),
         require_win=True,
         clock_evidence=clock_evidence,
+        variants=variants,
     )
     if parsed.result is PgnResult.WHITE:
         winner_seat: Color = "white"
@@ -622,6 +760,7 @@ __all__ = [
     "save_transcript",
     "sign_certificate",
     "sign_result",
+    "token_opening_ref",
     "validate_opening_ref",
     "verify_certificate_signatures",
     "verify_result_signatures",

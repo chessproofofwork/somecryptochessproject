@@ -2,12 +2,13 @@
  * The five views of the one-origin web application.
  *
  * There are no hostnames to resolve any more: each view is a hash route on
- * `https://app.proofofchess.com`, and the menu switches between them in place.
+ * `https://app.proofofchess.com`, and the menu switches between the four it
+ * advertises. Play is intentionally route-only.
  */
 
 import { describe, expect, it } from "vitest";
 
-import { SITE_LABELS, SITE_TITLES, siteHash, type Site } from "./site";
+import { MENU_SITES, SITE_LABELS, SITE_TITLES, siteHash, type Site } from "./site";
 
 const SITES: Site[] = ["explorer", "wallet", "play", "dex", "bridge"];
 
@@ -24,6 +25,12 @@ describe("the five views", () => {
     const hashes = SITES.map(siteHash);
     expect(new Set(hashes).size).toBe(SITES.length);
     for (const hash of hashes) expect(hash.startsWith("#/")).toBe(true);
+  });
+
+  it("keeps Play out of the menu while leaving its route live", () => {
+    expect(MENU_SITES).toEqual(["explorer", "wallet", "dex", "bridge"]);
+    expect(MENU_SITES).not.toContain("play");
+    expect(siteHash("play")).toBe("#/play");
   });
 
   it("labels and titles every view", () => {

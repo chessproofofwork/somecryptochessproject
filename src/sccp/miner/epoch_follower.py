@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from sccp.chain.state import epoch_of
-from sccp.config import NetworkParams, get_network
+from sccp.config import NetworkParams, VariantParams, get_network
 from sccp.errors import RelayError
 from sccp.miner.matchmaker import Matchmaker
 from sccp.protocol.models import Beacon, RosterMember
@@ -39,6 +39,9 @@ class EpochNode(Protocol):
 
     def epoch(self, epoch: int) -> Mapping[str, object]:
         """The node's ``/v1/epochs/{epoch}`` document."""
+
+    def tokens(self) -> Mapping[str, object]:
+        """The node's ``/v1/tokens`` document."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +92,13 @@ class EpochFollower:
             if not isinstance(coverage, int) or isinstance(coverage, bool) or coverage < 0:
                 raise RelayError(f"/v1/status did not return a usable 'witnesses': {coverage!r}")
             self.matchmaker.set_witness_coverage(coverage)
+        # Tokens are immutable once registered, so a poll that returns the same
+        # list only reasserts what the relay already knows. Fetching them before
+        # the epoch check lets a registration become matchable in the epoch the
+        # chain opens it in, without restarting the relay.
+        tokens = getattr(self.node, "tokens", None)
+        if callable(tokens):
+            self.matchmaker.set_variants(_token_variants(tokens()))
         target = epoch_of(height, self.params)
         if target <= self.epoch:
             return None
@@ -126,6 +136,28 @@ class EpochFollower:
             engines=engines,
         )
         return EpochAdvance(epoch=epoch, miners=len(entries)) if advanced else None
+
+
+def _token_variants(document: Mapping[str, object]) -> dict[str, VariantParams]:
+    """Turn ``/v1/tokens`` into the relay's variant registry."""
+    raw = document.get("tokens")
+    if not isinstance(raw, list):
+        raise RelayError("/v1/tokens did not return a 'tokens' list")
+    variants: dict[str, VariantParams] = {}
+    fields = set(VariantParams.model_fields)
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise RelayError("/v1/tokens entries must be objects")
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            raise RelayError("/v1/tokens entry has no name")
+        try:
+            variants[name] = VariantParams.model_validate(
+                {key: value for key, value in item.items() if key in fields}
+            )
+        except ValueError as exc:
+            raise RelayError(f"/v1/tokens entry {name} is invalid: {exc}") from None
+    return variants
 
 
 def _roster_entries(

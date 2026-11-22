@@ -246,8 +246,8 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 | Wins per claim (`k`) | 1 | 3 (retargeted 1..10) |
 | Header seal difficulty | 0 bits | 16 bits (retargeted) |
 | Block subsidy | 50 coins | 50 coins, halves every 210,000 blocks |
-| Max supply | none (test coins) | 21,000,000 ZQWX + 21,000,000 per variant |
-| Genesis allocation | 1,000,000 ZQWX faucet, a 5 ZQWX/5 C960 demo pool and a completed 1-ZQWX HTLC | 1 bps ZQWX (2,100) bootstrap grant; no variant allocation |
+| Max supply | none (test coins) | 21,000,000 ZQWX; C960's custom-token cap is 21,000,000 |
+| Genesis allocation | 1,000,000 ZQWX faucet, a 5 ZQWX/5 C960 demo pool and a completed 1-ZQWX HTLC | 2 bps ZQWX (4,200) bootstrap grant; no token allocation |
 | Coinbase maturity | 20 blocks | 100 blocks |
 | Registration bond | 10 coins | 500 coins |
 | Claim window | 64 blocks | 144 blocks |
@@ -259,6 +259,19 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 
 `devnet` (in-process, mock engines, zero seal difficulty) exists for tests and CI.
 All values above are provisional and live in `src/sccp/config.py`.
+
+Mainnet is planned to launch with **standard-chess mining first**. The 2 bps
+ZQWX grant is 4,200 ZQWX: the initial k=3 roster - four miners at the 500 ZQWX
+registration bond plus three clock witnesses at the 50 ZQWX witness bond - needs
+2,150 ZQWX, leaving 2,050 for transaction fees, slashed-bond top-ups and
+additional miners. It is a bootstrap budget, not enough to fund full target
+throughput at k=3; the roster is expected to grow from mined subsidies and fees.
+C960 is registered at genesis as an ordinary custom token with ticket `0960`
+and no allocation, so C960 remains mined-only and C960 miners still need a small
+ZQWX balance for fees and the 10 ZQWX timeout bond. The grant is public in
+`genesis/mainnet-premine.json`; `scripts/make_genesis.py` pins the manifest total
+to exactly 2 bps so neither an accidental mint nor a dropped tranche changes the
+chain.
 
 The ETH bridge is pinned to one Ethereum environment per SCCP network: devnet to
 Anvil (chain id `31337`), testnet to Sepolia (`11155111`) and mainnet to Ethereum
@@ -294,6 +307,7 @@ responsibility rather than a construction phase.
 │   ├── guides/                       # use the CLI, the wallet and the web app
 │   │   ├── INSTALL.md                # install, node URL, network flag, keyfile rules
 │   │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
+│   │   ├── CREATE_YOUR_OWN_CRYPTO.md # register a variant token and open its first pool
 │   │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   │   ├── SEND_COINS.md             # fund a wallet and send a transfer
 │   │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
@@ -493,6 +507,7 @@ each one needs and where it ends, in [`docs/README.md`](docs/README.md):
 | --- | --- |
 | [`guides/INSTALL.md`](docs/guides/INSTALL.md) | install the CLI, choose a node, the `--network` rule |
 | [`guides/CREATE_A_TESTNET_WALLET.md`](docs/guides/CREATE_A_TESTNET_WALLET.md) | keyfile, faucet, balance — the short path |
+| [`guides/CREATE_YOUR_OWN_CRYPTO.md`](docs/guides/CREATE_YOUR_OWN_CRYPTO.md) | register a variant token, wait for it, transfer it, open a pool |
 | [`guides/OPEN_A_WALLET.md`](docs/guides/OPEN_A_WALLET.md) | the full keyfile, mnemonic and restore reference |
 | [`guides/SEND_COINS.md`](docs/guides/SEND_COINS.md) | fund, transfer, fees and settlement |
 | [`guides/PLAY_AND_EXPORT.md`](docs/guides/PLAY_AND_EXPORT.md) | play on-chain and export the block's games |
@@ -530,8 +545,9 @@ and wallet are one app deploy on `https://app.proofofchess.com`: nginx serves th
 built bundle with `/v1` and `/relay` proxied onto that origin, because the node
 sends no CORS headers. A Caddy terminator in front holds one certificate per
 name. The hamburger menu in the top-left corner switches between the explorer,
-the wallet, Play, the DEX and the bridge by hash route (`#/`, `#/wallet`,
-`#/play`, `#/dex`, `#/bridge`), so the unlocked key stays in the tab. See
+the wallet, the DEX and the bridge by hash route (`#/`, `#/wallet`, `#/dex`,
+`#/bridge`), so the unlocked key stays in the tab. Play is intentionally not in
+that menu, but `#/play` remains a live, bookmarkable route. See
 [`docs/setup/EXPLORER_DEPLOYMENT.md`](docs/setup/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws

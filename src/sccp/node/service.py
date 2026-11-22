@@ -29,7 +29,7 @@ from sccp.chain.block import block_hash
 from sccp.chain.chain import Chain, StoredBlock
 from sccp.chain.genesis import load_genesis
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import HtlcRecord, ProofRecord
+from sccp.chain.state import HtlcRecord, ProofRecord, TokenRecord
 from sccp.chain.storage import Storage, restore_chain
 from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
@@ -85,6 +85,8 @@ from sccp.node.models import (
     SyncReport,
     TakeAccepted,
     TakeView,
+    TokenList,
+    TokenView,
     TransactionRecord,
     TxAccepted,
 )
@@ -287,6 +289,12 @@ class NodeService:
     fanout: int = MAX_FANOUT
     max_sync_blocks: int = 512
     syncing: bool = False
+    approved_tokens: frozenset[str] | None = None
+    """Tickets, token ids or internal variant names this operator approved.
+
+    ``None`` approves every chain-registered token. An empty set approves none,
+    which leaves them reachable through the manual lookup endpoint only.
+    """
     _ratings: tuple[str, RatingLedger] | None = field(default=None, repr=False, compare=False)
     """Cached derived ratings, keyed by the tip hash they were replayed at."""
     _minted_subsidy_cache: tuple[str, int] | None = field(default=None, repr=False, compare=False)
@@ -328,6 +336,7 @@ class NodeService:
         storage: Storage | None = None,
         book: OpeningBook | None = None,
         clock: Callable[[], int] = unix_now,
+        approved_tokens: Sequence[str] | None = None,
     ) -> NodeService:
         """Open a node, replaying ``storage`` when one is supplied."""
         require_pq()
@@ -350,6 +359,7 @@ class NodeService:
             mempool=mempool,
             storage=storage,
             clock=clock,
+            approved_tokens=(None if approved_tokens is None else frozenset(approved_tokens)),
         )
 
     def check_startup(self) -> None:
@@ -655,6 +665,95 @@ class NodeService:
         if pool_id not in self.chain.state.pools:
             raise NotFoundError(f"unknown pool {pool_id!r}")
         return self._pool_view(pool_id)
+
+    def _token_approved(self, record: TokenRecord) -> bool:
+        """Whether this node's operator put the token in its approved registry."""
+        approved = self.approved_tokens
+        if approved is None:
+            return True
+        return bool(
+            {
+                record.name,
+                record.ticket or "",
+                record.token_id,
+            }
+            & approved
+        )
+
+    def _token_view(self, name: str) -> TokenView:
+        """Project one registered token and its minted supply onto the API shape."""
+        record = self.chain.state.tokens[name]
+        variant = record.variant
+        assert variant.asset is not None
+        return TokenView(
+            name=record.name,
+            ticket=record.ticket,
+            network=self.params.network_id,
+            asset=variant.asset,
+            token_id=record.token_id,
+            approved=self._token_approved(record),
+            symbol=variant.symbol,
+            display_name=variant.display_name,
+            rules=variant.rules,
+            ruleset=variant.ruleset,
+            decimals=variant.decimals,
+            subsidy=variant.subsidy,
+            initial_supply=record.initial_supply,
+            halving_interval=variant.halving_interval,
+            max_supply=variant.max_supply,
+            min_plies=variant.min_plies,
+            max_games_per_block=variant.max_games_per_block,
+            opening_book=variant.opening_book,
+            time_control_initial_ms=variant.time_control_initial_ms,
+            time_control_increment_ms=variant.time_control_increment_ms,
+            time_control_delay_ms=variant.time_control_delay_ms,
+            time_control_first_moves=variant.time_control_first_moves,
+            time_control_periods=variant.time_control_periods,
+            openings=variant.openings,
+            owner=record.owner,
+            registered_at_height=record.registered_at_height,
+            minted=self.chain.state.minted_assets.get(variant.asset, 0),
+        )
+
+    def tokens(self) -> TokenList:
+        """Every chain-registered token, ordered by variant name."""
+        return TokenList(
+            network=self.params.network_id,
+            tokens=tuple(self._token_view(name) for name in sorted(self.chain.state.tokens)),
+        )
+
+    def token(self, reference: str) -> TokenView:
+        """One token by ticket, token id, internal variant name, name or ticker.
+
+        The registration ticket and the network-assigned token id are unique by
+        construction, which is what makes the manual lookup in a wallet
+        deterministic. Display names and tickers are not unique; a repeated
+        name or ticker resolves only when exactly one token on the chain carries
+        it, and is otherwise reported as ambiguous. Internal variant names are
+        kept for miners and for tokens registered before tickets existed.
+        """
+        registry = self.chain.state.tokens
+        if reference in registry:
+            return self._token_view(reference)
+        record = self.chain.state.token_by_ticket(reference)
+        if record is not None:
+            return self._token_view(record.name)
+        record = self.chain.state.token_by_id(reference)
+        if record is not None:
+            return self._token_view(record.name)
+        matches = [
+            name
+            for name, token in registry.items()
+            if token.variant.symbol == reference or token.variant.display_name == reference
+        ]
+        if len(matches) == 1:
+            return self._token_view(matches[0])
+        if len(matches) > 1:
+            raise NotFoundError(
+                f"token reference {reference!r} is ambiguous; "
+                "use a ticket, token id or the internal variant name"
+            )
+        raise NotFoundError(f"unknown token {reference!r}")
 
     def epoch(self, epoch: int) -> EpochView:
         """The beacon, roster and reveals the chain recorded for ``epoch``.

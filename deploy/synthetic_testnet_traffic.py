@@ -96,7 +96,7 @@ import httpx
 from sccp.chain import dex
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.tx import htlc_id, sign_transaction, txid
-from sccp.config import TESTNET, NetworkParams, coins_to_units, format_coins
+from sccp.config import C960_ASSET_ID, TESTNET, NetworkParams, coins_to_units, format_coins
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed
 from sccp.errors import ConfigError
@@ -1005,6 +1005,8 @@ def _asset_label(asset: str, params: NetworkParams) -> str:
     """A pool side's ticker, falling back to a short asset id for unknown tokens."""
     if asset == dex.NATIVE_ASSET:
         return "ZQWX"
+    if asset == C960_ASSET_ID:
+        return "C960"
     for variant in params.variants:
         if variant.asset == asset:
             return variant.symbol
@@ -1018,7 +1020,9 @@ def _dex_asset_id(params: NetworkParams, override: str | None) -> str | None:
     for variant in params.variants:
         if variant.asset:
             return variant.asset
-    return None
+    # C960 is a genesis-registered custom token, not a NetworkParams variant.
+    # The shipped networks all seed its record, so it remains the default market.
+    return C960_ASSET_ID
 
 
 def _short(digest: str) -> str:

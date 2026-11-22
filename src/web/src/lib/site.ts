@@ -6,6 +6,10 @@
  * `#/bridge`), not by a hostname, so every view is a direct, bookmarkable URL on
  * the same origin and one TLS certificate covers all of them. The hamburger
  * switches by hash so the unlocked in-memory key stays in this tab.
+ *
+ * The menu offers the four views in `MENU_SITES`. Play is intentionally
+ * route-only: `#/play` remains live for links and bookmarks without being
+ * advertised in the hamburger.
  */
 
 export type Site = "explorer" | "wallet" | "play" | "dex" | "bridge";
@@ -17,6 +21,9 @@ export const SITE_LABELS: Readonly<Record<Site, string>> = {
   dex: "DEX",
   bridge: "Bridge",
 };
+
+/** The views the hamburger lists. Play stays reachable only by its direct route. */
+export const MENU_SITES: readonly Site[] = ["explorer", "wallet", "dex", "bridge"];
 
 /** The browser tab title for each view. */
 export const SITE_TITLES: Readonly<Record<Site, string>> = {

@@ -9,13 +9,17 @@ import pytest
 from pydantic import ValidationError
 
 from sccp.chess.pgn import validate_pgn
+from sccp.config import NetworkParams, TimeControlPeriod
 from sccp.errors import ClockError, PgnValidationError, ProofVerificationError, TranscriptError
 from sccp.protocol.clocks import (
     FIXED_TIME_CONTROL,
     MatchClock,
+    bonus_through,
     build_clock_evidence,
     build_move_evidence,
     flag_result,
+    period_bonus_at,
+    period_index,
     sign_move,
     sign_receipt,
     time_control_from_tag,
@@ -38,6 +42,7 @@ from sccp.protocol.transcript import (
     build_win_proof,
     create_result,
     expected_from_certificate,
+    opening_hash,
     render_transcript_pgn,
     sign_result,
 )
@@ -215,6 +220,9 @@ def test_time_control_tag_is_lossless() -> None:
     assert time_control_tag(FIXED_TIME_CONTROL) == "600+0"
     assert time_control_from_tag("600+0") == FIXED_TIME_CONTROL
     assert time_control_from_tag("600+5") == TimeControl(initial_ms=600_000, increment_ms=5_000)
+    delay = TimeControl(initial_ms=600_000, delay_ms=5_000)
+    assert time_control_tag(delay) == "600+5d"
+    assert time_control_from_tag("600+5d") == delay
     for bad in (
         "600",
         "600+",
@@ -223,6 +231,10 @@ def test_time_control_tag_is_lossless() -> None:
         "600-5",
         "-1+0",
         "0+0",
+        "600+0d",
+        "600+d",
+        "600+5dd",
+        "600+5D",
         "6_00+0",
         " 600+0",
         "86401+0",
@@ -232,8 +244,28 @@ def test_time_control_tag_is_lossless() -> None:
             time_control_from_tag(bad)
 
 
-def test_validate_time_control_enforces_bounds_and_the_fixed_control() -> None:
+def test_multi_period_time_control_tag_roundtrips_and_places_its_bonus() -> None:
+    """FIDE-style periods are lossless in the PGN tag and start on a ply boundary."""
+    control = time_control_from_tag("40/5400+0:20/1800+30")
+    assert control.initial_ms == 5_400_000
+    assert control.increment_ms == 0
+    assert control.first_period_moves == 40
+    assert len(control.periods) == 1
+    period = control.periods[0]
+    assert (period.moves, period.initial_ms, period.increment_ms) == (20, 1_800_000, 30_000)
+    assert time_control_tag(control) == "40/5400+0:20/1800+30"
+
+    # The first period covers plies 0..79; the later period starts at ply 80
+    # and adds its time once, to both clocks.
+    assert period_index(control, 79) == 0
+    assert period_index(control, 80) == 1
+    assert period_bonus_at(control, 79) == 0
+    assert period_bonus_at(control, 80) == 1_800_000
+    assert bonus_through(control, 99) == 1_800_000
+    validate_time_control(control, max_plies=300)
+
     validate_time_control(FIXED_TIME_CONTROL, max_plies=300, require_fixed=True)
+    validate_time_control(TimeControl(initial_ms=600_000, delay_ms=5_000), max_plies=300)
     with pytest.raises(ClockError, match="protocol-fixed"):
         validate_time_control(
             TimeControl(initial_ms=60_000, increment_ms=0),
@@ -249,9 +281,306 @@ def test_validate_time_control_enforces_bounds_and_the_fixed_control() -> None:
     # model_validate must run the same cross-field bound as the constructor.
     with pytest.raises(ValidationError, match="MAX_CLOCK_MS"):
         TimeControl.model_validate({"initial_ms": 86_000_000, "increment_ms": 1_000})
+    with pytest.raises(ValidationError, match="increment or a delay"):
+        TimeControl.model_validate(
+            {"initial_ms": 600_000, "increment_ms": 1_000, "delay_ms": 1_000}
+        )
 
 
-def test_match_clock_spends_mover_time_and_applies_increment() -> None:
+def test_match_clock_starts_at_the_opening_ply_with_unlocked_period_time() -> None:
+    """Opening plies count toward period boundaries but are never charged."""
+    control = TimeControl(
+        initial_ms=600_000,
+        first_period_moves=2,
+        periods=(TimeControlPeriod(moves=1, initial_ms=60_000),),
+    )
+    # A four-ply opening has already crossed the boundary at ply 4.
+    clock = MatchClock.start(control, now_ms=0, ply=4)
+    assert clock.snapshot(0) == {"white": 660_000, "black": 660_000}
+
+    # Starting before the boundary leaves the first period in force; the move
+    # that reaches ply 4 adds the next period's time to both clocks.
+    clock = MatchClock.start(control, now_ms=0, ply=2)
+    assert clock.snapshot(0) == {"white": 600_000, "black": 600_000}
+    clock.apply_move(250)
+    assert clock.snapshot(250) == {"white": 600_000, "black": 600_000}
+    clock.apply_move(500)
+    assert clock.snapshot(500) == {"white": 660_000, "black": 660_000}
+
+    with pytest.raises(ClockError, match="ply"):
+        MatchClock.start(control, now_ms=0, ply=-1)
+
+
+def test_clock_evidence_anchors_a_suffix_and_credits_a_period_boundary(
+    signed_match,
+) -> None:
+    """A window may start mid-game, and a receipt after the last ply of a period
+    carries that period's bonus on both clocks."""
+    period = TimeControlPeriod(moves=20, initial_ms=1_800_000)
+    control = TimeControl(
+        initial_ms=600_000,
+        increment_ms=0,
+        first_period_moves=40,
+        periods=(period,),
+    )
+    certificate = signed_match.certificate.model_copy(update={"time_control": control})
+    opening = list(certificate.opening.moves)
+    board = chess.Board()
+    for san in opening:
+        board.push_san(san)
+    san_moves = list(opening)
+    cycle = ("Nf3", "Nf6", "Ng1", "Ng8")
+    while len(san_moves) < 80:
+        san = cycle[(len(san_moves) - len(opening)) % len(cycle)]
+        board.push_san(san)
+        san_moves.append(san)
+
+    # The clock starts after the fixed opening, but counts those plies toward
+    # the 40-move first period.
+    clock = MatchClock.start(control, now_ms=0, ply=len(opening))
+    witness = signed_match.accounts["carol"].keypair
+    network = signed_match.params.network_id
+    receipts = []
+    now = 0
+    for ply, san in enumerate(san_moves):
+        if ply < len(opening):
+            continue
+        now += 1_000
+        clock.apply_move(now)
+        snapshot = clock.snapshot(now)
+        seat = certificate.white if ply % 2 == 0 else certificate.black
+        receipts.append(
+            sign_receipt(
+                MoveReceipt(
+                    match_id=certificate.match_id,
+                    ply=ply,
+                    seat=seat,
+                    san=san,
+                    received_at_ms=now,
+                    white_ms=snapshot["white"],
+                    black_ms=snapshot["black"],
+                ),
+                witness,
+                network=network,
+            )
+        )
+
+    # Ply 79 is the last move of the first period; its receipt already carries
+    # the 30-minute bonus, which is visible as an unchanged idle clock plus the
+    # period's full initial time.
+    assert receipts[-1].ply == 79
+    assert receipts[-1].white_ms - receipts[-2].white_ms == period.initial_ms
+
+    flagged = clock.turn
+    winner = "black" if flagged == "white" else "white"
+    snapshot = clock.snapshot(now)
+    final = sign_receipt(
+        FlagReceipt(
+            match_id=certificate.match_id,
+            ply=len(san_moves),
+            seat=certificate.white if flagged == "white" else certificate.black,
+            received_at_ms=now + snapshot[flagged] + 250,
+            white_ms=0 if flagged == "white" else snapshot["white"],
+            black_ms=0 if flagged == "black" else snapshot["black"],
+        ),
+        witness,
+        network=network,
+    )
+    evidence = build_clock_evidence(
+        network=network,
+        time_control=control,
+        receipts=tuple(receipts),
+        final=final,
+        signers=(_witness(signed_match),),
+    )
+    verify_clock_evidence(
+        evidence,
+        certificate=certificate,
+        san_moves=san_moves,
+        result="1-0" if winner == "white" else "0-1",
+        winner_seat=winner,
+        public_keys=signed_match.public_keys,
+        quorum=signed_match.params.clock_witness_quorum,
+        max_plies=signed_match.params.max_plies,
+        expected_time_control=control,
+    )
+
+
+def test_clock_evidence_anchors_the_first_post_opening_move_after_a_bonus(
+    signed_match,
+) -> None:
+    """The first receipt may be the first timed move, with an opening bonus already
+    unlocked; its idle clock must match the starting time plus that bonus."""
+    period = TimeControlPeriod(moves=1, initial_ms=60_000)
+    control = TimeControl(
+        initial_ms=600_000,
+        increment_ms=0,
+        first_period_moves=2,
+        periods=(period, period),
+    )
+    certificate = signed_match.certificate.model_copy(update={"time_control": control})
+    opening = list(certificate.opening.moves)
+    san_moves = [*opening, "Qh5", "Nf6", "Qh3"]
+    clock = MatchClock.start(control, now_ms=0, ply=len(opening))
+    witness = signed_match.accounts["carol"].keypair
+    network = signed_match.params.network_id
+    receipts = []
+    now = 0
+    for ply in range(len(opening), len(san_moves)):
+        now += 1_000
+        clock.apply_move(now)
+        snapshot = clock.snapshot(now)
+        receipts.append(
+            sign_receipt(
+                MoveReceipt(
+                    match_id=certificate.match_id,
+                    ply=ply,
+                    seat=certificate.white if ply % 2 == 0 else certificate.black,
+                    san=san_moves[ply],
+                    received_at_ms=now,
+                    white_ms=snapshot["white"],
+                    black_ms=snapshot["black"],
+                ),
+                witness,
+                network=network,
+            )
+        )
+
+    # The opening crossed the first boundary, so both clocks began at 660_000;
+    # White has already spent 750 ms by the first receipt.
+    assert receipts[0].white_ms == 659_250
+    assert receipts[0].black_ms == 660_000
+    # Reaching ply 6 adds the next period's time to both clocks after ply 5.
+    assert receipts[1].black_ms == 719_250
+    assert receipts[1].white_ms == 719_250
+
+    snapshot = clock.snapshot(now)
+    final = sign_receipt(
+        FlagReceipt(
+            match_id=certificate.match_id,
+            ply=len(san_moves),
+            seat=certificate.black,
+            received_at_ms=now + snapshot["black"] + 250,
+            white_ms=snapshot["white"],
+            black_ms=0,
+        ),
+        witness,
+        network=network,
+    )
+    evidence = build_clock_evidence(
+        network=network,
+        time_control=control,
+        receipts=tuple(receipts),
+        final=final,
+        signers=(_witness(signed_match),),
+    )
+    verify_clock_evidence(
+        evidence,
+        certificate=certificate,
+        san_moves=san_moves,
+        result="1-0",
+        winner_seat="white",
+        public_keys=signed_match.public_keys,
+        quorum=signed_match.params.clock_witness_quorum,
+        max_plies=signed_match.params.max_plies,
+        expected_time_control=control,
+    )
+
+
+def test_clock_evidence_first_receipt_counts_its_own_period_boundary(
+    signed_match,
+) -> None:
+    """A boundary reached by the first timed move belongs to that receipt's
+    idle anchor, while the opening's earlier boundary is already credited."""
+    control = TimeControl(
+        initial_ms=600_000,
+        increment_ms=0,
+        first_period_moves=1,
+        periods=(
+            TimeControlPeriod(moves=1, initial_ms=30_000),
+            TimeControlPeriod(moves=1, initial_ms=60_000),
+        ),
+    )
+    moves = ("e4", "e5", "Bc4")
+    opening = signed_match.certificate.opening.model_copy(
+        update={
+            "moves": moves,
+            "hash": opening_hash(
+                signed_match.certificate.opening.book_version,
+                signed_match.certificate.opening.line_id,
+                moves,
+            ),
+        }
+    )
+    certificate = signed_match.certificate.model_copy(
+        update={"opening": opening, "time_control": control}
+    )
+    san_moves = [*moves, "Nf6", "Qh5"]
+    clock = MatchClock.start(control, now_ms=0, ply=len(moves))
+    clock.turn = "black"
+    witness = signed_match.accounts["carol"].keypair
+    network = signed_match.params.network_id
+    receipts = []
+    now = 0
+    for ply in range(len(moves), len(san_moves)):
+        now += 1_000
+        clock.apply_move(now)
+        snapshot = clock.snapshot(now)
+        receipts.append(
+            sign_receipt(
+                MoveReceipt(
+                    match_id=certificate.match_id,
+                    ply=ply,
+                    seat=certificate.white if ply % 2 == 0 else certificate.black,
+                    san=san_moves[ply],
+                    received_at_ms=now,
+                    white_ms=snapshot["white"],
+                    black_ms=snapshot["black"],
+                ),
+                witness,
+                network=network,
+            )
+        )
+
+    # The three-ply opening unlocked 30_000; reaching ply 4 through black's
+    # first timed move unlocks another 60_000 for both clocks.
+    assert receipts[0].black_ms == 689_250
+    assert receipts[0].white_ms == 690_000
+    assert receipts[1].white_ms == 689_250
+    assert receipts[1].black_ms == 689_250
+
+    snapshot = clock.snapshot(now)
+    final = sign_receipt(
+        FlagReceipt(
+            match_id=certificate.match_id,
+            ply=len(san_moves),
+            seat=certificate.black,
+            received_at_ms=now + snapshot["black"] + 250,
+            white_ms=snapshot["white"],
+            black_ms=0,
+        ),
+        witness,
+        network=network,
+    )
+    evidence = build_clock_evidence(
+        network=network,
+        time_control=control,
+        receipts=tuple(receipts),
+        final=final,
+        signers=(_witness(signed_match),),
+    )
+    verify_clock_evidence(
+        evidence,
+        certificate=certificate,
+        san_moves=san_moves,
+        result="1-0",
+        winner_seat="white",
+        public_keys=signed_match.public_keys,
+        quorum=signed_match.params.clock_witness_quorum,
+        max_plies=signed_match.params.max_plies,
+        expected_time_control=control,
+    )
+
     control = TimeControl(initial_ms=10_000, increment_ms=3_000)
     clock = MatchClock.start(control, now_ms=0, lag_grace_ms=250)
     assert clock.snapshot(0) == {"white": 10_000, "black": 10_000}
@@ -268,6 +597,91 @@ def test_match_clock_spends_mover_time_and_applies_increment() -> None:
     assert clock.apply_move(0) == 13_000
     assert clock.turn == "white"
     assert clock.current_remaining_ms(3_000) == 10_500
+
+
+def test_clock_evidence_charges_only_time_beyond_the_delay(signed_match) -> None:
+    control = TimeControl(initial_ms=600_000, delay_ms=5_000)
+    certificate = signed_match.certificate.model_copy(update={"time_control": control})
+    opening = list(certificate.opening.moves)
+    san_moves = [*opening, "Qh5"]
+    move_ply = len(opening)
+    witness = signed_match.accounts["carol"].keypair
+    network = signed_match.params.network_id
+    receipt = sign_receipt(
+        MoveReceipt(
+            match_id=certificate.match_id,
+            ply=move_ply,
+            seat=certificate.white,
+            san="Qh5",
+            received_at_ms=1_000_000,
+            white_ms=control.initial_ms,
+            black_ms=control.initial_ms,
+        ),
+        witness,
+        network=network,
+    )
+
+    def evidence_at(flagged_at_ms: int) -> ClockEvidence:
+        final = sign_receipt(
+            FlagReceipt(
+                match_id=certificate.match_id,
+                ply=move_ply + 1,
+                seat=certificate.black,
+                received_at_ms=flagged_at_ms,
+                white_ms=control.initial_ms,
+                black_ms=0,
+            ),
+            witness,
+            network=network,
+        )
+        return build_clock_evidence(
+            network=network,
+            time_control=control,
+            receipts=(receipt,),
+            final=final,
+            signers=(_witness(signed_match),),
+        )
+
+    kwargs = {
+        "certificate": certificate,
+        "san_moves": san_moves,
+        "result": "1-0",
+        "winner_seat": "white",
+        "public_keys": signed_match.public_keys,
+        "quorum": 1,
+        "max_plies": signed_match.params.max_plies,
+        "expected_time_control": control,
+    }
+    verify_clock_evidence(
+        evidence_at(1_000_000 + control.initial_ms + control.delay_ms + 250), **kwargs
+    )
+    with pytest.raises(ClockError, match="before the flagged clock reaches zero"):
+        verify_clock_evidence(evidence_at(1_000_000 + control.initial_ms + 250), **kwargs)
+
+
+def test_match_clock_makes_the_delay_free_at_the_start_of_each_turn() -> None:
+    control = TimeControl(initial_ms=10_000, delay_ms=3_000)
+    clock = MatchClock.start(control, now_ms=0, lag_grace_ms=250)
+
+    # Inside the delay the clock does not move, even after lag grace.
+    assert clock.snapshot(2_000) == {"white": 10_000, "black": 10_000}
+    assert clock.apply_move(2_000) == 10_000
+    assert clock.turn == "black"
+    assert clock.snapshot(4_000) == {"white": 10_000, "black": 10_000}
+
+    # Only time beyond the delay is charged. The unused delay is not carried.
+    assert clock.apply_move(6_250) == 9_000
+    assert clock.turn == "white"
+    assert clock.snapshot(9_500) == {"white": 10_000, "black": 9_000}
+
+    # White's next turn is again inside its own delay.
+    assert clock.apply_move(9_500) == 10_000
+    assert clock.turn == "black"
+
+    # A delayed clock flags after main time + one delay + lag grace.
+    flagged_at = 9_500 + 9_000 + 3_000 + 250
+    assert clock.current_remaining_ms(flagged_at) == 0
+    assert clock.flag(flagged_at) == "black"
 
 
 def test_match_clock_flags_at_zero_and_refuses_a_late_move() -> None:
@@ -627,7 +1041,10 @@ def test_time_forfeit_proof_round_trips(signed_match) -> None:
 def test_low_ply_forfeits_are_marked_and_verified(signed_match) -> None:
     pgn, evidence = _flag_game(signed_match)
     _, result = _signed_result(signed_match, pgn)
-    params = signed_match.params.model_copy(update={"min_plies": 10})
+    document = signed_match.params.model_dump()
+    document["min_plies"] = 10
+    document["variants"] = [{**variant, "min_plies": 10} for variant in document["variants"]]
+    params = NetworkParams.model_validate(document)
     proof = build_win_proof(
         signed_match.certificate,
         pgn,

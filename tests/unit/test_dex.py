@@ -20,14 +20,14 @@ from sccp.chain.dex import (
     pool_id as derive_pool_id,
 )
 from sccp.chain.genesis import faucet_keypair
-from sccp.chain.state import Pool, State
+from sccp.chain.state import Pool, State, TokenRecord
 from sccp.chain.tx import (
     TxFailure,
     apply_transaction,
     sign_transaction,
     validate_transaction,
 )
-from sccp.config import CHESS960_ASSET_ID, DEVNET
+from sccp.config import C960, C960_ASSET_ID, C960_VARIANT, DEVNET
 from sccp.crypto.address import encode_address
 from sccp.errors import StateError, TxValidationError
 from sccp.protocol.models import Transaction, TxType
@@ -39,11 +39,17 @@ START = 1_700_000_000
 
 def _state(accounts: Mapping[str, Any]) -> State:
     state = State(params=DEVNET, height=HEIGHT - 1, timestamps=[START])
+    state.tokens[C960_VARIANT] = TokenRecord(
+        name=C960_VARIANT,
+        variant=C960,
+        owner=next(iter(accounts.values())).address,
+        registered_at_height=0,
+    )
     for account in accounts.values():
         entry = state.ensure(account.address)
         entry.public_key = account.keypair.public_key_hex
         entry.balance = 1_000 * COINS
-        entry.assets[CHESS960_ASSET_ID] = 100 * COINS
+        entry.assets[C960_ASSET_ID] = 100 * COINS
     return state
 
 
@@ -76,7 +82,7 @@ def _create(
     token_amount: int,
     *,
     nonce: int = 0,
-    asset: str = CHESS960_ASSET_ID,
+    asset: str = C960_ASSET_ID,
 ) -> Transaction:
     return _tx(
         keypair,
@@ -96,23 +102,23 @@ def test_create_pool_mints_shares_and_holds_both_reserves(
     state = _state(protocol_accounts)
     alice = protocol_accounts["alice"]
     before_native = state.account(alice.address).balance
-    before_token = state.asset_balance(alice.address, CHESS960_ASSET_ID)
+    before_token = state.asset_balance(alice.address, C960_ASSET_ID)
 
     native_amount = 10 * COINS
     token_amount = 20 * COINS
     tx = _create(alice.keypair, native_amount, token_amount)
     _apply(state, tx)
 
-    expected_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    expected_id = derive_pool_id(NATIVE_ASSET, C960_ASSET_ID)
     pool = state.pools[expected_id]
     expected_shares = initial_shares(native_amount, token_amount)
     assert pool.asset_a == NATIVE_ASSET
-    assert pool.asset_b == CHESS960_ASSET_ID
+    assert pool.asset_b == C960_ASSET_ID
     assert (pool.reserve_a, pool.reserve_b) == (native_amount, token_amount)
     assert pool.total_shares == expected_shares
     assert pool.shares == {alice.address: expected_shares}
     assert state.account(alice.address).balance == before_native - native_amount - DEVNET.min_fee
-    assert state.asset_balance(alice.address, CHESS960_ASSET_ID) == before_token - token_amount
+    assert state.asset_balance(alice.address, C960_ASSET_ID) == before_token - token_amount
 
 
 def test_add_liquidity_is_proportional_to_the_pool(
@@ -123,7 +129,7 @@ def test_add_liquidity_is_proportional_to_the_pool(
     native_amount = 10 * COINS
     token_amount = 20 * COINS
     _apply(state, _create(alice.keypair, native_amount, token_amount))
-    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = derive_pool_id(NATIVE_ASSET, C960_ASSET_ID)
     pool = state.pools[pool_id]
     before = pool.total_shares
 
@@ -152,7 +158,7 @@ def test_swap_moves_both_reserves_and_honours_the_minimum(
     alice = protocol_accounts["alice"]
     bob = protocol_accounts["bob"]
     _apply(state, _create(alice.keypair, 10 * COINS, 20 * COINS))
-    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = derive_pool_id(NATIVE_ASSET, C960_ASSET_ID)
     pool = state.pools[pool_id]
     amount_in = COINS
     expected_out = swap_output(10 * COINS, 20 * COINS, amount_in, DEVNET.dex_fee_bps)
@@ -172,7 +178,7 @@ def test_swap_moves_both_reserves_and_honours_the_minimum(
 
     assert pool.reserve_a == 11 * COINS
     assert pool.reserve_b == 20 * COINS - expected_out
-    assert state.asset_balance(bob.address, CHESS960_ASSET_ID) == 100 * COINS + expected_out
+    assert state.asset_balance(bob.address, C960_ASSET_ID) == 100 * COINS + expected_out
     assert state.account(bob.address).balance == 1_000 * COINS - amount_in - DEVNET.min_fee
 
     greedy = _tx(
@@ -194,11 +200,11 @@ def test_remove_all_liquidity_returns_the_reserves_and_deletes_the_pool(
     state = _state(protocol_accounts)
     alice = protocol_accounts["alice"]
     _apply(state, _create(alice.keypair, 10 * COINS, 20 * COINS))
-    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = derive_pool_id(NATIVE_ASSET, C960_ASSET_ID)
     pool = state.pools[pool_id]
     shares = pool.shares[alice.address]
     before_native = state.account(alice.address).balance
-    before_token = state.asset_balance(alice.address, CHESS960_ASSET_ID)
+    before_token = state.asset_balance(alice.address, C960_ASSET_ID)
 
     tx = _tx(
         alice.keypair,
@@ -210,7 +216,7 @@ def test_remove_all_liquidity_returns_the_reserves_and_deletes_the_pool(
 
     assert pool_id not in state.pools
     assert state.account(alice.address).balance == before_native + 10 * COINS - DEVNET.min_fee
-    assert state.asset_balance(alice.address, CHESS960_ASSET_ID) == before_token + 20 * COINS
+    assert state.asset_balance(alice.address, C960_ASSET_ID) == before_token + 20 * COINS
 
 
 def test_remove_liquidity_rejects_more_than_the_sender_owns(
@@ -220,7 +226,7 @@ def test_remove_liquidity_rejects_more_than_the_sender_owns(
     alice = protocol_accounts["alice"]
     bob = protocol_accounts["bob"]
     _apply(state, _create(alice.keypair, 10 * COINS, 20 * COINS))
-    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = derive_pool_id(NATIVE_ASSET, C960_ASSET_ID)
     tx = _tx(
         bob.keypair,
         TxType.REMOVE_LIQUIDITY,
@@ -240,18 +246,18 @@ def test_pools_are_committed_by_state_root_and_snapshots(
     assert state.state_root() != empty_root
 
     restored = State.from_snapshot(DEVNET, state.snapshot())
-    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = derive_pool_id(NATIVE_ASSET, C960_ASSET_ID)
     assert restored.pools == state.pools
     assert restored.pools[pool_id].shares == state.pools[pool_id].shares
     assert restored.state_root() == state.state_root()
 
 
 def test_pool_rejects_an_unordered_or_unbalanced_book() -> None:
-    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = derive_pool_id(NATIVE_ASSET, C960_ASSET_ID)
     with pytest.raises(StateError):
         Pool(
             pool_id,
-            CHESS960_ASSET_ID,
+            C960_ASSET_ID,
             NATIVE_ASSET,
             1,
             1,
@@ -259,7 +265,7 @@ def test_pool_rejects_an_unordered_or_unbalanced_book() -> None:
             {"sccpt1alice": 1},
         )
     with pytest.raises(StateError):
-        Pool(pool_id, NATIVE_ASSET, CHESS960_ASSET_ID, 1, 1, 2, {"sccpt1alice": 1})
+        Pool(pool_id, NATIVE_ASSET, C960_ASSET_ID, 1, 1, 2, {"sccpt1alice": 1})
 
 
 def test_duplicate_pool_and_unknown_asset_are_refused(
@@ -281,14 +287,14 @@ def test_a_create_pool_transaction_survives_a_real_block(
     """The builder, block validation and state root all see the new pool."""
     faucet = faucet_keypair("devnet")
     address = encode_address(faucet.public_key_bytes, DEVNET)
-    devnet_chain.state.ensure(address).assets[CHESS960_ASSET_ID] = 20 * COINS
+    devnet_chain.state.ensure(address).assets[C960_ASSET_ID] = 20 * COINS
     tx = _create(faucet, 10 * COINS, 20 * COINS)
 
     block = mine_block(devnet_chain, faucet, txs=(tx,))
 
     assert len(block.transactions) == 1
     assert devnet_chain.height == 1
-    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = derive_pool_id(NATIVE_ASSET, C960_ASSET_ID)
     assert pool_id in devnet_chain.state.pools
     assert devnet_chain.state.pools[pool_id].reserve_b == 20 * COINS
 

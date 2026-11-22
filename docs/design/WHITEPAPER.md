@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.36.6 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.37.0 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
@@ -242,7 +242,7 @@ There are three parameter sets:
 | Network | Purpose | Address prefix | Genesis |
 | --- | --- | --- | --- |
 | `testnet` | Public, valueless integration network | `sccpt1...` | Pinned testnet genesis with a faucet allocation, a seeded ZQWX/C960 pool and a completed SCCP HTLC |
-| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 1-basis-point (2,100 ZQWX) bootstrap grant |
+| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 2-basis-point (4,200 ZQWX) bootstrap grant |
 | `devnet` | Deterministic in-process tests and demos | `sccpt1...` | Pinned deterministic genesis with a faucet allocation |
 
 The network id is inside transaction hashes, game hashes, certificates,
@@ -638,11 +638,13 @@ TimeControl, Rules
 `Rules` must match the variant the proof names: `chess` for a standard game, or
 `chess960` for a Chess960 game, whose PGN also carries `SetUp "1"`, a
 Shredder-FEN `FEN` and `Variant "Chess960"`. `TimeControl` is
-`<initial>+<increment>` in seconds;
-the v1 policy uses `10+0`. `MatchID`, epoch, round, seats, engines, opening id,
-opening hash and time control are checked against the match certificate, so a
-proof cannot silently describe a different game. Variations are rejected when a
-certificate is supplied.
+`<initial>+<increment>` in seconds for a Fischer clock, `<initial>+<delay>d` for
+a delay clock, or `<initial>+0` for sudden death. A token that omits a clock
+defaults to `10+0`, and every registration fixes its own clock at registration.
+C960 uses the default. `MatchID`,
+epoch, round, seats, engines, opening id, opening hash and time control are
+checked against the match certificate, so a proof cannot silently describe a
+different game. Variations are rejected when a certificate is supplied.
 
 ### 8.3 Canonical game identity
 
@@ -669,8 +671,9 @@ uses.
 
 ### 8.4 Minimum length and time-forfeit nuance
 
-A proof must have at least `min_plies` half-moves (20 on testnet, 30 on
-mainnet). A game that ends earlier gets `low_ply = True`. `validate_pgn` with
+A proof must have at least the settled variant's `min_plies` half-moves (20 for
+Chess960 and testnet standard play, 30 for mainnet ZQWX). A game that ends
+earlier gets `low_ply = True`. `validate_pgn` with
 `require_win=True` rejects a low-ply game unless its termination is
 `time_forfeit`. The block layer only requires that `low_ply` be truthful, so a
 short game cannot masquerade as a normal checkmate win. It is an explicit,
@@ -942,10 +945,18 @@ A `MatchCertificate` binds:
 Both seats sign the canonical certificate payload. The relay refuses to start
 until both signatures verify. The signatures are over the certificate, not over
 a relay-generated session token, so the same certificate can be checked offline.
-The fixed v1 control is 10 minutes per seat with no increment:
+The built-in v1 control is 10 minutes per seat with no bonus, but a registered
+token fixes its own clock. The three protocol forms are:
 
 ```text
-TimeControl(initial_ms = 600_000, increment_ms = 0)
+TimeControl(initial_ms = 600_000, increment_ms = 0)              # sudden death
+TimeControl(initial_ms = 600_000, increment_ms = 5_000)          # Fischer increment
+TimeControl(initial_ms = 600_000, delay_ms = 5_000)              # per-turn delay
+TimeControl(initial_ms = 5_400_000, increment_ms = 0,            # FIDE periods
+            first_period_moves = 40,
+            periods = (TimeControlPeriod(moves = 20,
+                                         initial_ms = 1_800_000,
+                                         increment_ms = 30_000),))
 ```
 
 ### 11.3 Starting the clock
@@ -953,13 +964,18 @@ TimeControl(initial_ms = 600_000, increment_ms = 0)
 The clock starts when the second valid start signature is accepted and the relay
 has played the book line. The side to move on the resulting board is to move
 (White normally, Black if the opening ends after an odd ply). Only that side
-spends time. A move deducts
+spends time. The certified opening is never charged to either clock, but its
+plies count toward FIDE period boundaries: a boundary the opening already
+crossed credits its `initial_ms` to both clocks before the first timed turn.
+A move deducts
 
 ```text
-max(0, elapsed_ms - lag_grace_ms)
+max(0, elapsed_ms - lag_grace_ms - delay_ms)
 ```
 
-from the mover, adds the increment (zero in v1) and switches turns. If the
+from the mover, adds the period's increment and switches turns. When the move
+reaches a period boundary, that period's `initial_ms` is added to both clocks
+after the mover's increment; it is added time, not a clock reset. If the
 deduction would leave zero or less, the move is rejected and the side to move
 is flagged. `lag_grace_ms` defaults to 250 ms and is capped at 1,000 ms. It is a
 relay policy that is recorded in network parameters; it is not part of the game
@@ -1230,6 +1246,7 @@ block chain.
 | --- | --- |
 | `transfer` | Move spendable balance; an optional `asset` field names a variant token instead of ZQWX |
 | `register` | Register a miner, lock the registration bond and choose a chess variant |
+| `register_token` | Permissionlessly create a variant token and fix its immutable asset, ruleset and issuance |
 | `register_witness` | Register a bonded clock witness |
 | `update_registration` | Change metadata, extend registration, adjust bond |
 | `unregister` | Begin unbonding |
@@ -1301,20 +1318,20 @@ semantics are "all or nothing". A node never persists a partially applied block.
 
 ### 13.6 Variant assets
 
-A variant is a second chess ruleset whose settled proofs mint a different asset
-inside the same block that carries them, not a second chain and not a second
-roster:
+Only one variant is native: standard chess. Every other variant is a custom
+token whose settled proofs mint a different asset inside the same block that
+carries them, not a second chain and not a second roster:
 
 | Variant | Rules | Asset | Symbol | Issue schedule |
 | --- | --- | --- | --- | --- |
 | `standard` | `chess` | native ZQWX (`asset` is `None`) | `ZQWX` | the network's own subsidy, halving and cap |
-| `chess960` | `chess960` | a derived asset id | `C960` | 50 per block, halving every 210,000 blocks, 21,000,000 cap |
+| `token-0960` | `chess960` | a derived asset id | `C960` | 50 per block, halving every 210,000 blocks, 21,000,000 cap |
 
-The asset id is not assigned by an issuer. It is
-`H("sccp/v1/asset", {symbol, name, decimals, variant})`, so two nodes that agree
-on those parameters cannot disagree about which asset a transfer names, and
-nobody can mint a second C960 under a different id. It is pinned in `config.py`
-as `CHESS960_ASSET_ID` and published by `GET /v1/params`.
+The asset id is not assigned by an issuer. For a custom token it is
+`H("sccp/v1/asset", {kind, ticket, decimals, ruleset})`, so two nodes that agree
+on the registration cannot disagree about which asset a transfer names, and
+nobody can mint a second token under a different id. C960's record uses ticket
+`0960`; `GET /v1/tokens` publishes it and every other registration.
 
 A miner registers for one variant (the `variant` field on `register`) and that
 choice travels with its roster seat. Pairing happens *within* a variant, so a
@@ -1326,7 +1343,7 @@ only when the block carries at least one standard proof, and every variant the
 block represents mints its own schedule at most once per block
 (`variant_subsidy`, `minted_variant_rewards`). A block holding one standard win
 and one Chess960 win pays both; a block that settles only Chess960 games pays no
-ZQWX at all. Variant balances live in a per-asset map on the account (`assets`,
+ZQWX at all. Token balances live in a per-asset map on the account (`assets`,
 `immature_assets`), mature on the same `coinbase_maturity` clock as native
 coinbase, and move with `transfer` plus an `asset` field — a native transfer that
 names an asset is rejected rather than quietly downgraded.
@@ -1335,6 +1352,33 @@ Chess960 has no opening book: the shuffled start position is the point of the
 variant, so its book is `none` and a proof's PGN starts there instead of from a
 book line. Fees are always paid in ZQWX, which is why a miner that earns only
 C960 still needs a little native coin to spend it.
+
+Every non-native asset is registered the same way. Any account may pay a fee and
+submit `register_token`, which adds one variant to the chain's registry. A
+registration claims a unique `ticket` (16 lowercase hex characters, or a short
+four-digit serial) and an existing ruleset —
+`standard`, `chess960`, or one of the python-chess variants `antichess`, `atomic`,
+`crazyhouse`, `giveaway`, `horde`, `kingofthehill`, `racingkings`, `suicide` and
+`threecheck` — and chooses a display name and printable ticker. The ticket
+derives the internal variant name `token-<ticket>` and salts the asset id; the
+name and ticker are display metadata, so two tokens may share them and only the
+token id identifies which one a balance or pool means. The token's games settle
+as proofs of that variant, and a block pays its `subsidy` (halved on its own
+`halving_interval`, capped by `max_supply * 10^decimals` base units) at most once
+per block. The payload fixes `ruleset`, `decimals`, `initial_supply`, `min_plies`,
+`max_games_per_block`, `opening_book`, its optional SAN `openings`, the
+initial/increment/delay clock and any later `time_control_periods`; an omitted
+`opening_book` is `token-<ticket>` when the token declares its own lines and
+otherwise the network's own `book_version`. When the beacon selects a network
+line that is illegal under the token's ruleset, the match starts from that
+ruleset's fixed initial position with book `none`. The asset id is derived as
+`H("sccp/v1/asset", {kind, ticket, decimals, ruleset})` from the unique
+registration serial and the consensus-relevant rules, so it is immutable and
+needs no issuer key. An unused ticket is required, derived asset ids may not
+collide, and the registering key receives `initial_supply` base units, which
+are minted and count against the cap exactly like a mined reward.
+`GET /v1/tokens` publishes the registry, including the total
+minted, so a wallet or pool can quote a token without replaying the chain.
 
 ### 13.7 Liquidity pools
 
@@ -1592,11 +1636,13 @@ root. It is loaded from a pinned document; its hash must equal
 `params.genesis_hash`. A network with no pinned hash still parses the document,
 but production callers are expected to pin it.
 
-The genesis state contains the initial allocations. Mainnet allocates 1 basis
-point of the ZQWX cap — 2,100 ZQWX — as a bootstrap grant and no variant supply;
-its public address is in `genesis/mainnet-premine.json`. Testnet and devnet
-include a faucet allocation under a published deterministic key, and testnet
-also seeds a ZQWX/C960 pool
+The genesis state contains the initial allocations. Mainnet allocates 2 basis
+points of the ZQWX cap — 4,200 ZQWX — as a bootstrap grant and no custom-token
+supply; its public address is in `genesis/mainnet-premine.json`. The launch plan
+is standard-chess mining first, and the grant is sized for the initial k=3 roster;
+C960 is a genesis-registered custom token but remains mined-only. Testnet and
+devnet include a faucet allocation under a
+published deterministic key, and testnet also seeds a ZQWX/C960 pool
 and a completed ZQWX bridge HTLC. Mainnet has no faucet. Every later block must
 descend from the genesis block; a document with a different genesis hash is a
 different chain.
@@ -1652,6 +1698,8 @@ contract (snapshotted in `tests/fixtures/openapi.json`):
 | `GET /v1/ratings/{address}` | One miner's rating, record and per-epoch history |
 | `GET /v1/pools` | Every DEX pool: reserves, total shares, fee, LP positions |
 | `GET /v1/pools/{pool_id}` | One DEX pool |
+| `GET /v1/tokens` | Every registered variant token and its minted supply |
+| `GET /v1/tokens/{reference}` | One token by ticket, token id, internal variant name, display name or ticker |
 | `GET /v1/bridge` | The Ethereum deployment facts for this network |
 | `GET /v1/htlcs` | SCCP hash locks, filtered by address or hashlock |
 | `GET /v1/htlcs/{htlc_id}` | One lock, its status and the preimage once claimed |
@@ -1795,11 +1843,13 @@ A block's cost has three parts:
 
 The reward is the block subsidy plus fees. On mainnet the subsidy starts at 50
 coins and halves every 210,000 blocks, with a 21,000,000-coin cap. Genesis
-allocates 1 basis point of that cap (2,100 ZQWX) as a bootstrap grant and no
-variant supply, so every C960 in existence is mined. The private key is not in
-the repository and the on-chain grant is auditable in
-`genesis/mainnet-premine.json`. Testnet and
-devnet rewards are valueless.
+allocates 2 basis points of that cap (4,200 ZQWX) as a bootstrap grant and no
+custom-token supply, so every C960 in existence is mined. The grant covers the initial
+standard-chess k=3 roster (2,150 ZQWX) and leaves 2,050 for fees, top-ups and
+additional miners; it is not sized for full target throughput, so the roster is
+expected to grow from mined subsidies. The private key is not in the repository
+and the on-chain grant is auditable in `genesis/mainnet-premine.json`. Testnet
+and devnet rewards are valueless.
 
 A stall is the one loss a seat can choose instead of playing on, so it has its
 own price: finalising a `time_forfeit` claim charges the flagged seat 10% of the
@@ -2101,8 +2151,8 @@ sccp --data-dir ./data faucet send --network testnet \
 
 The faucet is a local command that submits a transfer from the published
 deterministic genesis key. It is not a public service and it does not exist on
-mainnet. Mainnet parameters have no faucet; their genesis premine is described
-in [section 14.8](#148-genesis) and `genesis/mainnet-premine.json`.
+mainnet. Mainnet parameters have no faucet; their 2-bps genesis premine is
+described in [section 14.8](#148-genesis) and `genesis/mainnet-premine.json`.
 
 ### 18.5 Register and commit availability
 
@@ -2144,7 +2194,8 @@ that fails verification.
 An independent witness runs beside the relay:
 
 ```bash
-sccp witness run --key w1.key --relay http://127.0.0.1:8646 --port 8647 \
+sccp witness run --key w1.key --relay http://127.0.0.1:8646 \
+    --node http://127.0.0.1:8645 --port 8647 \
     --relay-witness-key <relay witness public key hex>
 ```
 
@@ -2274,7 +2325,7 @@ the engine-marked tests.
 
 | Term | Meaning |
 | --- | --- |
-| **Asset id** | `H("sccp/v1/asset", {symbol, name, decimals, variant})`: a variant token's immutable id, derived rather than issued |
+| **Asset id** | A domain hash of a token's immutable identity: `H("sccp/v1/asset", {kind, ticket, decimals, ruleset})` for every custom token, including C960; derived rather than issued, and display names and tickers are not part of a token's identity |
 | **Availability** | A bonded commitment to be matchable in a future epoch |
 | **Beacon** | Public epoch randomness derived from reveals (and optionally drand) |
 | **Block** | Header plus coinbase, transactions and win proofs |
@@ -2293,7 +2344,7 @@ the engine-marked tests.
 | **Hybrid key** | Ed25519 and ML-DSA-65 keypair sharing one seed; scheme byte `0x01` prefixes both key and signature |
 | **k / wins_required** | Number of valid proofs a block must carry |
 | **LP share** | A pool's proportional claim on both reserves: minted on deposit, burned on redemption |
-| **Low ply** | A game shorter than the network's `min_plies` |
+| **Low ply** | A game shorter than its variant's `min_plies` |
 | **MTP** | Median time past of the previous 11 block timestamps |
 | **Opening hash** | Commitment to the book version, line id and move list |
 | **Order / take** | Off-consensus, signed ETH/ZQWX book entries: a maker's sell promise and a taker's announcement that the ETH leg is locked |

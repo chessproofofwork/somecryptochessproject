@@ -16,7 +16,12 @@ from sccp.chain.tx import (
     txid,
     validate_transaction,
 )
-from sccp.config import DEVNET, NetworkParams
+from sccp.config import (
+    DEVNET,
+    NetworkParams,
+    derive_token_asset_id,
+    token_variant_name,
+)
 from sccp.errors import TxValidationError
 from sccp.protocol.models import Transaction, TxType
 from sccp.wallet.service import WalletService
@@ -357,6 +362,341 @@ def test_reveal_rejects_a_wrong_nonce_and_a_wrong_window(
         alice,
     )
     assert _reason(late, ledger) is TxFailure.WINDOW
+
+
+def test_register_token_adds_a_variant_and_credits_its_initial_supply(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    tx = wallet.build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=50 * COINS,
+        initial_supply=123,
+        max_supply=21_000_000,
+        halving_interval=210_000,
+        min_plies=4,
+    )
+    _check(tx, ledger)
+    before = ledger.account(alice.address).balance
+    apply_transaction(ledger, tx, height=HEIGHT)
+
+    record = ledger.tokens["dragonchess"]
+    asset = record.variant.asset
+    assert asset is not None
+    assert record.variant.rules == "chess"
+    assert record.variant.ruleset == "standard"
+    assert record.owner == alice.address
+    assert record.registered_at_height == HEIGHT
+    assert record.initial_supply == 123
+    assert ledger.variant("dragonchess") == record.variant
+    assert "dragonchess" in ledger.variant_names()
+    assert ledger.variant_for_asset(asset) == record.variant
+    assert ledger.account(alice.address).balance == before - DEVNET.min_fee
+    assert ledger.account(alice.address).assets[asset] == 123
+    assert ledger.minted_assets[asset] == 123
+
+    again = _resigned(tx.model_copy(update={"nonce": 1}), alice)
+    assert _reason(again, ledger) is TxFailure.TYPE
+
+
+def test_a_ticketed_registration_keeps_its_name_and_ticker_as_metadata(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """A ticket is a registration serial; a name and ticker are display metadata.
+
+    The chain derives a unique internal variant and token id from the ticket,
+    stores the chosen name and ticker verbatim, keeps the opening lines as
+    canonical SAN, and resolves the record by either the ticket or token id.
+    """
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        ticket="0042",
+        display_name="Gold Coin",
+        symbol="GOLD",
+        ruleset="standard",
+        subsidy=COINS,
+        initial_supply=7,
+        openings=["e2e4 e7e5 g1f3", ["d2d4"]],
+        time_control_initial_ms=5_400_000,
+        time_control_first_moves=40,
+        time_control_periods=[{"moves": 20, "initial_ms": 1_800_000, "increment_ms": 30_000}],
+    )
+    assert tx.payload["ticket"] == "0042"
+    assert tx.payload["display_name"] == "Gold Coin"
+    assert tx.payload["symbol"] == "GOLD"
+    assert "variant" not in tx.payload
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+
+    record = ledger.tokens["token-0042"]
+    variant = record.variant
+    asset = derive_token_asset_id("0042", 8, "standard")
+    assert record.ticket == "0042"
+    assert record.token_id == asset
+    assert variant.name == token_variant_name("0042")
+    assert variant.symbol == "GOLD"
+    assert variant.display_name == "Gold Coin"
+    assert variant.opening_book == "token-0042"
+    assert variant.openings == (("e4", "e5", "Nf3"), ("d4",))
+    assert variant.time_control_initial_ms == 5_400_000
+    assert variant.time_control_first_moves == 40
+    assert len(variant.time_control_periods) == 1
+    period = variant.time_control_periods[0]
+    assert (period.moves, period.initial_ms, period.increment_ms) == (
+        20,
+        1_800_000,
+        30_000,
+    )
+    assert ledger.token_by_ticket("0042") == record
+    assert ledger.token_by_id(asset) == record
+    assert ledger.variant_for_asset(asset) == variant
+
+    duplicate = _resigned(tx.model_copy(update={"nonce": 1}), alice)
+    assert _reason(duplicate, ledger, height=HEIGHT + 1) is TxFailure.TYPE
+    mixed = _resigned(
+        tx.model_copy(
+            update={
+                "nonce": 1,
+                "payload": {**tx.payload, "ticket": "0043", "variant": "dragonchess"},
+            }
+        ),
+        alice,
+    )
+    assert _reason(mixed, ledger, height=HEIGHT + 1) is TxFailure.SCHEMA
+
+
+def test_a_token_ticket_can_use_the_64_bit_registration_namespace(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """A 16-hex ticket is a normal registration serial, not a four-digit cap."""
+    alice = protocol_accounts["alice"]
+    ticket = "7f3a9c2e5b1d4068"
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        ticket=ticket,
+        display_name="Long Ticket Coin",
+        symbol="LONG",
+        ruleset="standard",
+        subsidy=COINS,
+    )
+    assert tx.payload["ticket"] == ticket
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+
+    record = ledger.tokens[f"token-{ticket}"]
+    assert record.ticket == ticket
+    assert record.token_id == derive_token_asset_id(ticket, 8, "standard")
+    assert ledger.token_by_ticket(ticket) == record
+
+
+def test_two_tokens_may_share_a_name_and_ticker(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """Identity is the token id, so display metadata does not have to be unique."""
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    first = wallet.build_register_token(
+        alice.keypair,
+        ticket="0042",
+        display_name="Gold Coin",
+        symbol="GOLD",
+        ruleset="standard",
+        subsidy=COINS,
+    )
+    _check(first, ledger, height=HEIGHT)
+    apply_transaction(ledger, first, height=HEIGHT)
+
+    second = wallet.build_register_token(
+        alice.keypair,
+        ticket="0043",
+        display_name="Gold Coin",
+        symbol="GOLD",
+        ruleset="standard",
+        subsidy=COINS,
+    )
+    _check(second, ledger, height=HEIGHT + 1)
+    apply_transaction(ledger, second, height=HEIGHT + 1)
+
+    one = ledger.tokens["token-0042"]
+    two = ledger.tokens["token-0043"]
+    assert one.variant.display_name == two.variant.display_name == "Gold Coin"
+    assert one.variant.symbol == two.variant.symbol == "GOLD"
+    assert one.token_id != two.token_id
+
+
+def test_a_ticketed_token_without_its_own_lines_uses_the_network_book(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """A ticket is not a book by itself; omitting lines keeps the network's."""
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        ticket="0044",
+        display_name="Silver Coin",
+        symbol="SLV",
+        ruleset="standard",
+        subsidy=COINS,
+    )
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+    record = ledger.tokens["token-0044"]
+    assert record.variant.openings == ()
+    assert record.variant.opening_book == DEVNET.book_version
+
+
+def test_register_token_requires_its_fee_in_the_senders_balance(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=COINS,
+    )
+    ledger.account(alice.address).balance = DEVNET.min_fee - 1
+    assert _reason(tx, ledger) is TxFailure.BALANCE
+
+
+def test_register_token_scales_its_cap_by_the_token_decimals(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        name="centicoin",
+        ruleset="standard",
+        symbol="CENT",
+        display_name="Centicoin",
+        subsidy=1,
+        decimals=2,
+        initial_supply=100,
+        max_supply=1,
+        halving_interval=10,
+    )
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+    asset = ledger.tokens["centicoin"].variant.asset
+    assert asset is not None
+    assert ledger.account(alice.address).assets[asset] == 100
+    over_cap = _resigned(
+        tx.model_copy(
+            update={
+                "nonce": 1,
+                "payload": {
+                    **tx.payload,
+                    "variant": "overcap",
+                    "symbol": "OVER",
+                    "initial_supply": 101,
+                },
+            }
+        ),
+        alice,
+    )
+    assert _reason(over_cap, ledger, height=HEIGHT + 1) is TxFailure.TYPE
+
+
+def test_register_token_rejects_reserved_names_and_unknown_rulesets(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    wallet = _wallet(ledger)
+    tx = wallet.build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=COINS,
+    )
+    standard = _resigned(
+        tx.model_copy(update={"payload": {**tx.payload, "variant": "standard"}}), alice
+    )
+    assert _reason(standard, ledger) is TxFailure.SCHEMA
+    unknown_ruleset = _resigned(
+        tx.model_copy(update={"payload": {**tx.payload, "ruleset": "nope"}}), alice
+    )
+    assert _reason(unknown_ruleset, ledger) is TxFailure.TYPE
+
+
+def test_register_token_rejects_a_bad_slug_and_an_impossible_issuance(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        name="dragonchess",
+        ruleset="standard",
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=COINS,
+    )
+    bad_slug = _resigned(
+        tx.model_copy(update={"payload": {**tx.payload, "variant": "Dragon Chess"}}), alice
+    )
+    assert _reason(bad_slug, ledger) is TxFailure.SCHEMA
+    over_cap = _resigned(
+        tx.model_copy(
+            update={
+                "payload": {
+                    **tx.payload,
+                    "initial_supply": 2 * COINS,
+                    "max_supply": 1,
+                    "halving_interval": 10,
+                }
+            }
+        ),
+        alice,
+    )
+    assert _reason(over_cap, ledger) is TxFailure.TYPE
+    no_halving = _resigned(
+        tx.model_copy(update={"payload": {**tx.payload, "max_supply": 10}}), alice
+    )
+    assert _reason(no_halving, ledger) is TxFailure.SCHEMA
+
+
+def test_register_token_records_a_delay_and_rejects_a_mixed_bonus(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    alice = protocol_accounts["alice"]
+    tx = _wallet(ledger).build_register_token(
+        alice.keypair,
+        name="delaychess",
+        ruleset="standard",
+        symbol="DLY",
+        display_name="Delay Chess",
+        subsidy=COINS,
+        time_control_initial_ms=180_000,
+        time_control_delay_ms=3_000,
+    )
+    _check(tx, ledger)
+    apply_transaction(ledger, tx, height=HEIGHT)
+    variant = ledger.variant("delaychess")
+    assert variant.time_control == (180_000, 0, 3_000)
+
+    mixed = _resigned(
+        tx.model_copy(
+            update={
+                "nonce": 1,
+                "payload": {
+                    **tx.payload,
+                    "variant": "mixedchess",
+                    "symbol": "MIX",
+                    "time_control_increment_ms": 2_000,
+                },
+            }
+        ),
+        alice,
+    )
+    assert _reason(mixed, ledger, height=HEIGHT + 1) is TxFailure.SCHEMA
 
 
 def test_txid_ignores_the_signature_and_tracks_the_body(

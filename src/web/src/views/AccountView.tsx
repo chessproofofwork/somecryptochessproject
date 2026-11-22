@@ -13,10 +13,11 @@ import { Text } from "react-native-paper";
 import { fetchAccount, fetchGames } from "../api";
 import { FailureNotice, KeyValue, Link, Loading, Mono, Section, StatusPill } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
-import { tokenForAsset, tokenImmature, tokensFor, tokenBalance, variantLabel } from "../lib/assets";
+import { tokenForAsset, tokenImmature, tokenBalance, variantLabel } from "../lib/assets";
 import { formatAmount, formatInteger, formatTokenAmount, shortAddress } from "../lib/format";
 import { useNode } from "../node";
 import { useResource } from "../useResource";
+import { useTokenRegistry } from "../useTokenRegistry";
 
 export function AccountView({ address }: { address: string }): ReactNode {
   const account = useResource((signal) => fetchAccount(address, signal), [address], { pollMs: 10000 });
@@ -26,7 +27,8 @@ export function AccountView({ address }: { address: string }): ReactNode {
     pollMs: 20000,
   });
   const { params } = useNode();
-  const tokens = tokensFor(params.data);
+  const registry = useTokenRegistry();
+  const tokens = registry.tokens;
 
   if (account.error !== undefined) return <FailureNotice error={account.error} />;
   if (account.data === undefined) return <Loading />;

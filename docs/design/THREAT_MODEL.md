@@ -277,7 +277,9 @@ Open items that affect this model:
   cheating costs at least as much as competing; identical strong engines are
   indistinguishable from honest ones.
 - **Sybil resistance without stake.** Identity is economic.
-- **Human tournament rules.** v1 is fixed 10+0, no increments, no negotiation.
+- **Human tournament rules.** v1 supports sudden death, increment and delay
+  controls; the clock is fixed by the variant token and is not negotiated
+  per match.
 - **Sub-second trustless clocks.** Consensus verifies witness-signed receipts.
 - **Proprietary or modified engines.** Engine builds are identified by SHA-256 but
   not enforced by consensus. A weak or padded engine is not a fault the chain can

@@ -61,7 +61,7 @@ sccp --version
 ```
 
 ```text
-sccp 0.36.6 (protocol v1)
+sccp 0.37.0 (protocol v1)
 ```
 
 `-e` keeps `src/sccp` in place, so an edit to the checkout is the code you run.
@@ -120,7 +120,7 @@ sccp devnet up --miners 2 --blocks 4
 ```text
 devnet up: height 4 after 2.060s
 tip: 3f423dba23a95c326b2bd54d369a13226732de3d2599f31277404d2d788c9d6f
-genesis: 5e3465524fbf12874f77384baae18eec299068d96aa85ef8a34a3932b0b5f8a4
+genesis: e10f1b50e67163e25b9ab1afcae03c90731117f693c4a71c9c7aaef59758a496
 epochs: 3; 3 matches; 1 proofs mined
   sccpt1q9ejahp48496x4zw7d6qsj020kq3l9tly9tgt5el4km824nnjpzmwddqavq 99.99990000
   sccpt1q8c97qs6ehcm6c6aw6pwlqjt9jlmqgdjxfsvq4vu7k6jsysfkwme79lm4gn 99.99990000
@@ -255,7 +255,7 @@ sccp --network devnet --data-dir .devnet node run --port 8645 --web \
 ```text
 node on 127.0.0.1:8645 for devnet height 4 (0 txs, 0 proofs pending)
 tip: 74452877a72510a3db5707af28250df30b84572bfa4cf9a681f89e5d14343a67
-genesis: 5e3465524fbf12874f77384baae18eec299068d96aa85ef8a34a3932b0b5f8a4
+genesis: e10f1b50e67163e25b9ab1afcae03c90731117f693c4a71c9c7aaef59758a496
 mining proof blocks for sccpt1q82apcjl8txcz7qkf2s966p6s4thg7kjf736cd37acxra828sa757r6geqr
 INFO:     Uvicorn running on http://127.0.0.1:8645 (Press Ctrl+C to quit)
 ```
@@ -309,7 +309,7 @@ curl -s http://127.0.0.1:8645/v1/status
 ```json
 {"network":"devnet","protocol_version":1,"height":4,
  "tip_hash":"74452877a72510a3db5707af28250df30b84572bfa4cf9a681f89e5d14343a67",
- "genesis_hash":"5e3465524fbf12874f77384baae18eec299068d96aa85ef8a34a3932b0b5f8a4",
+ "genesis_hash":"e10f1b50e67163e25b9ab1afcae03c90731117f693c4a71c9c7aaef59758a496",
  "peers":0,"syncing":false,"mempool":{"transactions":0,"proofs":0}}
 ```
 

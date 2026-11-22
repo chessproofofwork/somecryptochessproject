@@ -54,7 +54,7 @@ import {
 } from "../components/Chrome";
 import { useNotice } from "../components/Notices";
 import { useWalletSession } from "../components/WalletSession";
-import { tokenBalance, tokenForVariant, tokensFor, variantLabel } from "../lib/assets";
+import { tokenBalance, tokenForVariant, variantLabel } from "../lib/assets";
 import { signCertificate } from "../lib/certificate";
 import { DOMAINS } from "../lib/canonical";
 import {
@@ -97,14 +97,9 @@ import {
 import { type CheckResult, verifyProof } from "../lib/verify";
 import { VariantGame } from "../lib/variantGame";
 import { useNode } from "../node";
-import type {
-  Color,
-  GameView,
-  NetworkParams,
-  RelayMatchView,
-  WinProof,
-} from "../types";
 import { useNow, useResource } from "../useResource";
+import { useTokenRegistry } from "../useTokenRegistry";
+import type { Color, NetworkParams, RelayMatchView, WinProof } from "../types";
 
 /** The engine string this seat registers. It is what the certificate commits to. */
 const ENGINE = "sccp-web/hand-play-1";
@@ -330,15 +325,18 @@ function Table({
   const reloadAccount = account.reload;
   const accountData = account.data;
   const epochData = epochView.data;
-  const tokens = tokensFor(params);
+  const tokens = useTokenRegistry().tokens;
   const registeredVariant =
     accountData !== undefined && accountData.registered_until_epoch !== null
       ? (accountData.variant ?? "standard")
       : null;
   const variant = registeredVariant ?? selectedVariant ?? tokens[0]?.variant ?? "standard";
-  const variantParams = params?.variants?.find((candidate) => candidate.name === variant);
-  const minPlies = variantParams?.min_plies ?? params?.min_plies ?? 1;
   const prizeToken = tokenForVariant(tokens, variant);
+  const minPlies = prizeToken?.minPlies ?? params?.min_plies ?? 1;
+  const variantTitle =
+    prizeToken !== undefined && !prizeToken.native
+      ? prizeToken.name
+      : variantLabel(variant);
 
   const reloadStatus = status.reload;
   const act = useCallback(
@@ -582,6 +580,16 @@ function Table({
         network_id: network,
         rounds_per_epoch: params.rounds_per_epoch,
         min_plies: minPlies,
+        time_controls: Object.fromEntries(
+          tokens.map((token) => [
+            token.variant,
+            {
+              initial_ms: token.timeControlInitialMs,
+              increment_ms: token.timeControlIncrementMs,
+              delay_ms: token.timeControlDelayMs,
+            },
+          ]),
+        ),
       };
       const built = buildWinProof({
         certificate: transcript.certificate,
@@ -721,7 +729,7 @@ function Table({
           <Mono copy>{address}</Mono>
         </KeyValue>
         <KeyValue label="Variant">
-          {`${variantLabel(variant)} · ${variant}`}
+          {`${variantTitle} · ${variant}`}
           {registeredVariant !== null ? " (locked by registration)" : ""}
         </KeyValue>
         {registeredVariant === null && tokens.length > 1 && (
@@ -761,14 +769,14 @@ function Table({
 
       <Section title="Registration" subtitle="signed transactions, then two epochs of patience">
         <Text variant="bodyMedium" style={styles.muted}>
-          {`Register for ${variantLabel(variant)} with a bond, commit availability for epoch ${nextTarget} during this epoch, reveal the nonce in epoch ${nextTarget - 1}. The chain then opens epoch ${nextTarget}'s roster with this address on it, and the relay pairs that roster from the epoch's beacon.`}
+          {`Register for ${variantTitle} with a bond, commit availability for epoch ${nextTarget} during this epoch, reveal the nonce in epoch ${nextTarget - 1}. The chain then opens epoch ${nextTarget}'s roster with this address on it, and the relay pairs that roster from the epoch's beacon.`}
         </Text>
         <HelperText type="info" visible>
           {prizeToken === undefined
             ? "This network has no token metadata loaded yet."
             : prizeToken.native
               ? "Winning standard proofs mint native ZQWX; the bond and every fee are ZQWX too."
-              : `Winning ${variantLabel(variant)} proofs mint ${prizeToken.symbol}; the bond and every fee are still paid in ZQWX.`}
+              : `Winning ${variantTitle} proofs mint ${prizeToken.symbol}; the bond and every fee are still paid in ZQWX.`}
         </HelperText>
         <View style={styles.actions}>
           <Button

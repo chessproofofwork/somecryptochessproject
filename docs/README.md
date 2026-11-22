@@ -6,6 +6,7 @@ folder table below it.
 | I want to... | Read |
 | --- | --- |
 | get coins into a testnet wallet | [`guides/CREATE_A_TESTNET_WALLET.md`](guides/CREATE_A_TESTNET_WALLET.md) |
+| launch a new token with the CLI | [`guides/CREATE_YOUR_OWN_CRYPTO.md`](guides/CREATE_YOUR_OWN_CRYPTO.md) |
 | know the exact wire format or consensus rule | [`design/PROTOCOL.md`](design/PROTOCOL.md) |
 | watch a game become a block, then export it | [`guides/PLAY_AND_EXPORT.md`](guides/PLAY_AND_EXPORT.md) |
 | run a whole network on this machine | [`setup/RUN_A_DEVNET.md`](setup/RUN_A_DEVNET.md) |
@@ -35,6 +36,7 @@ your `PATH` yet.
 | --- | --- |
 | [`INSTALL.md`](guides/INSTALL.md) | install the CLI, choose a node, keep the keyfile safe |
 | [`CREATE_A_TESTNET_WALLET.md`](guides/CREATE_A_TESTNET_WALLET.md) | the short path: keyfile, faucet, balance |
+| [`CREATE_YOUR_OWN_CRYPTO.md`](guides/CREATE_YOUR_OWN_CRYPTO.md) | register a variant token, wait for it, transfer it, and open its first pool |
 | [`OPEN_A_WALLET.md`](guides/OPEN_A_WALLET.md) | the full keyfile reference: create, back up, restore, inspect |
 | [`SEND_COINS.md`](guides/SEND_COINS.md) | fund, transfer, fees, nonces and settlement |
 | [`PLAY_AND_EXPORT.md`](guides/PLAY_AND_EXPORT.md) | play on-chain, serve the chain, export the block's PGN |

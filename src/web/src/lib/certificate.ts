@@ -36,7 +36,14 @@ export function certificatePayload(certificate: MatchCertificate): Record<string
 }
 
 function controlFields(control: TimeControl): Record<string, number> {
-  return { initial_ms: control.initial_ms, increment_ms: control.increment_ms };
+  const fields: Record<string, number> = {
+    initial_ms: control.initial_ms,
+    increment_ms: control.increment_ms,
+  };
+  // Match the Python certificate payload: delay is omitted when zero so the
+  // existing increment and sudden-death vectors keep their exact hashes.
+  if (control.delay_ms) fields.delay_ms = control.delay_ms;
+  return fields;
 }
 
 /** `H("sccp/v1/opening", {book_version, line_id, moves})` as hex. */

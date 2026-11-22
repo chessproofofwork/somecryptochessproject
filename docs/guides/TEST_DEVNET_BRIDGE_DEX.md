@@ -21,7 +21,7 @@ two (or four) miners. For the Sepolia testnet version of the bridge — test ETH
 >
 > 1. The devnet ZQWX faucet funds **ZQWX only**. C960 is not minted by the
 >    faucet: consensus creates C960 when a block settles a Chess960 proof, plus
->    the fixed testnet/mainnet genesis allocation. This guide uses devnet, so it
+>    the fixed testnet genesis allocation (devnet has none). This guide uses devnet, so it
 >    starts two Chess960 miners once, lets Alice's node miner collect the C960
 >    coinbase, and only then creates the ZQWX/C960 pool. The hosted testnet needs
 >    none of that: its genesis already seeds the pool and a bridge example.
@@ -319,8 +319,9 @@ hash routes are:
 | DEX | `http://127.0.0.1:8645/#/dex` |
 | Bridge | `http://127.0.0.1:8645/#/bridge` |
 
-The hamburger menu switches between Explorer, Wallet, Play, DEX and Bridge
-without leaving the origin, so the unlocked key stays in the tab.
+The hamburger menu switches between Explorer, Wallet, DEX and Bridge without
+leaving the origin, so the unlocked key stays in the tab. Play is not listed in
+the menu, but its `#/play` URL above remains live as a direct entry point.
 
 #### Vite dev server instead of `--web`
 
@@ -456,7 +457,7 @@ holds, including immature balances.
 ### 4.2 Why the faucet does not mint C960
 
 C960 has no issuer and no faucet allocation. It is created only when a block
-settles a proof whose certificate names the `chess960` variant; the block's
+settles a proof whose certificate names the `token-0960` variant; the block's
 `variant_rewards` coinbase entry is consensus-checked against the proof. A
 faucet transfer cannot create it.
 
@@ -473,8 +474,8 @@ without a cross-wallet transfer.
 ### 4.3 Seed C960 with two Chess960 miners
 
 The deterministic stack's two miners are standard-chess seats. Start two more
-devnet seats registered for Chess960. They do not have to be strong: mock engines
-plus a resignation policy produce a decisive game.
+devnet seats registered for the C960 token (`token-0960`). They do not have to be
+strong: mock engines plus a resignation policy produce a decisive game.
 
 Create and fund the two Chess960 wallets:
 
@@ -507,11 +508,11 @@ Register against the local bootstrap chain, then submit to the node:
 ```bash
 sccp --network devnet --data-dir "$CHAIN" miner register \
   --key "$C960_A_KEY" --endpoint tcp://127.0.0.1:7101 \
-  --engine "$MOCK_ENGINE" --bond 0 --variant chess960 --node "$NODE"
+  --engine "$MOCK_ENGINE" --bond 0 --variant token-0960 --node "$NODE"
 
 sccp --network devnet --data-dir "$CHAIN" miner register \
   --key "$C960_B_KEY" --endpoint tcp://127.0.0.1:7102 \
-  --engine "$MOCK_ENGINE" --bond 0 --variant chess960 --node "$NODE"
+  --engine "$MOCK_ENGINE" --bond 0 --variant token-0960 --node "$NODE"
 ```
 
 Create the two availability secrets (any 32-byte hex value; keep the files):
@@ -523,19 +524,19 @@ chmod 600 c960-a.nonce c960-b.nonce
 ```
 
 Start the two Chess960 miners in terminal 4. `--nonce-secret-file` makes each
-miner commit and reveal its own availability every epoch; `--variant chess960`
+miner commit and reveal its own availability every epoch; `--variant token-0960`
 makes it open Stockfish with `UCI_Chess960` (the mock engine ignores that option
-but the certificate and relay still use the variant).
+but the certificate and relay still use the C960 token's ruleset).
 
 ```bash
 sccp --network devnet --passphrase-file .devnet-stack/passphrase miner run \
-  --key "$C960_A_KEY" --variant chess960 --engine-profile mock \
+  --key "$C960_A_KEY" --variant token-0960 --engine-profile mock \
   --relay "$RELAY" --node "$NODE" \
   --nonce-secret-file c960-a.nonce \
   --resign-after-plies 60
 
 sccp --network devnet --passphrase-file .devnet-stack/passphrase miner run \
-  --key "$C960_B_KEY" --variant chess960 --engine-profile mock \
+  --key "$C960_B_KEY" --variant token-0960 --engine-profile mock \
   --relay "$RELAY" --node "$NODE" \
   --nonce-secret-file c960-b.nonce \
   --resign-after-plies 60
@@ -554,10 +555,10 @@ curl -s "$NODE/v1/games?limit=5" | python -m json.tool
 curl -s "$NODE/v1/status" | python -m json.tool
 ```
 
-A match certifies `"variant": "chess960"` and a start position selected from the
-beacon. The winner's miner announces a proof; the node's `--mine` includes it in
-the next block. `/v1/status` then shows a non-zero entry in `minted_assets` keyed
-by the C960 asset id.
+A match certifies `"variant": "token-0960"` and a start position selected from
+the beacon. The winner's miner announces a proof; the node's `--mine` includes it
+in the next block. `/v1/status` then shows a non-zero entry in `minted_assets`
+keyed by the C960 asset id.
 
 > **The reward is the block miner's.** In this build the coinbase pays
 > `header.miner`, which is the node's `--miner-address` (Alice), not
@@ -597,7 +598,7 @@ done
 
 Then repeat `wallet balance` until the `C960 spendable` line is positive. If the
 proof has not settled yet, keep the relay and both Chess960 miners running and
-check `GET /v1/games` for a `chess960` match; rounds open every 60 seconds.
+check `GET /v1/games` for a `token-0960` match; rounds open every 60 seconds.
 
 At this point Alice has **both** tokens in one account:
 
@@ -612,7 +613,7 @@ seat key. This is the UI check for the Chess960 changes.
 
 What this path is checking:
 
-- a non-standard registration carries `variant: "chess960"` and a miner opens
+- a custom-token registration carries `variant: "token-0960"` and a miner opens
   its engine with `UCI_Chess960=true`;
 - the relay matches within a variant and derives one of the 960 start positions
   from the epoch beacon and match id, committing its Shredder-FEN in the signed
@@ -927,13 +928,22 @@ Use a **50 ZQWX / 50 C960** initial pool. That is one C960 proof subsidy at a
 has more C960, she can deposit more; use no more than `wallet balance` reports as
 spendable C960.
 
+C960 is a custom token, so the DEX commands name it by its 64-hex id. Read it once
+from the node's token registry:
+
+```bash
+export C960_ASSET=$(curl -s "$NODE/v1/tokens/0960" \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["token_id"])')
+echo "$C960_ASSET"
+```
+
 ### 7.1 CLI: create the pool
 
 ```bash
 POOL_JSON=$(sccp --json dex create-pool \
   --key "$ALICE_KEY" \
   --asset-a ZQWX --amount-a 50 \
-  --asset-b C960 --amount-b 50 \
+  --asset-b "$C960_ASSET" --amount-b 50 \
   --node "$NODE")
 POOL_ID=$(printf '%s' "$POOL_JSON" | python -c 'import json,sys; print(json.load(sys.stdin)["pool_id"])')
 echo "$POOL_ID"
@@ -1175,7 +1185,7 @@ What a passing run shows:
 | `SCCP timelock ... not before the ETH timelock` | ETH lock is too short for the 24-block margin | choose a longer ETH lock; the web page offers 6/12/24 hours |
 | `the htlc cannot be refunded before height ...` | SCCP timelock has not passed | wait for the height, then retry |
 | `the preimage does not open this htlc` | wrong secret or wrong lock | use the preimage from the same swap; the claimed HTLC shows it |
-| `pool ... does not trade ...` | wrong asset id/name for that pool | read `dex pool` and use `ZQWX` or `C960` |
+| `pool ... does not trade ...` | wrong asset id/name for that pool | read `dex pool` and use `ZQWX` or the 64-hex C960 asset id |
 | `the deposit is too small to mint a share` | rounding at tiny amounts | deposit larger amounts on both sides |
 | `C960` line is missing | no Chess960 proof has settled, or the reward is immature | run the section 4.3 pair; mine 20 more blocks |
 | faucet `429` | HTTP one-grant-per-address/hour | use `sccp faucet send` or wait |
@@ -1234,7 +1244,7 @@ sccp --network devnet --passphrase-file .devnet-stack/passphrase miner run \
 | Swap | `sccp dex swap ...` | `#/dex → Swap` |
 | Send ZQWX | `sccp wallet send --amount N --to ...` | `#/wallet/send`, choose ZQWX |
 | Send C960 | `sccp wallet send --asset C960 --amount N --to ...` | `#/wallet/send`, choose C960 |
-| Play Chess960 | `sccp miner run --variant chess960 ...` | `#/play`, choose C960 |
+| Play Chess960 | `sccp miner run --variant token-0960 ...` | `#/play`, choose C960 |
 | Inspect | `sccp bridge ...`, `sccp dex ...`, `curl` | `#/bridge`, `#/dex`, explorer |
 
 ### 10.3 The properties this run proves

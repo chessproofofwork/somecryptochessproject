@@ -19,9 +19,17 @@ from sccp.chain.dex import NATIVE_ASSET
 from sccp.chain.dex import pool_id as derive_pool_id
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import Pool, ProofRecord
+from sccp.chain.state import Pool, ProofRecord, TokenRecord
 from sccp.chain.tx import txid
-from sccp.config import CHESS960_ASSET_ID, DEVNET, TESTNET
+from sccp.config import (
+    CHESS960_ASSET_ID,
+    DEVNET,
+    TESTNET,
+    VariantParams,
+    derive_token_asset_id,
+    derive_variant_asset_id,
+    token_variant_name,
+)
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import MempoolError, ProtocolError
@@ -162,6 +170,146 @@ def test_pool_routes_report_reserves_and_positions() -> None:
     assert one["shares"] == {FAUCET_ADDRESS: 1_000}
     assert missing.status_code == 404
     service.close()
+
+
+def _token_record(name: str, symbol: str) -> TokenRecord:
+    asset = derive_variant_asset_id(name, symbol, 8, "standard")
+    return TokenRecord(
+        name=name,
+        variant=VariantParams(
+            name=name,
+            rules="chess",
+            ruleset="standard",
+            asset=asset,
+            symbol=symbol,
+            display_name=f"{name.title()} Chess",
+            subsidy=50,
+            min_plies=1,
+        ),
+        owner=FAUCET_ADDRESS,
+        registered_at_height=4,
+        initial_supply=10,
+    )
+
+
+def test_token_routes_name_tokens_by_name_asset_and_unique_symbol() -> None:
+    service = _node()
+    alpha = _token_record("alpha", "AAA")
+    beta = _token_record("beta", "BBB")
+    gamma = _token_record("gamma", "AAA")
+    for record in (alpha, beta, gamma):
+        service.chain.state.tokens[record.name] = record
+    assert alpha.variant.asset is not None
+    service.chain.state.minted_assets[alpha.variant.asset] = 99
+    with _client(service) as client:
+        listing = client.get("/v1/tokens").json()
+        by_name = client.get("/v1/tokens/alpha").json()
+        by_asset = client.get(f"/v1/tokens/{alpha.variant.asset}").json()
+        by_symbol = client.get("/v1/tokens/BBB")
+        ambiguous = client.get("/v1/tokens/AAA")
+        missing = client.get("/v1/tokens/nope")
+    assert listing["network"] == "devnet"
+    # The devnet genesis registers C960 as an ordinary custom token.
+    assert [token["name"] for token in listing["tokens"] if token["ticket"] != "0960"] == [
+        "alpha",
+        "beta",
+        "gamma",
+    ]
+    assert by_name == by_asset
+    assert by_name["asset"] == alpha.variant.asset
+    assert by_name["symbol"] == "AAA"
+    assert by_name["ruleset"] == "standard"
+    assert by_name["time_control_initial_ms"] == 600_000
+    assert by_name["time_control_increment_ms"] == 0
+    assert by_name["time_control_delay_ms"] == 0
+    assert by_name["owner"] == FAUCET_ADDRESS
+    assert by_name["registered_at_height"] == 4
+    assert by_name["minted"] == 99
+    assert by_symbol.status_code == 200
+    assert by_symbol.json()["name"] == "beta"
+    assert ambiguous.status_code == 404
+    assert "ambiguous" in ambiguous.json()["detail"]
+    assert missing.status_code == 404
+
+
+def _ticketed_token_record(ticket: str) -> TokenRecord:
+    name = token_variant_name(ticket)
+    return TokenRecord(
+        name=name,
+        variant=VariantParams(
+            name=name,
+            ticket=ticket,
+            rules="chess",
+            ruleset="standard",
+            asset=derive_token_asset_id(ticket, 8, "standard"),
+            symbol="GOLD",
+            display_name="Gold Coin",
+            subsidy=50,
+            min_plies=1,
+            opening_book=f"token-{ticket}",
+        ),
+        owner=FAUCET_ADDRESS,
+        registered_at_height=4,
+        initial_supply=10,
+    )
+
+
+def test_token_lookup_uses_the_ticket_or_token_id_not_the_display_name() -> None:
+    """Duplicate display names are fine; the ticket and token id stay unique."""
+    service = NodeService.open(DEVNET, approved_tokens=["0042"])
+    approved = _ticketed_token_record("0042")
+    hidden = _ticketed_token_record("0043")
+    for record in (approved, hidden):
+        service.chain.state.tokens[record.name] = record
+    with _client(service) as client:
+        listing = client.get("/v1/tokens").json()
+        by_ticket = client.get("/v1/tokens/0042")
+        by_token_id = client.get(f"/v1/tokens/{approved.token_id}")
+        hidden_lookup = client.get("/v1/tokens/0043")
+        by_name = client.get("/v1/tokens/Gold Coin")
+        by_ticker = client.get("/v1/tokens/GOLD")
+    service.close()
+
+    flags = {
+        token["ticket"]: token["approved"]
+        for token in listing["tokens"]
+        if token["ticket"] in {"0042", "0043"}
+    }
+    assert flags == {"0042": True, "0043": False}
+    assert by_ticket.status_code == 200
+    assert by_ticket.json() == by_token_id.json()
+    assert by_ticket.json()["name"] == "token-0042"
+    assert by_ticket.json()["ticket"] == "0042"
+    assert by_ticket.json()["token_id"] == approved.token_id
+    assert by_ticket.json()["display_name"] == "Gold Coin"
+    assert by_ticket.json()["symbol"] == "GOLD"
+    assert by_ticket.json()["opening_book"] == "token-0042"
+    # A display name and a ticker may be shared, so neither identifies a token.
+    assert by_name.status_code == 404
+    assert "ambiguous" in by_name.json()["detail"]
+    assert by_ticker.status_code == 404
+    # A lookup still finds a token the operator did not approve; the wallet
+    # decides whether to keep it in its own registry.
+    assert hidden_lookup.status_code == 200
+    assert hidden_lookup.json()["approved"] is False
+
+
+def test_token_views_accept_a_16_hex_registration_ticket() -> None:
+    """The API must not narrow the ticket namespace back to four digits."""
+    service = NodeService.open(DEVNET)
+    ticket = "7f3a9c2e5b1d4068"
+    record = _ticketed_token_record(ticket)
+    service.chain.state.tokens[record.name] = record
+    with _client(service) as client:
+        listing = client.get("/v1/tokens")
+        by_ticket = client.get(f"/v1/tokens/{ticket}")
+    service.close()
+
+    assert listing.status_code == 200
+    assert ticket in {token["ticket"] for token in listing.json()["tokens"]}
+    assert by_ticket.status_code == 200
+    assert by_ticket.json()["ticket"] == ticket
+    assert by_ticket.json()["token_id"] == record.token_id
 
 
 def test_transaction_lifecycle_through_the_api() -> None:

@@ -105,21 +105,33 @@ when a second game follows the first.
 | `Result` | `1-0`, `0-1` or `1/2-1/2` (`*` is rejected) |
 | `Termination` | `checkmate`, `draw`, `resignation` or `time_forfeit` |
 | `MatchID` | Match identifier from the certificate |
-| `TimeControl` | `<initial>+<increment>` in whole seconds; must equal the certificate |
+| `TimeControl` | `<initial>+<bonus>` with optional `d` delay suffix, or a colon-separated FIDE multi-period form, in whole seconds; must equal the certificate |
 | `Epoch`, `RoundNumber` | Non-negative integers; must equal the certificate |
 | `SeatWhite`, `SeatBlack` | Bech32 addresses; must equal the certificate |
 | `EngineWhite`, `EngineBlack` | Engine fingerprints; must equal the certificate |
 | `OpeningID`, `OpeningHash` | Book line id and its opening hash |
-| `Rules` | `chess` for standard, `chess960` for Fischer Random |
-| `FEN`, `SetUp`, `Variant` | Optional for standard; required for Chess960, with `SetUp "1"` and `Variant "Chess960"` |
+| `Rules` | the ruleset's PGN `Rules` value: `chess`, `chess960`, `antichess`, `atomic`, `crazyhouse`, `giveaway`, `horde`, `kingofthehill`, `racingkings`, `suicide` or `threecheck` |
+| `FEN`, `SetUp`, `Variant` | Every non-standard ruleset requires `SetUp "1"` and a fixed start `FEN`; `Variant` is its canonical python-chess header. Chess960 also uses `Variant "Chess960"` with a Shredder-FEN. |
 
 Every tag must be present and non-empty. When a certificate is supplied,
 `MatchID`, `Epoch`, `RoundNumber`, `SeatWhite`, `SeatBlack`, `EngineWhite`,
 `EngineBlack`, `OpeningID`, `OpeningHash` and `TimeControl` are compared
 exactly; any mismatch is a validation error. The `TimeControl` form is strict:
 decimal seconds with no underscores or whitespace, initial time at least one
-second, and the worst case `initial_ms + increment_ms * max_plies` may not exceed
-`MAX_CLOCK_MS` (24 hours).
+second, and the worst case — the base initial time plus every later period's
+initial time plus the largest increment times `max_plies` — may not exceed
+`MAX_CLOCK_MS` (24 hours). `600+0` is sudden death, `600+5` adds a five-second
+increment after each move, and `600+5d` grants a five-second delay at the start
+of each turn. A control uses an increment or a delay, never both; delay is free
+time and never grows a clock, so it does not contribute to the worst case.
+
+FIDE-style multi-period controls use the standard colon-separated form:
+`40/5400+0:20/1800+30` gives 40 moves at 90 minutes, adds 30 minutes to both
+clocks when the 40-move limit is reached, and uses a 30-second increment during
+the following 20-move period. Every segment after the first must carry a move
+count; each period's `initial_ms` is time **added** at its boundary, not a clock
+reset. The move counts must fit within the network's `max_plies`, and a
+single-period tag may not carry a move count.
 
 ### 3.2 Replay
 
@@ -127,8 +139,8 @@ second, and the worst case `initial_ms + increment_ms * max_plies` may not excee
   FEN for Chess960 with `Board(fen, chess960=True)`. Every mainline move must
   satisfy `Board.is_legal(move)` **before** it is pushed; `Board.push()` does not
   validate and must never be trusted as a gate.
-- The game may not exceed `max_plies`; a proof also requires at least
-  `min_plies` half-moves.
+- The game may not exceed `max_plies`; a proof also requires at least the
+  settled variant's `min_plies` half-moves.
 - Variations are ignored for hashing. When a certificate is supplied (the proof
   path) a PGN containing any variation is rejected; the offline verifier
   (`sccp verify pgn`) accepts them.
@@ -148,9 +160,12 @@ must agree with it.
 | Anything else (abandoned, unterminated) | rejected | rejected |
 
 A `time_forfeit` PGN is accepted only when its `TimeControl` matches the
-certificate and the accompanying clock evidence verifies. The protocol uses one
-fixed 10+0 control for every match; matchmaking does not offer per-match
-choices. See section 8.2 below and the clock implementation in
+certificate and the accompanying clock evidence verifies. The control is fixed
+by the variant token, not negotiated per match: standard chess uses the network
+default (sudden-death 10+0 unless the network overrides its standard entry), and
+every custom token declares its own initial time, increment or delay, and optional
+FIDE-style later periods at registration.
+See section 8.2 below and the clock implementation in
 `src/sccp/protocol/clocks.py`.
 
 Notes:
@@ -169,8 +184,9 @@ Notes:
 
 ## 4. Opening book
 
-The book is `data/openings.json`, shipped inside the wheel at
-`sccp/chess/data/openings.json`.
+The packaged book is `data/openings.json`, shipped inside the wheel at
+`sccp/chess/data/openings.json`. A chain-registered token may add its own lines
+on top of that format (see the end of this section).
 
 ```json
 {
@@ -195,7 +211,9 @@ The book is `data/openings.json`, shipped inside the wheel at
   game ended, a duplicate name, an empty book or an unsupported `format` is a
   hard error, not a warning.
 - `opening_hash = H("sccp/v1/opening", {book_version, line_id, moves})` where
-  `moves` is the canonical SAN list.
+  `moves` is the canonical SAN list. For a non-standard start the payload also
+  carries `start_fen` and `variant`, so the same moves under two rulesets cannot
+  share a hash.
 - Selection for a match:
 
   ```text
@@ -205,8 +223,20 @@ The book is `data/openings.json`, shipped inside the wheel at
 
   `beacon` is the 32-byte epoch beacon; any other length is rejected. Selection
   is deterministic and uniform over the book.
-- The certificate carries the chosen line and its `opening_hash`, so a verifier
-  checks the replay prefix without consulting a local book.
+- A chain-registered token may instead declare its own `openings` at
+  registration. Those lines are canonicalised to SAN, recorded on chain and
+  selected with the same formula. A token that declares lines records
+  `opening_book = "token-<ticket>"` by default; a token that declares none uses
+  the network's `book_version`. The selected line is accepted only when it
+  replays legally from the token ruleset's start; otherwise the match starts
+  from that ruleset's fixed initial position with `book_version = "none"`,
+  `line_id = 0` and no moves. Token lines replay from the ruleset's own start
+  position, and Chess960 allows no book moves at all. A fixed-start variant's
+  certificate carries its start FEN and variant name alongside the selected
+  line.
+- The certificate carries the chosen line and its `opening_hash`, plus the start
+  FEN and variant when the ruleset is not standard, so a verifier checks the
+  replay prefix without consulting a local book.
 
 ## 5. Engines and fingerprints
 
@@ -323,6 +353,13 @@ to check the prefix:
  "start_signatures": {"white": "hex", "black": "hex"}}
 ```
 
+For a delayed token the control object also carries `"delay_ms": 5000`; the key
+is omitted when the delay is zero, so sudden-death and increment payloads keep
+their existing bytes. A multi-period token additionally carries
+`"first_period_moves": 40` and a `"periods"` array such as
+`[{"moves": 20, "initial_ms": 1800000, "increment_ms": 30000}]`. Each later
+period's `initial_ms` is added to both clocks when its boundary is reached.
+
 Both seats sign this payload with `H("sccp/v1/certificate", …)`:
 
 ```json
@@ -341,10 +378,13 @@ and `match_id` recomputes from the seats. Signing the certificate is what binds
 each seat's ML-DSA-65 key to the match, so a quantum attacker cannot impersonate
 a player for the moves that follow.
 
-The certificate commits to `time_control = {initial_ms, increment_ms}` and the
-signed payload covers it. Every match uses one protocol-fixed **10+0** control
-(`initial_ms = 600_000`, `increment_ms = 0`); matchmaking never offers or
-accepts a per-match choice. See section 8.4 for the timed-session API.
+The certificate commits to the complete `time_control` object — `initial_ms`,
+`increment_ms`, a non-zero `delay_ms`, and any FIDE-style `first_period_moves`
+and `periods` — and the signed payload covers it. The control is chosen by the
+variant token: standard chess defaults to sudden-death **10+0**, and every custom
+token fixes its own initial time, either an increment or a delay, and optional
+later periods at registration. Matchmaking never accepts a different per-match
+choice. See section 8.4 for the timed-session API.
 
 ### 8.2 Result attestation
 
@@ -381,7 +421,10 @@ signature bytes against the registered keys.
 A transcript PGN is the game plus the required tags of section 3.1, with
 `White`/`Black` = seat addresses, `MatchID`, `Epoch`, `RoundNumber`,
 `SeatWhite`, `SeatBlack`, `EngineWhite`, `EngineBlack`, `OpeningID`,
-`OpeningHash`, `TimeControl = <initial>+<increment>` and `Rules = chess`.
+`OpeningHash`, `TimeControl = <initial>+<increment>` (or
+`<initial>+<delay>d` for a delayed token, and the colon-separated marked form
+such as `40/5400+0:20/1800+30` for a multi-period token) and `Rules` set to the
+ruleset's PGN name.
 `Termination` and `Result` come from the result attestation. The opening prefix
 is included in the move list. A `time_forfeit` PGN without a matching
 `TimeControl` tag is rejected before the clock evidence is considered.
@@ -390,20 +433,32 @@ is included in the move list. A `time_forfeit` PGN without a matching
 
 The relay is untrusted. It derives the round from public data and stores
 signatures; it never signs a result. It does keep the clock: every session runs
-the fixed **10+0** control (`TIMED_SESSIONS` in `sccp.miner.matchmaker`), charged
-from the relay's own monotonic clock, and the receipts it issues are the evidence
-the chain's bonded claim lifecycle (section 10.4) settles.
+the control the variant token declares (see `time_control_for` in
+`sccp.protocol.clocks`), charged from the relay's own monotonic clock, and the
+receipts it issues are the evidence the chain's bonded claim lifecycle
+(section 10.4) settles.
 
 Timed sessions work like this:
 
 - The **second start signature activates the session** and starts both clocks;
-  the side to move is on the clock.
+  the side to move is on the clock. The certified opening is replayed first: its
+  plies count toward FIDE period boundaries but cost neither player time. A
+  boundary the opening already crossed credits its `initial_ms` to both clocks
+  before the first timed turn, and the later period's increment or delay applies
+  from that turn.
 - The relay's monotonic millisecond source is authoritative. A move body may
   carry `clock_ms`, but it is display data: the relay ignores it and recomputes
   from its own source.
 - A move is checked for turn and SAN legality *before* the clock is charged, so
-  an illegal move costs no time. A charge is `elapsed - lag_grace_ms` (floored at
-  zero) plus the increment, applied to the mover only.
+  an illegal move costs no time. A charge is
+  `max(0, elapsed - lag_grace_ms - delay_ms)` (floored at zero) plus the
+  increment, applied to the mover only. A delay is free time at the start of the
+  turn; unused delay is not carried forward. The delay and increment come from
+  the period in force at that ply.
+- When a move reaches a FIDE period boundary, that period's `initial_ms` is
+  added to **both** clocks after the mover's own increment. The added time is
+  the period's `initial_ms`, not a reset: a clock with time left keeps it. The
+  later period's increment or delay then applies from the next turn.
 - A move arriving after the mover's clock reached zero is refused and the
   session is flagged instead. The flag ends the game whether or not the losing
   seat ever answers, so a stall cannot deny the win.
@@ -587,8 +642,13 @@ one whenever the game has a post-opening move. The first receipt in the window
 carries absolute `white_ms`/`black_ms` and is the arithmetic anchor; every later
 receipt is checked as a delta from it (section 8.4's charging rule), so a suffix
 is sufficient evidence and a 400-ply game no longer overflows the transaction
-cap. `checkpoint.root` is the fold of the window followed by the flag receipt
-leaf, and the same witness quorum hybrid-signs it.
+cap. Window plies and period boundaries count total board plies, including the
+certified opening, even though those opening plies were never charged. When the
+window starts at the first post-opening move, the idle clock must still equal the
+starting time after any period bonus the opening unlocked; a later suffix is
+anchored entirely by its signed receipt. `checkpoint.root` is the fold of the
+window followed by the flag receipt leaf, and the same witness quorum
+hybrid-signs it.
 
 Receipt leaves use the exact payload the witness signs:
 
@@ -815,6 +875,7 @@ the one scheme, not a second way to spend.
 | --- | --- | --- |
 | `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
 | `register` | `public_key`, `endpoint`, `engine`, `bond`, `variant`? | locks `bond >= min_bond`, stores key/endpoint/engine and the chosen variant (`standard` when omitted), sets `registered_until_epoch = epoch + registration_epochs`; refused while banned, and a miner already registered for a different variant must unregister first |
+| `register_token` | `ticket`, `display_name`, `symbol`, `ruleset`, `openings`?, `subsidy`, `initial_supply`?, `decimals`?, `halving_interval`?, `max_supply`?, `min_plies`?, `max_games_per_block`?, `opening_book`?, `time_control_initial_ms`?, `time_control_increment_ms`?, `time_control_delay_ms`?, `time_control_first_moves`?, `time_control_periods`?, `public_key`* | adds an immutable variant token; `ticket` must be 16 lowercase hex characters (or a four-digit short form) and unused, and is the token's unique registration serial, deriving the internal `variant = "token-<ticket>"`; `display_name` is the user-chosen name and `symbol` is the printable ticker, both are display metadata and need not be unique; `ruleset` must name a shipped ruleset, `subsidy >= 1`, and the derived `H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})` must be unused; `openings` are canonicalised to SAN for that ruleset; an omitted `opening_book` is `token-<ticket>` when the token declares openings and otherwise the network's `book_version`; credits `initial_supply` base units to the sender and counts them as minted; `max_supply` is whole coins and is set together with `halving_interval`; clock values are whole seconds expressed in milliseconds and use an increment or a delay, not both, with `time_control_periods` giving FIDE-style later periods. Legacy name-based payloads (`variant` with `symbol` and `display_name`) remain accepted for pre-ticket chains. |
 | `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
 | `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
 | `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |
@@ -834,6 +895,17 @@ the one scheme, not a second way to spend.
 
 \* optional: only needed for an account whose public key the chain does not
 already know (10.1).
+
+A registered token's identity is its asset id, not its display name or ticker.
+The ticket is a unique registration serial: it selects the internal variant name
+and salts the id, so two registrations may choose the same `display_name` and
+`symbol` and still produce different assets. A ticket is normally 16 lowercase
+hex characters (8 random bytes, a 2^64 namespace); the finite four-digit space is
+retained only for the shipped C960 token and pre-existing registrations. Name
+and ticker lookups are therefore convenience aliases that resolve only when one
+token uses the value; balances, pools and transfers always name the asset id.
+C960 follows the same rule: the shipped networks register it with ticket `0960`,
+internal variant `token-0960`, and no protocol privilege over any other token.
 
 `htlc_id = H("sccp/v1/htlc", {from, nonce})`. A claimed or refunded record stays
 in state (and in `state_root`) so an explorer and the counterparty can read the
@@ -857,8 +929,10 @@ non-standard variant, the payload also carries
 proof. Its authorisation is the block seal, not a signature, so it is never
 applied as an ordinary transaction and consumes no nonce.
 `native_subsidy = params.subsidy >> (height // halving_interval)`, clamped so
-minted supply never exceeds `max_supply`; each variant has the same schedule on
-its own asset. The credited amounts mature after `coinbase_maturity` blocks
+minted supply never exceeds `max_supply`. Each variant has the same schedule on
+its own asset, with `minted_assets[asset]` (which includes the registration's
+`initial_supply`) capped at `max_supply * 10**decimals` base units. The credited
+amounts mature after `coinbase_maturity` blocks
 (`immature` becomes spendable) and a body transaction may not imitate a coinbase.
 
 ### 10.4 Bonded timeout settlement
@@ -1143,7 +1217,7 @@ chain and not repeated in the block; sit inside
 next epoch until the claim window closes; respect the `opponent_cooldown` against
 the winner's previous games (a cooldown of `0` disables the rule, which is how
 testnet and devnet let a small roster settle every game it plays; mainnet keeps
-`4`); declare `low_ply` as `plies < min_plies`; and carry
+`4`); declare `low_ply` as `plies < variant.min_plies`; and carry
 `move_evidence` only for `checkmate` and `clock_evidence` for `time_forfeit`.
 Proofs are ordered by `proof_id`, which makes the body canonical.
 
@@ -1242,6 +1316,13 @@ about height 0.
  "network": "mainnet",
  "timestamp": 1735689600,
  "miner": "sccp1...",
+ "tokens": [
+   {"name": "token-0960", "owner": "sccp1...", "registered_at_height": 0,
+    "initial_supply": 0,
+    "variant": {"ticket": "0960", "ruleset": "chess960", "rules": "chess960",
+                "symbol": "C960", "display_name": "Chess960",
+                "asset": "<64-hex id derived from ticket 0960>", "...": "..."}}
+ ],
  "allocations": [
    {"address": "sccp1...", "public_key": "hex", "amount": 4200000000000},
    {"address": "sccp1...", "public_key": "hex",
@@ -1268,8 +1349,16 @@ optional and defaults to the first allocation. Each `allocations` entry needs a
 positive integer `amount` in base units, a valid address for this network, and a
 `public_key` that **derives** that address — Ed25519 is not key-recoverable, so
 an allocation without a matching key would be unspendable. The entry is native
-ZQWX when `asset` is omitted and otherwise names a variant asset id. One address
-may appear once per asset; a duplicate `(address, asset)` pair is rejected.
+ZQWX when `asset` is omitted and otherwise names a custom-token asset id. One
+address may appear once per asset; a duplicate `(address, asset)` pair is
+rejected.
+
+`tokens` registers custom tokens at height 0. Each entry is the same
+`TokenRecord` a `register_token` transaction creates: a unique `ticket`, the
+internal name `token-<ticket>`, a registered ruleset, display metadata and
+immutable economics. `initial_supply` must be zero; any starting balance belongs
+in `allocations`. The C960 entry uses the short ticket `0960`; it is an ordinary
+custom token, not part of `NetworkParams`.
 
 `pools` and `htlcs` are optional and are applied after the allocations, in that
 order. A genesis pool debits its creator's allocation exactly like `create_pool`
@@ -1280,13 +1369,15 @@ amount in escrow, `claimed` debits the sender and credits the beneficiary, and
 that opens its hashlock. Genesis pools and HTLCs are limited to height 0 and are
 part of `state_root`.
 
-Mainnet allocates **1 basis point of the ZQWX cap** — 2,100 ZQWX — at genesis as
-a bootstrap grant, and **no variant supply**: every C960 in existence is mined
-(or, on testnet only, seeded as demo liquidity). The public address and basis
-point live in `genesis/mainnet-premine.json`; the private key is not part of the
-repository. `scripts/make_genesis.py` refuses to generate a document unless the
-manifest's tranches total exactly that one basis point, so neither an accidental
-mint nor a silently dropped grant can change the chain.
+Mainnet allocates **2 basis points of the ZQWX cap** — 4,200 ZQWX — at genesis as
+a bootstrap grant, and **no custom-token supply**: every C960 in existence is
+mined (or, on testnet only, seeded as demo liquidity). The grant is sized for the
+initial standard-chess k=3 roster and is not a token allocation; C960 remains
+mined-only. The public address and basis points live in
+`genesis/mainnet-premine.json`; the private key is not part of the repository.
+`scripts/make_genesis.py` refuses to generate a document unless the manifest's
+tranches total exactly those two basis points, so neither an accidental mint nor
+a silently dropped grant can change the chain.
 
 Testnet also seeds a ZQWX/C960 pool with 5 coins per side and one completed
 1-ZQWX HTLC, using published demo keys, so `GET /v1/pools` and `GET /v1/htlcs`
@@ -1322,6 +1413,8 @@ an orphan block on `POST /v1/blocks` → 202.
 | POST | `/v1/faucet` | `FaucetRequest {address, amount?}` → `FaucetView {network, address, amount, txid}`: the node spends from the published faucet key and admits the transfer; 429 when the address or client is over a limit |
 | GET | `/v1/pools` | `PoolList`: every DEX pool with reserves, total shares, fee, and each LP address's shares |
 | GET | `/v1/pools/{pool_id}` | `PoolView`: one DEX pool (404 when the chain has not created it) |
+| GET | `/v1/tokens` | `TokenList`: every registered variant token with its ticket, user-chosen name and ticker, network-assigned `token_id`, approval flag, immutable parameters and minted supply |
+| GET | `/v1/tokens/{reference}` | `TokenView`: one token by ticket, token id, internal variant name, display name or ticker (404 when unknown or ambiguous because a name or ticker is shared). An unapproved token is still returned with `approved: false`. |
 | GET | `/v1/bridge` | `BridgeView`: the Ethereum chain id/name, HTLC contract, confirmation depth and SCCP margin for this network |
 | GET | `/v1/htlcs` | `HtlcList`: SCCP hash locks filtered by `?address=` or `?hashlock=` |
 | GET | `/v1/htlcs/{htlc_id}` | `HtlcView`: one lock, its status and the preimage once claimed |

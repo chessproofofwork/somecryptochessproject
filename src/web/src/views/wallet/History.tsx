@@ -26,7 +26,7 @@ import { Button, HelperText, ProgressBar, Text } from "react-native-paper";
 
 import { fetchPools } from "../../api";
 import { CopyButton, Link, Loading, Mono, Section, StatusPill } from "../../components/Chrome";
-import { tokenForAsset, tokensFor, type Token } from "../../lib/assets";
+import { tokenForAsset, type Token } from "../../lib/assets";
 import { labelFor, readContacts, type Contact } from "../../lib/contacts";
 import {
   formatAge,
@@ -49,6 +49,7 @@ import {
 import type { PendingTransaction } from "../../lib/pending";
 import { useNode } from "../../node";
 import { useNow, useResource } from "../../useResource";
+import { useTokenRegistry } from "../../useTokenRegistry";
 
 /** Blocks a first visit reads. Enough to find recent activity quickly. */
 const INITIAL_WINDOW = 200;
@@ -156,8 +157,8 @@ export function HistoryPanel({
   /** The node's next unused nonce; a row below it has been included. */
   committedNonce: number;
 }): ReactNode {
-  const { status, params } = useNode();
-  const tokens = tokensFor(params.data);
+  const { status } = useNode();
+  const tokens = useTokenRegistry().tokens;
   const tip = status.data?.height;
   const now = useNow(30000);
   const contacts = readContacts();

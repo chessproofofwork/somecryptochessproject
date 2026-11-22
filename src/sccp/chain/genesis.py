@@ -1,9 +1,9 @@
 """Genesis blocks and allocation documents (PROTOCOL.md section 13).
 
 Genesis is the only place where supply can exist before a block subsidy. A
-document can allocate native ZQWX and any consensus-defined variant asset, and
-can seed DEX pools or HTLC records so a test network starts with a usable
-market and bridge example. Its hash is pinned in
+document can register custom tokens, allocate native ZQWX and custom-token
+balances, and seed DEX pools or HTLC records so a test network starts with a
+usable market and bridge example. Its hash is pinned in
 :class:`~sccp.config.NetworkParams` and checked on load, so two nodes cannot
 disagree about height 0.
 
@@ -14,6 +14,10 @@ A genesis document is small, hand-auditable JSON::
         "network": "mainnet",
         "timestamp": 1735689600,
         "miner": "sccp1...",  # optional; defaults to the first allocation
+        "tokens": [
+            {"name": "token-0960", "owner": "sccp1...", "registered_at_height": 0,
+             "initial_supply": 0, "variant": {"ticket": "0960", "ruleset": "chess960", ...}}
+        ],
         "allocations": [
             {"address": "sccp1...", "public_key": "hex", "amount": 4200000000000},
             {"address": "sccp1...", "public_key": "hex",
@@ -25,7 +29,10 @@ A genesis document is small, hand-auditable JSON::
 
 The public key is mandatory for an allocation because Ed25519 is not
 key-recoverable: without it the allocated coins could never be spent. Native
-ZQWX omits ``asset``; a variant allocation names its derived 64-hex asset id.
+ZQWX omits ``asset``; a custom-token allocation names its derived 64-hex asset
+id. A genesis token is a normal ``TokenRecord``: the ticket derives its internal
+name and asset id, and ``initial_supply`` must be zero (starting balances belong
+in ``allocations``).
 """
 
 from __future__ import annotations
@@ -40,9 +47,14 @@ from typing import Final
 from sccp.chain import dex
 from sccp.chain.block import HEADER_VERSION, block_hash, body_root
 from sccp.chain.difficulty import initial_difficulty
-from sccp.chain.state import ZERO_HASH, Account, HtlcRecord, HtlcStatus, Pool, State
+from sccp.chain.state import ZERO_HASH, Account, HtlcRecord, HtlcStatus, Pool, State, TokenRecord
 from sccp.chain.tx import htlc_id
-from sccp.config import UNITS_PER_COIN, NetworkParams, get_network
+from sccp.config import (
+    NetworkParams,
+    derive_token_asset_id,
+    get_network,
+    units_per_coin,
+)
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import (
     HYBRID_PUBLIC_KEY_SIZE,
@@ -50,7 +62,7 @@ from sccp.crypto.pq import (
     HybridKeypair,
     hybrid_keypair_from_seed,
 )
-from sccp.errors import GenesisError, KeyEncodingError, StateError
+from sccp.errors import ConfigError, GenesisError, KeyEncodingError, StateError
 from sccp.protocol.models import Block, BlockHeader
 from sccp.serialization import merkle_root_hex
 
@@ -227,8 +239,13 @@ def zero_address(params: NetworkParams) -> str:
     )
 
 
-def _parse_asset(params: NetworkParams, raw: object, label: str) -> str:
-    """Parse an optional asset id; omitted, null and ``ZQWX`` all mean native."""
+def _parse_asset(raw: object, label: str) -> str:
+    """Parse an optional asset id; omitted, null and ``ZQWX`` all mean native.
+
+    Whether the id belongs to a token is checked against the genesis token
+    records once the state exists, so a custom asset needs no entry in
+    ``NetworkParams``.
+    """
     if raw is None or raw == "ZQWX" or raw == "":
         return ""
     if not isinstance(raw, str) or len(raw) != 64 or raw != raw.lower():
@@ -237,9 +254,76 @@ def _parse_asset(params: NetworkParams, raw: object, label: str) -> str:
         bytes.fromhex(raw)
     except ValueError:
         raise GenesisError(f"{label} must be hexadecimal") from None
-    if all(variant.asset != raw for variant in params.variants):
-        raise GenesisError(f"{label} names unknown asset {raw}")
     return raw
+
+
+def _require_genesis_asset(state: State, asset: str, label: str) -> None:
+    """Check that a genesis document only names an asset the state knows."""
+    if not asset:
+        return
+    try:
+        state.variant_for_asset(asset)
+    except ConfigError:
+        raise GenesisError(f"{label} names unknown asset {asset}") from None
+
+
+def _parse_tokens(params: NetworkParams, raw: object) -> tuple[TokenRecord, ...]:
+    """Parse the custom tokens committed at genesis.
+
+    A genesis token is the same ``TokenRecord`` a ``register_token`` transaction
+    creates: ticket-derived internal name and asset id, display metadata, and
+    immutable economics. Requiring a ticket and zero initial supply keeps the
+    genesis record a pure registration; any starting balance belongs in the
+    ``allocations`` list, which is also what the supply-cap check sees.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise GenesisError("genesis tokens must be a list")
+    tokens: list[TokenRecord] = []
+    names: set[str] = set()
+    tickets: set[str] = set()
+    assets: set[str] = set()
+    allowed = {"name", "variant", "owner", "registered_at_height", "initial_supply"}
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise GenesisError("each genesis token must be an object")
+        extra = sorted(set(item) - allowed)
+        if extra:
+            raise GenesisError(f"unknown genesis token fields: {extra}")
+        try:
+            record = TokenRecord.from_dict(item)
+        except (StateError, ValueError) as exc:
+            raise GenesisError(f"invalid genesis token: {exc}") from None
+        variant = record.variant
+        if variant.ticket is None:
+            raise GenesisError(f"genesis token {variant.name!r} needs a registration ticket")
+        if variant.ruleset is None:
+            raise GenesisError(f"genesis token {variant.name!r} needs a registered ruleset")
+        expected = derive_token_asset_id(variant.ticket, variant.decimals, variant.ruleset)
+        if variant.asset != expected:
+            raise GenesisError(
+                f"genesis token {variant.name!r} declares asset {variant.asset}, "
+                f"its ticket derives {expected}"
+            )
+        if record.registered_at_height != 0:
+            raise GenesisError("a genesis token must have registered_at_height 0")
+        if record.initial_supply != 0:
+            raise GenesisError("a genesis token cannot have initial_supply; use an allocation")
+        if not validate_address(record.owner, params):
+            raise GenesisError(f"genesis token {variant.name!r} has an invalid owner address")
+        if variant.ticket in tickets:
+            raise GenesisError(f"duplicate genesis token ticket {variant.ticket}")
+        if record.name in names:
+            raise GenesisError(f"duplicate genesis token {record.name!r}")
+        if variant.asset in assets:
+            raise GenesisError(f"duplicate genesis token asset {variant.asset}")
+        tickets.add(variant.ticket)
+        names.add(record.name)
+        assert variant.asset is not None
+        assets.add(variant.asset)
+        tokens.append(record)
+    return tuple(tokens)
 
 
 def _parse_allocations(params: NetworkParams, raw: object) -> tuple[GenesisAllocation, ...]:
@@ -258,7 +342,7 @@ def _parse_allocations(params: NetworkParams, raw: object) -> tuple[GenesisAlloc
         address = item.get("address")
         public_key = item.get("public_key")
         amount = item.get("amount")
-        asset = _parse_asset(params, item.get("asset"), f"allocation for {address}")
+        asset = _parse_asset(item.get("asset"), f"allocation for {address}")
         if not isinstance(address, str) or not validate_address(address, params):
             raise GenesisError(f"{address!r} is not a {params.network_id} address")
         if not isinstance(public_key, str):
@@ -302,7 +386,7 @@ def _check_allocation(
         )
     if not isinstance(entry.amount, int) or isinstance(entry.amount, bool) or entry.amount <= 0:
         raise GenesisError(f"allocation for {entry.address} needs a positive integer amount")
-    _parse_asset(params, entry.asset, f"allocation for {entry.address}")
+    _parse_asset(entry.asset, f"allocation for {entry.address}")
     key = (entry.address, entry.asset)
     if key in seen:
         raise GenesisError(
@@ -327,8 +411,8 @@ def _parse_pools(params: NetworkParams, raw: object) -> tuple[GenesisPool, ...]:
         creator = item.get("creator")
         if not isinstance(creator, str) or not validate_address(creator, params):
             raise GenesisError(f"pool creator {creator!r} is not a {params.network_id} address")
-        asset_a = _parse_asset(params, item.get("asset_a"), "pool asset_a")
-        asset_b = _parse_asset(params, item.get("asset_b"), "pool asset_b")
+        asset_a = _parse_asset(item.get("asset_a"), "pool asset_a")
+        asset_b = _parse_asset(item.get("asset_b"), "pool asset_b")
         amount_a = item.get("amount_a")
         amount_b = item.get("amount_b")
         if (
@@ -440,7 +524,7 @@ def _parse_htlcs(params: NetworkParams, raw: object) -> tuple[GenesisHtlc, ...]:
             hashlock=hashlock,
             amount=amount,
             timelock_height=timelock_height,
-            asset=_parse_asset(params, item.get("asset"), f"htlc for {sender}"),
+            asset=_parse_asset(item.get("asset"), f"htlc for {sender}"),
             status=status,
             preimage=preimage,
             created_at_height=created_at_height,
@@ -480,8 +564,10 @@ def _apply_genesis_pool(state: State, entry: GenesisPool) -> None:
     """Apply one genesis pool, mirroring ``_apply_create_pool``."""
     if not validate_address(entry.creator, state.params):
         raise GenesisError(f"pool creator {entry.creator!r} is not a valid address")
-    asset_a = _parse_asset(state.params, entry.asset_a, "pool asset_a")
-    asset_b = _parse_asset(state.params, entry.asset_b, "pool asset_b")
+    asset_a = _parse_asset(entry.asset_a, "pool asset_a")
+    asset_b = _parse_asset(entry.asset_b, "pool asset_b")
+    for label, asset in (("pool asset_a", asset_a), ("pool asset_b", asset_b)):
+        _require_genesis_asset(state, asset, label)
     try:
         asset_a, amount_a, asset_b, amount_b = dex.normalize_pair(
             asset_a, entry.amount_a, asset_b, entry.amount_b
@@ -516,7 +602,8 @@ def _apply_genesis_htlc(state: State, entry: GenesisHtlc) -> None:
         raise GenesisError(f"htlc sender {entry.sender!r} is not a valid address")
     if not validate_address(entry.beneficiary, state.params):
         raise GenesisError(f"htlc beneficiary {entry.beneficiary!r} is not a valid address")
-    asset = _parse_asset(state.params, entry.asset, f"htlc for {entry.sender}")
+    asset = _parse_asset(entry.asset, f"htlc for {entry.sender}")
+    _require_genesis_asset(state, asset, f"htlc for {entry.sender}")
     if entry.created_at_height != 0:
         raise GenesisError("a genesis htlc must have created_at_height 0")
     if entry.closed_at_height is not None and entry.closed_at_height != 0:
@@ -573,42 +660,53 @@ def build_genesis(
     miner: str | None = None,
     pools: Iterable[GenesisPool] = (),
     htlcs: Iterable[GenesisHtlc] = (),
+    tokens: Iterable[TokenRecord] = (),
 ) -> tuple[Block, State]:
     """Build the height-0 block and the state it produces."""
     params = get_network(network)
     if timestamp < 0:
         raise GenesisError("genesis timestamp must be non-negative")
+    token_entries = tuple(tokens)
+    token_names = [record.name for record in token_entries]
+    if len(set(token_names)) != len(token_names):
+        raise GenesisError("genesis tokens must have unique names")
     entries = tuple(
         GenesisAllocation(
             entry.address,
             entry.public_key,
             entry.amount,
-            _parse_asset(params, entry.asset, f"allocation for {entry.address}"),
+            _parse_asset(entry.asset, f"allocation for {entry.address}"),
         )
         for entry in allocations
     )
     seen: set[tuple[str, str]] = set()
     for entry in entries:
         _check_allocation(entry, params, seen)
+    state = State(
+        params=params,
+        height=0,
+        timestamps=[timestamp],
+        tokens={record.name: record for record in token_entries},
+    )
     native_total = sum(entry.amount for entry in entries if not entry.asset)
     variant_totals: dict[str, int] = {}
     for entry in entries:
         if entry.asset:
+            _require_genesis_asset(state, entry.asset, f"allocation for {entry.address}")
             variant_totals[entry.asset] = variant_totals.get(entry.asset, 0) + entry.amount
     cap = params.max_money
     if cap is not None and native_total > cap:
         raise GenesisError(f"genesis allocations exceed MAX_MONEY ({cap})")
     for asset, total in variant_totals.items():
-        selected = params.variant_for_asset(asset)
+        selected = state.variant_for_asset(asset)
         if selected.max_supply is None:
             continue
-        asset_cap = selected.max_supply * UNITS_PER_COIN
+        asset_cap = selected.max_supply * units_per_coin(selected.decimals)
         if total > asset_cap:
             raise GenesisError(
                 f"genesis {selected.symbol} allocations exceed its cap ({asset_cap})"
             )
 
-    state = State(params=params, height=0, timestamps=[timestamp])
     for entry in entries:
         account = state.accounts.get(entry.address)
         if account is None:
@@ -663,12 +761,14 @@ def genesis_document(
     miner: str | None = None,
     pools: Iterable[GenesisPool] = (),
     htlcs: Iterable[GenesisHtlc] = (),
+    tokens: Iterable[TokenRecord] = (),
 ) -> dict[str, object]:
     """The on-disk document for a genesis, with its computed hash."""
     params = get_network(network)
     entries = tuple(allocations)
     pool_entries = tuple(pools)
     htlc_entries = tuple(htlcs)
+    token_entries = tuple(tokens)
     block, _ = build_genesis(
         params,
         timestamp=timestamp,
@@ -676,6 +776,7 @@ def genesis_document(
         miner=miner,
         pools=pool_entries,
         htlcs=htlc_entries,
+        tokens=token_entries,
     )
     document: dict[str, object] = {
         "version": GENESIS_DOCUMENT_VERSION,
@@ -684,6 +785,8 @@ def genesis_document(
         "hash": block_hash(block.header),
         "allocations": [entry.as_dict() for entry in entries],
     }
+    if token_entries:
+        document["tokens"] = [entry.as_dict() for entry in token_entries]
     if pool_entries:
         document["pools"] = [entry.as_dict() for entry in pool_entries]
     if htlc_entries:
@@ -711,6 +814,7 @@ def parse_genesis_document(
     miner = document.get("miner")
     if miner is not None and not isinstance(miner, str):
         raise GenesisError("genesis miner must be an address string")
+    tokens = _parse_tokens(params, document.get("tokens"))
     allocations = _parse_allocations(params, document.get("allocations"))
     pools = _parse_pools(params, document.get("pools"))
     htlcs = _parse_htlcs(params, document.get("htlcs"))
@@ -721,6 +825,7 @@ def parse_genesis_document(
         miner=miner,
         pools=pools,
         htlcs=htlcs,
+        tokens=tokens,
     )
     pinned = params.genesis_hash
     actual = block_hash(block.header)

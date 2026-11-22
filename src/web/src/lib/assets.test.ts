@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { AccountView, NetworkParams } from "../types";
+import type { AccountView, NetworkParams, TokenView } from "../types";
 import {
   currentBlockReward,
   tokenBalance,
@@ -8,11 +8,13 @@ import {
   tokenForVariant,
   tokenMinted,
   tokensFor,
+  tokensWithRegistry,
   variantLabel,
   variantShort,
 } from "./assets";
 
 const params = {
+  network_id: "devnet",
   variants: [
     {
       name: "standard",
@@ -26,7 +28,7 @@ const params = {
       max_supply: null,
       min_plies: 1,
       max_games_per_block: 1,
-      opening_book: "standard",
+      opening_book: "v1",
       time_control_initial_ms: 600_000,
       time_control_increment_ms: 0,
     },
@@ -45,6 +47,7 @@ const params = {
       opening_book: "none",
       time_control_initial_ms: 600_000,
       time_control_increment_ms: 0,
+      time_control_delay_ms: 3_000,
     },
   ],
 } as unknown as NetworkParams;
@@ -55,6 +58,7 @@ describe("tokens", () => {
     expect(tokens.map((token) => token.symbol)).toStrictEqual(["ZQWX", "C960"]);
     expect(tokenForAsset(tokens, "a".repeat(64))?.symbol).toBe("C960");
     expect(tokenForVariant(tokens, "chess960")?.symbol).toBe("C960");
+    expect(tokenForVariant(tokens, "chess960")?.timeControlDelayMs).toBe(3_000);
     expect(tokenForAsset(tokens, null)?.native).toBe(true);
   });
 
@@ -99,5 +103,57 @@ describe("tokens", () => {
     expect(currentBlockReward(c960, 210_000, 0)).toBe(2_500_000_000);
     expect(currentBlockReward(c960, 840_000, 0)).toBe(312_500_000);
     expect(currentBlockReward(c960, 0, cap - 1_000)).toBe(1_000);
+  });
+});
+
+describe("tokensWithRegistry", () => {
+  const token = (overrides: Partial<TokenView>): TokenView =>
+    ({
+      name: "token-0042",
+      ticket: "0042",
+      rules: "chess",
+      ruleset: "standard",
+      network: "devnet",
+      asset: "b".repeat(64),
+      token_id: "b".repeat(64),
+      symbol: "T0042",
+      display_name: "Token 0042",
+      approved: false,
+      openings: [],
+      opening_book: "token-0042",
+      ...overrides,
+    }) as TokenView;
+
+  it("adds node-approved and locally pinned tokens to the built-in assets", () => {
+    const base = tokensFor(params).map((entry) => entry.symbol);
+    expect(tokensWithRegistry(params, []).map((entry) => entry.symbol)).toStrictEqual(base);
+
+    const nodeApproved = token({ approved: true });
+    const pinned = token({
+      name: "token-0043",
+      ticket: "0043",
+      asset: "c".repeat(64),
+      token_id: "c".repeat(64),
+      symbol: "T0043",
+      display_name: "Token 0043",
+    });
+    expect(
+      tokensWithRegistry(params, [nodeApproved, pinned], ["0043"]).map((entry) => entry.symbol),
+    ).toStrictEqual([...base, nodeApproved.symbol, pinned.symbol]);
+  });
+
+  it("ignores other networks and collapses duplicate token ids", () => {
+    const tokenId = "d".repeat(64);
+    const approved = token({ approved: true, token_id: tokenId, asset: tokenId });
+    const duplicate = token({ approved: false, token_id: tokenId, asset: tokenId });
+    const elsewhere = token({
+      approved: true,
+      network: "testnet",
+      token_id: "e".repeat(64),
+      asset: "e".repeat(64),
+    });
+    expect(tokensWithRegistry(params, [approved, duplicate, elsewhere])).toStrictEqual(
+      tokensWithRegistry(params, [approved]),
+    );
   });
 });

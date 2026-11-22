@@ -15,6 +15,8 @@ Nothing here is engine-specific. The relay uses
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import chess
 
 from sccp.chess.rulesets import (
@@ -86,9 +88,19 @@ def select_chess960_start(beacon: bytes | str, match_id: str) -> int:
     return chess960_position(beacon, match_id)
 
 
-def rules_for_network(params: NetworkParams, variant: str) -> str:
-    """Return the rules for ``variant`` after checking it is on ``params``."""
-    params.variant(variant)
+def rules_for_network(
+    params: NetworkParams,
+    variant: str,
+    *,
+    variants: Mapping[str, object] | None = None,
+) -> str:
+    """Return the rules for ``variant`` after checking it is on the network.
+
+    ``variants`` extends ``params`` with chain-registered tokens, whose ruleset
+    lives in ledger state rather than in the static network definition.
+    """
+    if variants is None or variant not in variants:
+        params.variant(variant)
     return variant_rules(variant)
 
 

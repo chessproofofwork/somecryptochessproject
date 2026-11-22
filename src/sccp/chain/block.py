@@ -48,7 +48,7 @@ from sccp.chain.tx import (
     validate_transaction,
 )
 from sccp.chess.openings import OpeningBook, book_for
-from sccp.config import UNITS_PER_COIN, NetworkParams
+from sccp.config import NetworkParams, VariantParams, units_per_coin
 from sccp.errors import (
     BlockValidationError,
     ConfigError,
@@ -240,15 +240,17 @@ def variant_subsidy(
     variant: str,
     height: int,
     minted: int,
+    *,
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> int:
     """``variant.subsidy >> (height // halving_interval)``, clamped to its cap."""
-    selected = params.variant(variant)
+    selected = variants[variant] if variants is not None else params.variant(variant)
     if selected.halving_interval is None:
         amount = selected.subsidy
     else:
         amount = selected.subsidy >> (height // selected.halving_interval)
     if selected.max_supply is not None:
-        cap = selected.max_supply * UNITS_PER_COIN
+        cap = selected.max_supply * units_per_coin(selected.decimals)
         amount = min(amount, max(0, cap - minted))
     return amount
 
@@ -277,11 +279,13 @@ def minted_variant_rewards(
     *,
     proofs: Sequence[WinProof],
     minted_assets: Mapping[str, int],
+    variants: Mapping[str, VariantParams] | None = None,
 ) -> dict[str, int]:
     """The non-native tokens a block at ``height`` mints, keyed by asset id.
 
     Every variant represented in the block mints its scheduled subsidy once.
-    Standard proofs are native and never appear here.
+    Standard proofs are native and never appear here. ``variants`` extends the
+    network's built-in registry with chain-registered tokens.
     """
     rewards: dict[str, int] = {}
     seen: set[str] = set()
@@ -289,7 +293,9 @@ def minted_variant_rewards(
         if proof.variant in seen:
             continue
         seen.add(proof.variant)
-        selected = params.variant(proof.variant)
+        selected = (
+            variants[proof.variant] if variants is not None else params.variant(proof.variant)
+        )
         if selected.native or selected.asset is None:
             continue
         amount = variant_subsidy(
@@ -297,6 +303,7 @@ def minted_variant_rewards(
             selected.name,
             height,
             minted_assets.get(selected.asset, 0),
+            variants={selected.name: selected},
         )
         if amount:
             rewards[selected.asset] = amount
@@ -449,6 +456,7 @@ def _proof_context(
         availability=record.availability,
         seen_game_hashes=work.known_game_hashes(),
         seen_proof_ids=work.known_proof_ids(),
+        variants=work.variant_params(),
     )
 
 
@@ -466,7 +474,7 @@ def check_proof(
     """Run every proof rule that needs the chain, not just the proof."""
     if proof.network != params.network_id:
         _fail(BlockFailure.PROOFS, f"proof is for {proof.network!r}")
-    if proof.variant not in params.variant_names():
+    if proof.variant not in work.variant_names():
         _fail(BlockFailure.PROOFS, f"proof is for unknown variant {proof.variant!r}")
     if proof.certificate.variant != proof.variant:
         _fail(BlockFailure.PROOFS, "certificate and proof name different variants")
@@ -528,11 +536,12 @@ def check_proof(
                 f"{proof.winner} played {opponent} in epoch {last}; the cooldown is "
                 f"{params.opponent_cooldown} epochs",
             )
-    if proof.low_ply != (proof.plies < params.min_plies):
+    variant_params = work.variant(proof.variant)
+    if proof.low_ply != (proof.plies < variant_params.min_plies):
         _fail(
             BlockFailure.PROOFS,
             f"low_ply is {proof.low_ply} for a {proof.plies}-ply game "
-            f"(min_plies {params.min_plies})",
+            f"(variant {proof.variant!r} min_plies {variant_params.min_plies})",
         )
     if proof.termination != "checkmate" and proof.move_evidence:
         _fail(BlockFailure.PROOFS, "move_evidence is only valid for a checkmate finish")
@@ -630,6 +639,63 @@ def _check_proof_count(params: NetworkParams, block: Block) -> None:
     )
 
 
+def _coinbase_variant_rewards(block: Block) -> dict[str, int]:
+    """Read the coinbase's ``variant_rewards`` map without resolving assets.
+
+    Asset resolution is deferred until after the block's transactions have been
+    applied: a token registered in this block may be the very variant a proof
+    settles, so the parent state need not know its asset id yet.
+    """
+    coinbase = block.coinbase
+    assert coinbase is not None  # callers run after the coinbase shape checks
+    raw_rewards = coinbase.payload.get("variant_rewards", {})
+    if not isinstance(raw_rewards, Mapping):
+        _fail(BlockFailure.COINBASE, "coinbase variant_rewards must be an object")
+    rewards: dict[str, int] = {}
+    for asset, amount in raw_rewards.items():
+        if not isinstance(asset, str) or not asset:
+            _fail(BlockFailure.COINBASE, "coinbase variant_rewards keys must be asset ids")
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+            _fail(BlockFailure.COINBASE, "coinbase variant rewards must be positive integers")
+        rewards[asset] = amount
+    return rewards
+
+
+def _check_variant_rewards(work: State, params: NetworkParams, block: Block) -> None:
+    """Check coinbase token rewards against the state the body just produced.
+
+    This runs after :func:`apply_block_body` because a registration in the same
+    block changes which variants exist and where their supply caps start. The
+    block builder applies transactions before it computes rewards, so validating
+    against the pre-body registry would reject an otherwise valid block.
+    """
+    header = block.header
+    actual: dict[str, int] = {}
+    for asset, amount in _coinbase_variant_rewards(block).items():
+        try:
+            variant = work.variant_for_asset(asset)
+        except ConfigError as exc:
+            _fail(BlockFailure.COINBASE, str(exc))
+        if variant.native:
+            _fail(BlockFailure.COINBASE, "native ZQWX cannot appear in variant_rewards")
+        actual[asset] = amount
+    try:
+        expected = minted_variant_rewards(
+            params,
+            header.height,
+            proofs=block.proofs,
+            minted_assets=work.minted_assets,
+            variants=work.variant_params(),
+        )
+    except ConfigError as exc:
+        _fail(BlockFailure.PROOFS, f"a proof names an unknown variant: {exc}")
+    if actual != expected:
+        _fail(
+            BlockFailure.COINBASE,
+            f"coinbase variant rewards are {actual}, expected {expected}",
+        )
+
+
 def _check_body(work: State, params: NetworkParams, block: Block) -> None:
     header = block.header
     if block.coinbase is None:
@@ -646,36 +712,7 @@ def _check_body(work: State, params: NetworkParams, block: Block) -> None:
         _fail(BlockFailure.COINBASE, "the coinbase must name the chain's network")
     if block.coinbase.payload.get("to") != header.miner:
         _fail(BlockFailure.COINBASE, "the coinbase must pay the block miner")
-    raw_rewards = block.coinbase.payload.get("variant_rewards", {})
-    if not isinstance(raw_rewards, Mapping):
-        _fail(BlockFailure.COINBASE, "coinbase variant_rewards must be an object")
-    try:
-        expected_rewards = minted_variant_rewards(
-            params,
-            header.height,
-            proofs=block.proofs,
-            minted_assets=work.minted_assets,
-        )
-    except ConfigError as exc:
-        _fail(BlockFailure.PROOFS, f"a proof names an unknown variant: {exc}")
-    actual_rewards: dict[str, int] = {}
-    for asset, amount in raw_rewards.items():
-        if not isinstance(asset, str):
-            _fail(BlockFailure.COINBASE, "coinbase variant_rewards keys must be asset ids")
-        if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
-            _fail(BlockFailure.COINBASE, "coinbase variant rewards must be positive integers")
-        try:
-            variant = params.variant_for_asset(asset)
-        except ConfigError as exc:
-            _fail(BlockFailure.COINBASE, str(exc))
-        if variant.native:
-            _fail(BlockFailure.COINBASE, "native ZQWX cannot appear in variant_rewards")
-        actual_rewards[asset] = amount
-    if actual_rewards != expected_rewards:
-        _fail(
-            BlockFailure.COINBASE,
-            f"coinbase variant rewards are {actual_rewards}, expected {expected_rewards}",
-        )
+    _coinbase_variant_rewards(block)
     _check_proof_count(params, block)
     try:
         size = block_size(block)
@@ -813,6 +850,7 @@ def connect_block(
     work.tip_hash = hash_hex
     work.timestamps = [*work.timestamps, header.timestamp][-MAX_RECENT_TIMESTAMPS:]
     fees = apply_block_body(work, params, header, block.transactions, block.proofs, book=book)
+    _check_variant_rewards(work, params, block)
 
     subsidy = minted_subsidy(params, header.height, proofs=block.proofs, minted=parent_state.minted)
     expected_value = subsidy + fees
@@ -829,7 +867,8 @@ def connect_block(
         params,
         header.height,
         proofs=block.proofs,
-        minted_assets=parent_state.minted_assets,
+        minted_assets=work.minted_assets,
+        variants=work.variant_params(),
     )
     for asset, amount in rewards.items():
         work.credit_asset_coinbase(header.miner, asset, amount, header.height)

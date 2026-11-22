@@ -208,7 +208,8 @@ class BlockBuilder:
             params,
             height,
             proofs=proofs,
-            minted_assets=self.chain.state.minted_assets,
+            minted_assets=work.minted_assets,
+            variants=work.variant_params(),
         )
         value = subsidy + fees
         coinbase = make_coinbase(

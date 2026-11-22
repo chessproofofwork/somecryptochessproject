@@ -15,6 +15,12 @@ describe("Chess960 adapter", () => {
     expect(chessJsStartFen(START, "standard")).toBe(START);
   });
 
+  it("recognises a Chess960 custom token from its Shredder-FEN certificate", () => {
+    const board = new VariantGame("token-0960", START);
+    expect(board.targets("g1")).toContain("g1");
+    expect(board.sanFor("g1", "g1")).toBe("O-O");
+  });
+
   it("applies a castling move where the king stays on g1", () => {
     const board = new VariantGame("chess960", START);
     expect(board.targets("g1")).toContain("g1");
