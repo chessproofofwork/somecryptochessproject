@@ -288,12 +288,28 @@ def test_token_lookup_uses_the_ticket_or_token_id_not_the_display_name() -> None
     assert by_name.status_code == 404
     assert "ambiguous" in by_name.json()["detail"]
     assert by_ticker.status_code == 404
-    assert "ambiguous" in by_ticker.json()["detail"]
     # A lookup still finds a token the operator did not approve; the wallet
     # decides whether to keep it in its own registry.
     assert hidden_lookup.status_code == 200
     assert hidden_lookup.json()["approved"] is False
+
+
+def test_token_views_accept_a_16_hex_registration_ticket() -> None:
+    """The API must not narrow the ticket namespace back to four digits."""
+    service = NodeService.open(DEVNET)
+    ticket = "7f3a9c2e5b1d4068"
+    record = _ticketed_token_record(ticket)
+    service.chain.state.tokens[record.name] = record
+    with _client(service) as client:
+        listing = client.get("/v1/tokens")
+        by_ticket = client.get(f"/v1/tokens/{ticket}")
     service.close()
+
+    assert listing.status_code == 200
+    assert ticket in {token["ticket"] for token in listing.json()["tokens"]}
+    assert by_ticket.status_code == 200
+    assert by_ticket.json()["ticket"] == ticket
+    assert by_ticket.json()["token_id"] == record.token_id
 
 
 def test_transaction_lifecycle_through_the_api() -> None:

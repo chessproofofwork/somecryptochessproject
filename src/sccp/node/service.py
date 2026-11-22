@@ -735,10 +735,9 @@ class NodeService:
         registry = self.chain.state.tokens
         if reference in registry:
             return self._token_view(reference)
-        if reference.isdigit() and len(reference) == 4:
-            record = self.chain.state.token_by_ticket(reference)
-            if record is not None:
-                return self._token_view(record.name)
+        record = self.chain.state.token_by_ticket(reference)
+        if record is not None:
+            return self._token_view(record.name)
         record = self.chain.state.token_by_id(reference)
         if record is not None:
             return self._token_view(record.name)

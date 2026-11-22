@@ -2949,7 +2949,7 @@
           "ticket": {
             "anyOf": [
               {
-                "pattern": "^[0-9]{4}$",
+                "pattern": "^(?:[0-9]{4}|[0-9a-f]{16})$",
                 "type": "string"
               },
               {

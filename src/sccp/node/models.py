@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from sccp.config import TimeControlPeriod
+from sccp.config import TOKEN_TICKET_PATTERN, TimeControlPeriod
 from sccp.protocol.models import (
     AddressText,
     Beacon,
@@ -491,7 +491,7 @@ class TokenView(ProtocolModel):
 
     name: str = Field(min_length=1)
     """The internal variant name (``token-<ticket>``), not the display name."""
-    ticket: str | None = Field(default=None, pattern=r"^[0-9]{4}$")
+    ticket: str | None = Field(default=None, pattern=TOKEN_TICKET_PATTERN)
     """The registration serial the token claimed; absent on legacy tokens."""
     network: str = Field(min_length=1)
     asset: str = Field(pattern=r"^[0-9a-f]{64}$")
