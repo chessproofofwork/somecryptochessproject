@@ -12,7 +12,7 @@ from deploy.init_testnet_stack import write_stack
 
 from sccp.chain.genesis import zero_address
 from sccp.chain.tx import txid
-from sccp.config import coins_to_units
+from sccp.config import C960_VARIANT, coins_to_units
 from sccp.miner.block_builder import BlockBuilder
 from sccp.node.service import unix_now
 from sccp.protocol.models import Block, Transaction, TxType
@@ -27,8 +27,8 @@ def test_the_stack_publishes_an_availability_secret_per_miner(tmp_path: Path) ->
     assert [entry["variant"] for entry in entries] == [
         "standard",
         "standard",
-        "chess960",
-        "chess960",
+        C960_VARIANT,
+        C960_VARIANT,
     ]
     for entry in entries:
         assert isinstance(entry, dict)
@@ -161,8 +161,8 @@ def test_the_stack_builds_a_matchable_chain_and_relay_config(tmp_path: Path) -> 
     assert [miner.variant for miner in miners] == [
         "standard",
         "standard",
-        "chess960",
-        "chess960",
+        C960_VARIANT,
+        C960_VARIANT,
     ]
     assert [miner.address for miner in miners] == [
         "sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g",
@@ -185,8 +185,8 @@ def test_the_stack_builds_a_matchable_chain_and_relay_config(tmp_path: Path) -> 
         assert [record.roster[miner.address].variant for miner in miners] == [
             "standard",
             "standard",
-            "chess960",
-            "chess960",
+            C960_VARIANT,
+            C960_VARIANT,
         ]
         assert record.beacon is not None
         assert record.roster_root

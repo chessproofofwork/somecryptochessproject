@@ -25,8 +25,8 @@ The reference implementation covers the full wallet-to-block path:
 - Account ledger, transfers, fees, bonds, registration, availability, blocks,
   difficulty retargeting, fork choice, reorg handling and SQLite persistence
   with snapshot-checked replay.
-- Variant assets: Chess960 proofs mint C960, an asset with its own supply
-  counter, cap and halving schedule beside native ZQWX.
+- Custom token assets: Chess960 proofs mint C960, an ordinary registered token
+  with its own supply counter, cap and halving schedule beside native ZQWX.
 - The native DEX (`create_pool`, `add_liquidity`, `remove_liquidity`, `swap`
   with `min_amount_out`) and the ETH↔SCCP HTLC bridge (`htlc_lock`,
   `htlc_claim`, `htlc_refund`, `contracts/EthHtlc.sol`, a signed
@@ -59,7 +59,7 @@ shipped, and are recorded so the lists below stay honest.
 | --- | --- | --- |
 | Read-only UI and block explorer | 0.19.0–0.28.0 | `src/web`; hosted at `https://app.proofofchess.com`; blocks, transactions, accounts, games (full PGN and proof), ratings, playable table, DEX and Bridge pages |
 | Browser wallet with in-tab signing | 0.22.0–0.29.0 | `src/web/src/views/Wallet.tsx`, `lib/keys.ts`, `lib/tx.ts`; the keyfile picker landed in 0.29.0 |
-| Variant assets and Chess960 settlement | 0.23.0, 0.25.0, 0.27.0 | `config.py: CHESS960`, `chain/tx.py`, `chain/block.py`, `miner --variant` |
+| Custom token assets and Chess960 settlement | 0.23.0, 0.25.0, 0.27.0 | `config.py: c960_token`, `chain/tx.py`, `chain/block.py`, `miner --variant token-<ticket>` |
 | Native DEX | 0.24.0 | `chain/dex.py`, `/v1/pools`, `src/web/src/views/dex`, `sccp dex` |
 | ETH↔SCCP HTLC bridge and signed order book | 0.24.0 | `chain/tx.py` (HTLC appliers), `bridge/`, `contracts/EthHtlc.sol`, `src/web/src/views/bridge`, `sccp bridge` |
 | Genesis premine and testnet bootstrap | 0.25.0 | `genesis/`, `docs/setup/TESTNET_DEPLOYMENT.md` |

@@ -246,8 +246,8 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 | Wins per claim (`k`) | 1 | 3 (retargeted 1..10) |
 | Header seal difficulty | 0 bits | 16 bits (retargeted) |
 | Block subsidy | 50 coins | 50 coins, halves every 210,000 blocks |
-| Max supply | none (test coins) | 21,000,000 ZQWX + 21,000,000 per variant |
-| Genesis allocation | 1,000,000 ZQWX faucet, a 5 ZQWX/5 C960 demo pool and a completed 1-ZQWX HTLC | 2 bps ZQWX (4,200) bootstrap grant; no variant allocation |
+| Max supply | none (test coins) | 21,000,000 ZQWX; C960's custom-token cap is 21,000,000 |
+| Genesis allocation | 1,000,000 ZQWX faucet, a 5 ZQWX/5 C960 demo pool and a completed 1-ZQWX HTLC | 2 bps ZQWX (4,200) bootstrap grant; no token allocation |
 | Coinbase maturity | 20 blocks | 100 blocks |
 | Registration bond | 10 coins | 500 coins |
 | Claim window | 64 blocks | 144 blocks |
@@ -266,8 +266,9 @@ registration bond plus three clock witnesses at the 50 ZQWX witness bond - needs
 2,150 ZQWX, leaving 2,050 for transaction fees, slashed-bond top-ups and
 additional miners. It is a bootstrap budget, not enough to fund full target
 throughput at k=3; the roster is expected to grow from mined subsidies and fees.
-C960 remains mined-only and is not part of genesis, so C960 miners still need a
-small ZQWX balance for fees and the 10 ZQWX timeout bond. The grant is public in
+C960 is registered at genesis as an ordinary custom token with ticket `0960`
+and no allocation, so C960 remains mined-only and C960 miners still need a small
+ZQWX balance for fees and the 10 ZQWX timeout bond. The grant is public in
 `genesis/mainnet-premine.json`; `scripts/make_genesis.py` pins the manifest total
 to exactly 2 bps so neither an accidental mint nor a dropped tranche changes the
 chain.

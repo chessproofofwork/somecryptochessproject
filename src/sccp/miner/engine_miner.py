@@ -1318,8 +1318,13 @@ class EngineMiner:
         )
         public_keys = self.config.witness_key_map
         public_keys.update({address: keypair.public_key_hex for address, keypair in witnesses})
+        variant_params = self.variants.get(state.certificate.variant)
+        if variant_params is None:
+            self._refuse(
+                f"{state.match_id}: no parameters for variant {state.certificate.variant!r}"
+            )
+            return None
         try:
-            variant_params = self.config.params.variant(state.certificate.variant)
             verify_clock_evidence(
                 evidence,
                 certificate=state.certificate,

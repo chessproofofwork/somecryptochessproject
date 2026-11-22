@@ -1,11 +1,12 @@
 /**
  * Tokens, variants and account balances.
  *
- * The network decides both the chess variants it settles and the asset each one
- * mints (`GET /v1/params`). Standard chess is native ZQWX; every other variant
- * has an immutable asset id and a printable symbol such as C960. The explorer and
- * wallet keep those two namespaces apart: a transfer of C960 pays its fee in
- * ZQWX, and an account's `assets` map is keyed by the asset id, never a nickname.
+ * Standard chess is native ZQWX (`GET /v1/params`). Every other token, C960
+ * included, is a chain registration published by `GET /v1/tokens`; it has an
+ * immutable asset id and a printable symbol, and its internal variant is
+ * `token-<ticket>`. The explorer and wallet keep those two namespaces apart: a
+ * transfer of C960 pays its fee in ZQWX, and an account's `assets` map is keyed
+ * by the asset id, never a nickname.
  */
 
 import type {
@@ -137,7 +138,7 @@ export function tokenForTokenView(view: TokenView): Token {
   };
 }
 
-/** Every token this network supports, native ZQWX first. */
+/** The network's static tokens, native ZQWX first. */
 export function tokensFor(params: NetworkParams | undefined): Token[] {
   if (params === undefined) return [ZQWX];
   const tokens = (params.variants ?? []).map(tokenForVariantParams);
@@ -146,12 +147,13 @@ export function tokensFor(params: NetworkParams | undefined): Token[] {
 }
 
 /**
- * The built-in tokens plus the chain-registered tokens this client trusts.
+ * The static tokens plus the chain-registered tokens this client trusts.
  *
  * A token appears when the node operator approved it (``TokenView.approved``)
- * or when this browser pinned its ticket or token id. Permissionless
- * registrations therefore never appear in a wallet by accident, while a user
- * who looked one up manually keeps it across reloads.
+ * or when this browser pinned its ticket or token id. C960 is a genesis token,
+ * so it arrives here like any other registration. Permissionless registrations
+ * therefore never appear in a wallet by accident, while a user who looked one up
+ * manually keeps it across reloads.
  */
 export function tokensWithRegistry(
   params: NetworkParams | undefined,

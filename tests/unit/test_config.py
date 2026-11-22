@@ -8,7 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from sccp.config import (
-    CHESS960,
+    C960,
+    C960_VARIANT,
     DEVNET,
     MAINNET,
     NETWORKS,
@@ -16,6 +17,7 @@ from sccp.config import (
     UNITS_PER_COIN,
     NetworkParams,
     VariantParams,
+    c960_token,
     coins_to_units,
     derive_token_asset_id,
     get_network,
@@ -30,6 +32,17 @@ def test_registry_contains_all_networks() -> None:
     assert set(NETWORKS) == {"devnet", "mainnet", "testnet"}
     assert get_network("mainnet") is MAINNET
     assert get_network(TESTNET) is TESTNET
+
+
+def test_c960_is_a_custom_token_not_a_builtin_variant() -> None:
+    """Only standard chess is in NetworkParams; C960 has a registration serial."""
+    for params in (DEVNET, TESTNET, MAINNET):
+        assert params.variant_names() == ("standard",)
+    token = c960_token()
+    assert token.ticket == "0960"
+    assert token.name == "token-0960"
+    assert token.asset == derive_token_asset_id("0960", 8, "chess960")
+    assert token.ruleset == "chess960"
 
 
 def test_a_ticket_is_a_registration_serial_not_a_ticker() -> None:
@@ -133,9 +146,9 @@ def test_clock_and_timeout_parameters() -> None:
 def test_each_variant_declares_its_own_time_control() -> None:
     """A token controls its clock independently of the network default."""
     assert TESTNET.variant("standard").time_control == (600_000, 0, 0)
-    assert TESTNET.variant("chess960").time_control == (600_000, 0, 0)
+    assert c960_token().time_control == (600_000, 0, 0)
 
-    faster_chess960 = CHESS960.model_copy(
+    faster_chess960 = C960.model_copy(
         update={"time_control_initial_ms": 300_000, "time_control_increment_ms": 5_000}
     )
     params = NetworkParams(
@@ -144,10 +157,10 @@ def test_each_variant_declares_its_own_time_control() -> None:
             "variants": [faster_chess960.model_dump()],
         }
     )
-    assert params.variant("chess960").time_control == (300_000, 5_000, 0)
+    assert params.variant(C960_VARIANT).time_control == (300_000, 5_000, 0)
     assert params.variant("standard").time_control == (600_000, 0, 0)
 
-    delayed_chess960 = CHESS960.model_copy(
+    delayed_chess960 = C960.model_copy(
         update={"time_control_initial_ms": 180_000, "time_control_delay_ms": 2_000}
     )
     params = NetworkParams(
@@ -156,7 +169,7 @@ def test_each_variant_declares_its_own_time_control() -> None:
             "variants": [delayed_chess960.model_dump()],
         }
     )
-    assert params.variant("chess960").time_control == (180_000, 0, 2_000)
+    assert params.variant(C960_VARIANT).time_control == (180_000, 0, 2_000)
 
     faster_standard = VariantParams(
         name="standard",
@@ -191,13 +204,13 @@ def test_each_variant_declares_its_own_time_control() -> None:
 )
 def test_variant_time_controls_are_bounded_and_lossless(override: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
-        VariantParams.model_validate({**CHESS960.model_dump(), **override})
+        VariantParams.model_validate({**C960.model_dump(), **override})
 
 
 def test_variant_must_be_registered() -> None:
     with pytest.raises(ValidationError):
         VariantParams.model_validate(
-            {**CHESS960.model_dump(), "name": "nine-sixty", "rules": "chess960"}
+            {**C960.model_dump(), "ruleset": "nine-sixty", "rules": "chess960"}
         )
 
 

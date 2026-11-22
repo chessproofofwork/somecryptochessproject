@@ -12,7 +12,7 @@ import chess.pgn
 import pytest
 
 from sccp.chess.pgn import GameExpectations, validate_pgn
-from sccp.config import TESTNET
+from sccp.config import C960, C960_VARIANT, TESTNET
 from sccp.errors import PgnValidationError
 
 FOOLS_MATE = "1. f3 e5 2. g4 Qh4# 0-1"
@@ -81,8 +81,25 @@ def test_chess960_rules_need_a_start_fen(
     make_pgn: Callable[[str, Mapping[str, str]], str], match_tags: dict[str, str]
 ) -> None:
     tags = _tags(Rules="chess960")(match_tags)
+    expected = GameExpectations(
+        match_id=tags["MatchID"],
+        epoch=int(tags["Epoch"]),
+        round_number=int(tags["RoundNumber"]),
+        seat_white=tags["SeatWhite"],
+        seat_black=tags["SeatBlack"],
+        engine_white=tags["EngineWhite"],
+        engine_black=tags["EngineBlack"],
+        opening_id=int(tags["OpeningID"]),
+        opening_hash=tags["OpeningHash"],
+        variant=C960_VARIANT,
+    )
     with pytest.raises(PgnValidationError, match="needs its start FEN"):
-        validate_pgn(make_pgn(FOOLS_MATE, tags), params=TESTNET)
+        validate_pgn(
+            make_pgn(FOOLS_MATE, tags),
+            params=TESTNET,
+            expected=expected,
+            variants={C960_VARIANT: C960},
+        )
 
 
 def test_unterminated_result_is_rejected(

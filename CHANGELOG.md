@@ -43,13 +43,24 @@ not itemised here.
 
 ### Changed
 
+- **C960 is now an ordinary custom token, not a built-in asset.** `NetworkParams`
+  no longer ships a `chess960` variant: only native standard chess is built in.
+  Every genesis document registers C960 as a normal `TokenRecord` with ticket
+  `0960`, display name `Chess960`, ticker `C960` and the `chess960` ruleset, so
+  its internal variant is `token-0960` and its asset id is derived from the same
+  `{kind, ticket, decimals, ruleset}` hash as every other registration. Balances,
+  pools, transfers, miners, relays, witnesses and the explorer therefore use the
+  custom-token path for C960; the genesis records are re-pinned and the CLI/deploy
+  commands use `--variant token-0960` and the 64-hex C960 asset id on DEX
+  commands.
 - **The mainnet 2-bps premine moved to a fresh key before launch.** The single
   `sccp-bootstrap` tranche in `genesis/mainnet-premine.json` now pays to
   `sccp1qxl7upkxas5hhz5enrt5ydmzlymzzw58umrncd5pgtt9795pshtvqchkd0n`, and
   `MAINNET.genesis_hash` is
-  `8032b9c30796495c91a18c9db3bd1600e0dcbd8452e15948109eaa818a0a4ec2`. The
-  keyfile and its passphrase are local only under `.secrets/`, which is
-  git-ignored; no private key material is committed.
+  `e7949a3123a042ffcd683bfa6cd8beab0507b51f99b882a4dc7fe0646bf5d628` after the
+  C960 token record was added at height 0. The keyfile and its passphrase are
+  local only under `.secrets/`, which is git-ignored; no private key material is
+  committed.
 
 ## [0.37.0] - 2026-11-21
 

@@ -161,9 +161,9 @@ must agree with it.
 
 A `time_forfeit` PGN is accepted only when its `TimeControl` matches the
 certificate and the accompanying clock evidence verifies. The control is fixed
-by the variant token, not negotiated per match: built-in variants use
-sudden-death 10+0 unless the network overrides their standard entry, and a
-registered token declares its own initial time, increment or delay, and optional
+by the variant token, not negotiated per match: standard chess uses the network
+default (sudden-death 10+0 unless the network overrides its standard entry), and
+every custom token declares its own initial time, increment or delay, and optional
 FIDE-style later periods at registration.
 See section 8.2 below and the clock implementation in
 `src/sccp/protocol/clocks.py`.
@@ -381,10 +381,10 @@ a player for the moves that follow.
 The certificate commits to the complete `time_control` object — `initial_ms`,
 `increment_ms`, a non-zero `delay_ms`, and any FIDE-style `first_period_moves`
 and `periods` — and the signed payload covers it. The control is chosen by the
-variant token: built-in variants default to sudden-death **10+0**, and a
-registered token fixes its own initial time, either an increment or a delay, and
-optional later periods at registration. Matchmaking never accepts a different
-per-match choice. See section 8.4 for the timed-session API.
+variant token: standard chess defaults to sudden-death **10+0**, and every custom
+token fixes its own initial time, either an increment or a delay, and optional
+later periods at registration. Matchmaking never accepts a different per-match
+choice. See section 8.4 for the timed-session API.
 
 ### 8.2 Result attestation
 
@@ -901,7 +901,9 @@ The four-digit ticket is a unique registration serial: it selects the internal
 variant name and salts the id, so two registrations may choose the same
 `display_name` and `symbol` and still produce different assets. Name and ticker
 lookups are therefore convenience aliases that resolve only when one token uses
-the value; balances, pools and transfers always name the asset id.
+the value; balances, pools and transfers always name the asset id. C960 follows
+the same rule: the shipped networks register it with ticket `0960`, internal
+variant `token-0960`, and no protocol privilege over any other token.
 
 `htlc_id = H("sccp/v1/htlc", {from, nonce})`. A claimed or refunded record stays
 in state (and in `state_root`) so an explorer and the counterparty can read the
@@ -1312,6 +1314,13 @@ about height 0.
  "network": "mainnet",
  "timestamp": 1735689600,
  "miner": "sccp1...",
+ "tokens": [
+   {"name": "token-0960", "owner": "sccp1...", "registered_at_height": 0,
+    "initial_supply": 0,
+    "variant": {"ticket": "0960", "ruleset": "chess960", "rules": "chess960",
+                "symbol": "C960", "display_name": "Chess960",
+                "asset": "<64-hex id derived from ticket 0960>", "...": "..."}}
+ ],
  "allocations": [
    {"address": "sccp1...", "public_key": "hex", "amount": 4200000000000},
    {"address": "sccp1...", "public_key": "hex",
@@ -1338,8 +1347,16 @@ optional and defaults to the first allocation. Each `allocations` entry needs a
 positive integer `amount` in base units, a valid address for this network, and a
 `public_key` that **derives** that address — Ed25519 is not key-recoverable, so
 an allocation without a matching key would be unspendable. The entry is native
-ZQWX when `asset` is omitted and otherwise names a variant asset id. One address
-may appear once per asset; a duplicate `(address, asset)` pair is rejected.
+ZQWX when `asset` is omitted and otherwise names a custom-token asset id. One
+address may appear once per asset; a duplicate `(address, asset)` pair is
+rejected.
+
+`tokens` registers custom tokens at height 0. Each entry is the same
+`TokenRecord` a `register_token` transaction creates: a unique four-digit
+`ticket`, the internal name `token-<ticket>`, a registered ruleset, display
+metadata and immutable economics. `initial_supply` must be zero; any starting
+balance belongs in `allocations`. The C960 entry uses ticket `0960`; it is an
+ordinary custom token, not part of `NetworkParams`.
 
 `pools` and `htlcs` are optional and are applied after the allocations, in that
 order. A genesis pool debits its creator's allocation exactly like `create_pool`
@@ -1351,9 +1368,9 @@ that opens its hashlock. Genesis pools and HTLCs are limited to height 0 and are
 part of `state_root`.
 
 Mainnet allocates **2 basis points of the ZQWX cap** — 4,200 ZQWX — at genesis as
-a bootstrap grant, and **no variant supply**: every C960 in existence is mined
-(or, on testnet only, seeded as demo liquidity). The grant is sized for the
-initial standard-chess k=3 roster and is not a variant allocation; C960 remains
+a bootstrap grant, and **no custom-token supply**: every C960 in existence is
+mined (or, on testnet only, seeded as demo liquidity). The grant is sized for the
+initial standard-chess k=3 roster and is not a token allocation; C960 remains
 mined-only. The public address and basis points live in
 `genesis/mainnet-premine.json`; the private key is not part of the repository.
 `scripts/make_genesis.py` refuses to generate a document unless the manifest's

@@ -209,7 +209,12 @@ def test_token_routes_name_tokens_by_name_asset_and_unique_symbol() -> None:
         ambiguous = client.get("/v1/tokens/AAA")
         missing = client.get("/v1/tokens/nope")
     assert listing["network"] == "devnet"
-    assert [token["name"] for token in listing["tokens"]] == ["alpha", "beta", "gamma"]
+    # The devnet genesis registers C960 as an ordinary custom token.
+    assert [token["name"] for token in listing["tokens"] if token["ticket"] != "0960"] == [
+        "alpha",
+        "beta",
+        "gamma",
+    ]
     assert by_name == by_asset
     assert by_name["asset"] == alpha.variant.asset
     assert by_name["symbol"] == "AAA"
@@ -265,7 +270,11 @@ def test_token_lookup_uses_the_ticket_or_token_id_not_the_display_name() -> None
         by_ticker = client.get("/v1/tokens/GOLD")
     service.close()
 
-    flags = {token["ticket"]: token["approved"] for token in listing["tokens"]}
+    flags = {
+        token["ticket"]: token["approved"]
+        for token in listing["tokens"]
+        if token["ticket"] in {"0042", "0043"}
+    }
     assert flags == {"0042": True, "0043": False}
     assert by_ticket.status_code == 200
     assert by_ticket.json() == by_token_id.json()

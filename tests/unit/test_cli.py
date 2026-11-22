@@ -2303,7 +2303,7 @@ def test_dex_create_pool_builds_a_signed_transaction_from_the_node_account(
             "--amount-a",
             "50",
             "--asset-b",
-            "C960",
+            CHESS960_ASSET_ID,
             "--amount-b",
             "50",
             "--node",

@@ -23,14 +23,17 @@ from sccp.chain.genesis import (
     parse_genesis_document,
     zero_address,
 )
-from sccp.chain.state import HtlcStatus
+from sccp.chain.state import HtlcStatus, TokenRecord
 from sccp.config import (
-    CHESS960_ASSET_ID,
+    C960,
+    C960_ASSET_ID,
+    C960_VARIANT,
     DEVNET,
     MAINNET,
     TESTNET,
     UNITS_PER_COIN,
     NetworkParams,
+    c960_token,
 )
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
@@ -41,6 +44,16 @@ COINS = 100_000_000
 
 UNPINNED = TESTNET.model_copy(update={"genesis_hash": None})
 """Testnet parameters without the pinned hash, for document round-trip tests."""
+
+
+def _c960(params: NetworkParams = TESTNET) -> TokenRecord:
+    """The ordinary custom-token record the shipped genesis documents carry."""
+    return TokenRecord(
+        name=C960_VARIANT,
+        variant=c960_token(),
+        owner=zero_address(params),
+        registered_at_height=0,
+    )
 
 
 def _allocation(
@@ -202,29 +215,31 @@ def test_the_faucet_is_public_and_test_only() -> None:
 
 def test_variant_allocations_are_tracked_in_their_own_asset() -> None:
     native = _allocation(10 * COINS)
-    variant = _allocation(20 * COINS, asset=CHESS960_ASSET_ID)
+    variant = _allocation(20 * COINS, asset=C960_ASSET_ID)
     block, state = build_genesis(
         TESTNET,
         timestamp=1_700_000_000,
         allocations=(native, variant),
+        tokens=(_c960(),),
     )
     account = state.account(native.address)
     assert block.header.state_root == state.state_root()
     assert state.minted == native.amount
-    assert state.minted_assets == {CHESS960_ASSET_ID: variant.amount}
+    assert state.minted_assets == {C960_ASSET_ID: variant.amount}
     assert account.balance == native.amount
-    assert account.assets == {CHESS960_ASSET_ID: variant.amount}
+    assert account.assets == {C960_ASSET_ID: variant.amount}
 
 
 def test_a_variant_allocation_is_clamped_by_its_own_cap() -> None:
-    variant = MAINNET.variant_for_asset(CHESS960_ASSET_ID)
+    variant = C960
     assert variant.max_supply is not None
     cap = variant.max_supply * UNITS_PER_COIN
     with pytest.raises(GenesisError, match="C960 allocations exceed"):
         build_genesis(
             MAINNET,
             timestamp=1_700_000_000,
-            allocations=(_allocation(cap + 1, MAINNET, CHESS960_ASSET_ID),),
+            allocations=(_allocation(cap + 1, MAINNET, C960_ASSET_ID),),
+            tokens=(_c960(MAINNET),),
         )
 
 
@@ -238,12 +253,12 @@ def test_an_unknown_allocation_asset_is_rejected() -> None:
 
 def test_a_genesis_pool_is_created_from_its_creators_allocation() -> None:
     creator = _allocation(10 * COINS)
-    variant = _allocation(10 * COINS, asset=CHESS960_ASSET_ID)
+    variant = _allocation(10 * COINS, asset=C960_ASSET_ID)
     pool = GenesisPool(
         creator=creator.address,
         asset_a="",
         amount_a=10 * COINS,
-        asset_b=CHESS960_ASSET_ID,
+        asset_b=C960_ASSET_ID,
         amount_b=10 * COINS,
     )
     _block, state = build_genesis(
@@ -251,14 +266,15 @@ def test_a_genesis_pool_is_created_from_its_creators_allocation() -> None:
         timestamp=1_700_000_000,
         allocations=(creator, variant),
         pools=(pool,),
+        tokens=(_c960(),),
     )
-    identifier = dex.pool_id("", CHESS960_ASSET_ID)
+    identifier = dex.pool_id("", C960_ASSET_ID)
     stored = state.pools[identifier]
     assert stored.reserve_a == stored.reserve_b == 10 * COINS
     assert stored.total_shares == dex.initial_shares(10 * COINS, 10 * COINS)
     assert stored.shares == {creator.address: stored.total_shares}
     assert state.account(creator.address).balance == 0
-    assert state.account(creator.address).assets.get(CHESS960_ASSET_ID, 0) == 0
+    assert state.account(creator.address).assets.get(C960_ASSET_ID, 0) == 0
 
 
 def test_a_genesis_pool_cannot_spend_funds_that_were_not_allocated() -> None:
@@ -267,7 +283,7 @@ def test_a_genesis_pool_cannot_spend_funds_that_were_not_allocated() -> None:
         creator=creator.address,
         asset_a="",
         amount_a=10 * COINS,
-        asset_b=CHESS960_ASSET_ID,
+        asset_b=C960_ASSET_ID,
         amount_b=10 * COINS,
     )
     with pytest.raises(GenesisError, match="holds 500000000 ZQWX"):
@@ -276,6 +292,7 @@ def test_a_genesis_pool_cannot_spend_funds_that_were_not_allocated() -> None:
             timestamp=1_700_000_000,
             allocations=(creator,),
             pools=(pool,),
+            tokens=(_c960(),),
         )
 
 
@@ -355,13 +372,13 @@ def test_a_claimed_genesis_htlc_must_open_its_hashlock() -> None:
 
 def test_the_document_round_trips_pools_and_htlcs() -> None:
     creator = _allocation(11 * COINS)
-    variant = _allocation(10 * COINS, asset=CHESS960_ASSET_ID)
+    variant = _allocation(10 * COINS, asset=C960_ASSET_ID)
     beneficiary = _allocation(COINS, index=1)
     pool = GenesisPool(
         creator=creator.address,
         asset_a="",
         amount_a=10 * COINS,
-        asset_b=CHESS960_ASSET_ID,
+        asset_b=C960_ASSET_ID,
         amount_b=10 * COINS,
     )
     htlc = GenesisHtlc(
@@ -381,12 +398,46 @@ def test_the_document_round_trips_pools_and_htlcs() -> None:
         allocations=(creator, variant, beneficiary),
         pools=(pool,),
         htlcs=(htlc,),
+        tokens=(_c960(UNPINNED),),
     )
     assert document["pools"] == [pool.as_dict()]
     assert document["htlcs"] == [htlc.as_dict()]
+    assert document["tokens"] == [_c960(UNPINNED).as_dict()]
     _block, state = parse_genesis_document(UNPINNED, document)
     assert len(state.pools) == 1
     assert next(iter(state.htlcs.values())).status is HtlcStatus.CLAIMED
+
+
+def test_a_genesis_token_is_a_plain_token_record() -> None:
+    """C960 is not a built-in variant; it is the same record a registration makes."""
+    _block, state = load_genesis(GENESIS_DIR / "devnet.json", DEVNET)
+    record = state.tokens[C960_VARIANT]
+    assert record.ticket == "0960"
+    assert record.token_id == C960_ASSET_ID
+    assert record.variant.ruleset == "chess960"
+    assert record.initial_supply == 0
+    assert record.registered_at_height == 0
+    assert state.variant(C960_VARIANT) == record.variant
+    assert state.variant_for_asset(C960_ASSET_ID) == record.variant
+    assert "chess960" not in state.params.variant_names()
+
+
+def test_a_genesis_token_must_derive_its_asset_id() -> None:
+    record = _c960().as_dict()
+    variant = dict(record["variant"])  # type: ignore[arg-type]
+    variant["asset"] = "ab" * 32
+    document = genesis_document(UNPINNED, timestamp=1_700_000_000, tokens=(_c960(UNPINNED),))
+    document["tokens"] = [{**record, "variant": variant}]
+    with pytest.raises(GenesisError, match="ticket derives"):
+        parse_genesis_document(UNPINNED, document)
+
+
+def test_a_genesis_token_cannot_premint_supply() -> None:
+    record = _c960().as_dict()
+    document = genesis_document(UNPINNED, timestamp=1_700_000_000, tokens=(_c960(UNPINNED),))
+    document["tokens"] = [{**record, "initial_supply": 1}]
+    with pytest.raises(GenesisError, match="initial_supply"):
+        parse_genesis_document(UNPINNED, document)
 
 
 def test_the_committed_mainnet_premine_is_two_basis_points() -> None:
@@ -399,7 +450,8 @@ def test_the_committed_mainnet_premine_is_two_basis_points() -> None:
 
 def test_testnet_genesis_seeds_a_pool_and_a_completed_bridge() -> None:
     _block, state = load_genesis(GENESIS_DIR / "testnet.json", TESTNET)
-    identifier = dex.pool_id("", CHESS960_ASSET_ID)
+    assert state.tokens[C960_VARIANT].ticket == C960.ticket
+    identifier = dex.pool_id("", C960_ASSET_ID)
     pool = state.pools[identifier]
     assert pool.reserve_a == pool.reserve_b == 5 * COINS
     assert pool.total_shares == 5 * COINS

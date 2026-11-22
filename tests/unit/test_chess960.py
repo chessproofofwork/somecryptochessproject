@@ -10,7 +10,7 @@ import pytest
 
 from sccp.chain.block import minted_subsidy, minted_variant_rewards
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import EpochRecord, State, epoch_end_height
+from sccp.chain.state import EpochRecord, State, TokenRecord, epoch_end_height
 from sccp.chain.tx import apply_transaction, validate_transaction
 from sccp.chess.engines import MockEngine
 from sccp.chess.gameplay import play_game
@@ -22,7 +22,9 @@ from sccp.chess.variants import (
     select_chess960_start,
 )
 from sccp.config import (
-    CHESS960_ASSET_ID,
+    C960,
+    C960_ASSET_ID,
+    C960_VARIANT,
     CHESS960_VARIANT,
     DEVNET,
     STANDARD_VARIANT,
@@ -42,6 +44,7 @@ from sccp.protocol.transcript import (
     build_win_proof,
     create_certificate,
     create_result,
+    expected_from_certificate,
     opening_hash,
     render_transcript_pgn,
     sign_certificate,
@@ -49,6 +52,21 @@ from sccp.protocol.transcript import (
 )
 from sccp.serialization import domain_hex
 from sccp.wallet.service import WalletService
+
+
+def _c960_record() -> TokenRecord:
+    """The ordinary custom-token record behind the C960 asset in these tests."""
+    owner = encode_address(hybrid_keypair_from_seed(bytes([99]) * 32).public_key_bytes, DEVNET)
+    return TokenRecord(
+        name=C960_VARIANT,
+        variant=C960,
+        owner=owner,
+        registered_at_height=0,
+    )
+
+
+def _state_with_c960() -> State:
+    return State(params=DEVNET, tokens={C960_VARIANT: _c960_record()})
 
 
 def _headers(
@@ -76,9 +94,9 @@ def _headers(
         "EngineBlack": "mock-v1:black",
         "OpeningID": str(opening_id),
         "OpeningHash": opening_hash_value,
-        "Rules": "chess960" if variant == CHESS960_VARIANT else "chess",
+        "Rules": "chess960" if variant == C960_VARIANT else "chess",
     }
-    if variant == CHESS960_VARIANT:
+    if variant == C960_VARIANT:
         headers["FEN"] = start_fen
         headers["SetUp"] = "1"
         headers["Variant"] = "Chess960"
@@ -87,11 +105,11 @@ def _headers(
 
 def test_chess960_pgn_replays_from_its_start_position() -> None:
     start = chess960_start_fen(0)
-    hash_value = opening_hash("none", 0, (), start_fen=start, variant=CHESS960_VARIANT)
+    hash_value = opening_hash("none", 0, (), start_fen=start, variant=C960_VARIANT)
     headers = _headers(
         match_id="ab" * 32,
         start_fen=start,
-        variant=CHESS960_VARIANT,
+        variant=C960_VARIANT,
         opening_id=0,
         opening_hash_value=hash_value,
     )
@@ -99,9 +117,10 @@ def test_chess960_pgn_replays_from_its_start_position() -> None:
         MockEngine(seed=3),
         MockEngine(seed=9),
         params=DEVNET,
-        variant=CHESS960_VARIANT,
+        variant=C960_VARIANT,
         start_fen=start,
         headers=headers,
+        variants={C960_VARIANT: C960},
     )
     expected = GameExpectations(
         match_id="ab" * 32,
@@ -113,10 +132,15 @@ def test_chess960_pgn_replays_from_its_start_position() -> None:
         engine_black="mock-v1:black",
         opening_id=0,
         opening_hash=hash_value,
-        variant=CHESS960_VARIANT,
+        variant=C960_VARIANT,
         start_fen=start,
     )
-    parsed = validate_pgn(game.pgn, params=DEVNET, expected=expected)
+    parsed = validate_pgn(
+        game.pgn,
+        params=DEVNET,
+        expected=expected,
+        variants={C960_VARIANT: C960},
+    )
     assert parsed.start_fen == start
     assert parsed.san_moves == game.san_moves
     assert parsed.game_hash != domain_hex(
@@ -133,11 +157,11 @@ def test_chess960_pgn_replays_from_its_start_position() -> None:
 def test_chess960_pgn_must_match_the_certificate_start() -> None:
     start = chess960_start_fen(0)
     other = chess960_start_fen(1)
-    hash_value = opening_hash("none", 0, (), start_fen=start, variant=CHESS960_VARIANT)
+    hash_value = opening_hash("none", 0, (), start_fen=start, variant=C960_VARIANT)
     headers = _headers(
         match_id="cd" * 32,
         start_fen=start,
-        variant=CHESS960_VARIANT,
+        variant=C960_VARIANT,
         opening_id=0,
         opening_hash_value=hash_value,
     )
@@ -145,9 +169,10 @@ def test_chess960_pgn_must_match_the_certificate_start() -> None:
         MockEngine(seed=3),
         MockEngine(seed=9),
         params=DEVNET,
-        variant=CHESS960_VARIANT,
+        variant=C960_VARIANT,
         start_fen=start,
         headers=headers,
+        variants={C960_VARIANT: C960},
     )
     expected = GameExpectations(
         match_id="cd" * 32,
@@ -159,11 +184,16 @@ def test_chess960_pgn_must_match_the_certificate_start() -> None:
         engine_black="mock-v1:black",
         opening_id=0,
         opening_hash=hash_value,
-        variant=CHESS960_VARIANT,
+        variant=C960_VARIANT,
         start_fen=other,
     )
     with pytest.raises(PgnValidationError, match="certificate says"):
-        validate_pgn(game.pgn, params=DEVNET, expected=expected)
+        validate_pgn(
+            game.pgn,
+            params=DEVNET,
+            expected=expected,
+            variants={C960_VARIANT: C960},
+        )
 
 
 def test_only_the_960_start_positions_are_accepted() -> None:
@@ -179,8 +209,8 @@ def test_pairing_groups_by_variant() -> None:
     roster = [
         RosterEntry(address="sccpt1standarda", variant=STANDARD_VARIANT),
         RosterEntry(address="sccpt1standardb", variant=STANDARD_VARIANT),
-        RosterEntry(address="sccpt1chess960a", variant=CHESS960_VARIANT),
-        RosterEntry(address="sccpt1chess960b", variant=CHESS960_VARIANT),
+        RosterEntry(address="sccpt1chess960a", variant=C960_VARIANT),
+        RosterEntry(address="sccpt1chess960b", variant=C960_VARIANT),
     ]
     matchups = pair(
         roster,
@@ -193,7 +223,7 @@ def test_pairing_groups_by_variant() -> None:
     assert len(matchups) == 2
     assert {matchup.variant for matchup in matchups} == {
         STANDARD_VARIANT,
-        CHESS960_VARIANT,
+        C960_VARIANT,
     }
     by_address = {entry.address: entry.variant for entry in roster}
     for matchup in matchups:
@@ -207,8 +237,8 @@ def test_relay_opens_a_chess960_session_with_a_beacon_position() -> None:
     roster = [
         RosterEntry(address=addresses[0], max_games=3, variant=STANDARD_VARIANT),
         RosterEntry(address=addresses[1], max_games=3, variant=STANDARD_VARIANT),
-        RosterEntry(address=addresses[2], max_games=3, variant=CHESS960_VARIANT),
-        RosterEntry(address=addresses[3], max_games=3, variant=CHESS960_VARIANT),
+        RosterEntry(address=addresses[2], max_games=3, variant=C960_VARIANT),
+        RosterEntry(address=addresses[3], max_games=3, variant=C960_VARIANT),
     ]
     public_keys = {
         address: keypair.public_key_hex
@@ -227,11 +257,12 @@ def test_relay_opens_a_chess960_session_with_a_beacon_position() -> None:
         roster=roster,
         public_keys=public_keys,
         engines=engines,
+        variants={C960_VARIANT: C960},
     )
     sessions = matchmaker.open_round(0)
     assert len(sessions) == 2
     chess960_sessions = [
-        session for session in sessions if session.certificate.variant == CHESS960_VARIANT
+        session for session in sessions if session.certificate.variant == C960_VARIANT
     ]
     assert len(chess960_sessions) == 1
     certificate = chess960_sessions[0].certificate
@@ -244,13 +275,13 @@ def test_relay_opens_a_chess960_session_with_a_beacon_position() -> None:
         position,
         (),
         start_fen=certificate.opening.start_fen,
-        variant=CHESS960_VARIANT,
+        variant=C960_VARIANT,
     )
 
 
 def test_chess960_proofs_mint_c960_not_sccp() -> None:
     standard = SimpleNamespace(variant=STANDARD_VARIANT)
-    chess960 = SimpleNamespace(variant=CHESS960_VARIANT)
+    chess960 = SimpleNamespace(variant=C960_VARIANT)
     assert minted_subsidy(DEVNET, 100, proofs=[standard], minted=0) == DEVNET.subsidy
     assert minted_subsidy(DEVNET, 100, proofs=[chess960], minted=0) == 0
     rewards = minted_variant_rewards(
@@ -258,8 +289,9 @@ def test_chess960_proofs_mint_c960_not_sccp() -> None:
         100,
         proofs=[chess960],
         minted_assets={},
+        variants={C960_VARIANT: C960},
     )
-    assert rewards == {CHESS960_ASSET_ID: DEVNET.variant(CHESS960_VARIANT).subsidy}
+    assert rewards == {C960_ASSET_ID: C960.subsidy}
 
 
 def test_a_registered_variant_mints_its_own_asset_once_per_block() -> None:
@@ -300,11 +332,11 @@ def test_a_registered_variant_mints_its_own_asset_once_per_block() -> None:
 def test_c960_rewards_mature_like_native_coinbase() -> None:
     state = State(params=DEVNET)
     address = "sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g"
-    state.credit_asset_coinbase(address, CHESS960_ASSET_ID, 123, height=10)
+    state.credit_asset_coinbase(address, C960_ASSET_ID, 123, height=10)
     assert state.account(address).assets == {}
-    assert state.minted_assets[CHESS960_ASSET_ID] == 123
+    assert state.minted_assets[C960_ASSET_ID] == 123
     state.release_matured(10 + DEVNET.coinbase_maturity)
-    assert state.asset_balance(address, CHESS960_ASSET_ID) == 123
+    assert state.asset_balance(address, C960_ASSET_ID) == 123
 
 
 def test_c960_and_native_coinbases_mature_on_their_own_schedules() -> None:
@@ -312,40 +344,40 @@ def test_c960_and_native_coinbases_mature_on_their_own_schedules() -> None:
     address = "sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g"
     maturity = DEVNET.coinbase_maturity
     state.credit_coinbase(address, 700, height=10)
-    state.credit_asset_coinbase(address, CHESS960_ASSET_ID, 123, height=11)
+    state.credit_asset_coinbase(address, C960_ASSET_ID, 123, height=11)
     account = state.account(address)
     assert account.balance == 0
     assert account.immature == 700
     assert account.assets == {}
-    assert account.immature_assets == {CHESS960_ASSET_ID: 123}
+    assert account.immature_assets == {C960_ASSET_ID: 123}
     assert state.minted == 700
-    assert state.minted_assets == {CHESS960_ASSET_ID: 123}
+    assert state.minted_assets == {C960_ASSET_ID: 123}
 
     assert state.release_matured(10 + maturity - 1) == 0
     assert state.release_matured(10 + maturity) == 700
     assert account.balance == 700
     assert account.immature == 0
-    assert state.asset_balance(address, CHESS960_ASSET_ID) == 0
-    assert account.immature_assets == {CHESS960_ASSET_ID: 123}
+    assert state.asset_balance(address, C960_ASSET_ID) == 0
+    assert account.immature_assets == {C960_ASSET_ID: 123}
 
     # The return value is the native total only: the C960 release below moves
     # the asset balance without adding to that total.
     assert state.release_matured(11 + maturity - 1) == 0
     assert state.release_matured(11 + maturity) == 0
-    assert state.asset_balance(address, CHESS960_ASSET_ID) == 123
-    assert account.assets == {CHESS960_ASSET_ID: 123}
-    assert account.immature_assets.get(CHESS960_ASSET_ID, 0) == 0
+    assert state.asset_balance(address, C960_ASSET_ID) == 123
+    assert account.assets == {C960_ASSET_ID: 123}
+    assert account.immature_assets.get(C960_ASSET_ID, 0) == 0
     assert account.asset_coinbase_queue == []
 
 
 def test_credit_asset_coinbase_ignores_zero_and_rejects_negative() -> None:
     state = State(params=DEVNET)
     address = "sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g"
-    state.credit_asset_coinbase(address, CHESS960_ASSET_ID, 0, 1)
+    state.credit_asset_coinbase(address, C960_ASSET_ID, 0, 1)
     assert address not in state.accounts
     assert state.minted_assets == {}
     with pytest.raises(StateError):
-        state.credit_asset_coinbase(address, CHESS960_ASSET_ID, -1, 1)
+        state.credit_asset_coinbase(address, C960_ASSET_ID, -1, 1)
 
 
 def test_asset_transfer_moves_c960_and_pays_the_fee_in_sccp() -> None:
@@ -353,22 +385,22 @@ def test_asset_transfer_moves_c960_and_pays_the_fee_in_sccp() -> None:
     recipient_keypair = hybrid_keypair_from_seed(bytes([78]) * 32)
     sender_address = encode_address(sender.public_key_bytes, DEVNET)
     recipient = encode_address(recipient_keypair.public_key_bytes, DEVNET)
-    state = State(params=DEVNET)
+    state = _state_with_c960()
     state.ensure(sender_address).balance = DEVNET.min_fee
-    state.credit_asset(sender_address, CHESS960_ASSET_ID, 500)
+    state.credit_asset(sender_address, C960_ASSET_ID, 500)
     service = WalletService(DEVNET, state)
     tx = service.build_transfer(
         sender,
         recipient,
         200,
-        asset=CHESS960_VARIANT,
+        asset=C960_VARIANT,
         fee=DEVNET.min_fee,
     )
-    assert tx.payload["asset"] == CHESS960_ASSET_ID
+    assert tx.payload["asset"] == C960_ASSET_ID
     validate_transaction(tx, DEVNET, state, height=1)
     apply_transaction(state, tx, height=1)
-    assert state.asset_balance(sender_address, CHESS960_ASSET_ID) == 300
-    assert state.asset_balance(recipient, CHESS960_ASSET_ID) == 200
+    assert state.asset_balance(sender_address, C960_ASSET_ID) == 300
+    assert state.asset_balance(recipient, C960_ASSET_ID) == 200
     assert state.spendable(sender_address) == 0
 
 
@@ -412,6 +444,7 @@ def test_a_chess960_proof_settles_against_a_chess960_roster(devnet_chain: Any) -
     """
     chain = devnet_chain
     params = chain.params
+    c960 = chain.state.variant(C960_VARIANT)
     epoch = 3
     by_address = {
         encode_address(keypair.public_key_bytes, params): keypair
@@ -425,7 +458,7 @@ def test_a_chess960_proof_settles_against_a_chess960_roster(devnet_chain: Any) -
     beacon, availability = _identity_beacon(params, epoch, seats, match)
 
     roster = {
-        address: RosterEntry(address=address, max_games=3, variant=CHESS960_VARIANT)
+        address: RosterEntry(address=address, max_games=3, variant=C960_VARIANT)
         for address in seats
     }
     matchups = pair(
@@ -438,7 +471,7 @@ def test_a_chess960_proof_settles_against_a_chess960_roster(devnet_chain: Any) -
     )
     assert len(matchups) == 1, "two same-variant seats pair exactly once"
     matchup = matchups[0]
-    assert matchup.variant == CHESS960_VARIANT
+    assert matchup.variant == C960_VARIANT
 
     start_fen = chess960_start_fen(C960_IDENTITY_POSITION)
     opening = OpeningRef(
@@ -449,11 +482,11 @@ def test_a_chess960_proof_settles_against_a_chess960_roster(devnet_chain: Any) -
             C960_IDENTITY_POSITION,
             (),
             start_fen=start_fen,
-            variant=CHESS960_VARIANT,
+            variant=C960_VARIANT,
         ),
         moves=(),
         start_fen=start_fen,
-        variant=CHESS960_VARIANT,
+        variant=C960_VARIANT,
     )
     engines = {address: f"mock-v1:{index:016d}" for index, address in enumerate(seats, start=1)}
     certificate = create_certificate(
@@ -461,6 +494,7 @@ def test_a_chess960_proof_settles_against_a_chess960_roster(devnet_chain: Any) -
         opening,
         engine_white=engines[matchup.white],
         engine_black=engines[matchup.black],
+        variants={C960_VARIANT: c960},
     )
     for seat in ("white", "black"):
         certificate = sign_certificate(certificate, seat, by_address[getattr(certificate, seat)])
@@ -469,13 +503,31 @@ def test_a_chess960_proof_settles_against_a_chess960_roster(devnet_chain: Any) -
     for san in ("e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"):
         board.push(board.parse_san(san))
     assert board.is_checkmate(), "the identity position takes the scholar's mate"
-    pgn = render_transcript_pgn(certificate, board, result="1-0", termination="checkmate")
-    parsed = validate_pgn(pgn, params=params, require_win=True)
+    pgn = render_transcript_pgn(
+        certificate,
+        board,
+        result="1-0",
+        termination="checkmate",
+        variants={C960_VARIANT: c960},
+    )
+    parsed = validate_pgn(
+        pgn,
+        params=params,
+        expected=expected_from_certificate(certificate),
+        require_win=True,
+        variants={C960_VARIANT: c960},
+    )
     result = create_result(certificate, parsed)
     for seat in ("white", "black"):
         result = sign_result(result, certificate, seat, by_address[getattr(certificate, seat)])
-    proof = build_win_proof(certificate, pgn, result.result_signatures, params=params)
-    assert proof.variant == CHESS960_VARIANT
+    proof = build_win_proof(
+        certificate,
+        pgn,
+        result.result_signatures,
+        params=params,
+        variants={C960_VARIANT: c960},
+    )
+    assert proof.variant == C960_VARIANT
 
     state = chain.state.copy()
     state.height = epoch_end_height(epoch, params)
@@ -488,7 +540,7 @@ def test_a_chess960_proof_settles_against_a_chess960_roster(devnet_chain: Any) -
             address: RosterMember(
                 public_key=by_address[address].public_key_hex,
                 engine=engines[address],
-                variant=CHESS960_VARIANT,
+                variant=C960_VARIANT,
                 max_games=3,
             )
             for address in seats

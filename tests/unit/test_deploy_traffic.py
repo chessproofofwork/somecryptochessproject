@@ -17,7 +17,7 @@ from sccp.chain import dex
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.state import Pool
 from sccp.chain.tx import htlc_id
-from sccp.config import CHESS960_ASSET_ID, TESTNET, coins_to_units
+from sccp.config import C960_ASSET_ID, TESTNET, coins_to_units
 from sccp.crypto.address import encode_address, validate_address
 from sccp.errors import ConfigError
 from sccp.node.app import create_app as create_node_app
@@ -181,7 +181,7 @@ def _seed_accounts(
             account = state.ensure(address)
             account.balance = coins_to_units(native_coins)
             if variant_coins:
-                account.assets[CHESS960_ASSET_ID] = coins_to_units(variant_coins)
+                account.assets[C960_ASSET_ID] = coins_to_units(variant_coins)
 
 
 def _seed_pool(
@@ -193,13 +193,13 @@ def _seed_pool(
     share_coins: int = 1_000,
 ) -> str:
     """Seat a ZQWX/Chess960 pool with ``holder`` owning every LP share."""
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
     shares = coins_to_units(share_coins)
     for state in (node.chain.state, node.mempool.projection):
         state.pools[pool_id] = Pool(
             pool_id=pool_id,
             asset_a=dex.NATIVE_ASSET,
-            asset_b=CHESS960_ASSET_ID,
+            asset_b=C960_ASSET_ID,
             reserve_a=coins_to_units(native_coins),
             reserve_b=coins_to_units(variant_coins),
             total_shares=shares,
@@ -1068,7 +1068,7 @@ def test_a_cycle_without_a_pool_creates_one_from_the_variant_asset(node: NodeSer
     assert report.side_unconfirmed == 0
     creates = [tx for tx in _admitted(node) if tx.type is TxType.CREATE_POOL]
     assert len(creates) == 1
-    assert creates[0].payload["asset_b"] == CHESS960_ASSET_ID
+    assert creates[0].payload["asset_b"] == C960_ASSET_ID
     assert creates[0].payload["amount_a"] == creates[0].payload["amount_b"] == coins_to_units(2)
 
 
@@ -1086,7 +1086,7 @@ def test_side_traffic_that_cannot_find_coins_is_reported_as_a_skip(node: NodeSer
             options=_quiet_options(bridge=False, dex=True, min_balance_coins=0),
         )
 
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
     assert report.dex == f"dex: skipped (no wallet held both sides of pool {pool_id[:12]})"
     assert (report.transfers, report.side_unconfirmed) == (0, 0)
     assert not [tx for tx in _admitted(node) if tx.type is TxType.CREATE_POOL]
@@ -1247,7 +1247,7 @@ def test_the_command_line_carries_the_side_traffic(
             "--dex-coins",
             "4",
             "--dex-asset",
-            CHESS960_ASSET_ID,
+            C960_ASSET_ID,
         ]
     )
 
@@ -1256,7 +1256,7 @@ def test_the_command_line_carries_the_side_traffic(
     assert isinstance(options, traffic.Options)
     assert (options.bridge, options.dex) == (True, True)
     assert (options.bridge_coins, options.dex_coins) == (3, 4)
-    assert options.dex_asset == CHESS960_ASSET_ID
+    assert options.dex_asset == C960_ASSET_ID
 
     assert traffic.main(["--no-bridge", "--no-dex"]) == 0
     options = captured["options"]

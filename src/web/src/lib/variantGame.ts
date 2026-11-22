@@ -14,9 +14,19 @@
 
 import { Chess, type Color, type PieceSymbol, type Square } from "chess.js";
 
-/** Whether `variant` needs the adapter rather than ordinary `chess.js`. */
-export function isChess960(variant: string): boolean {
-  return variant === "chess960";
+/**
+ * Whether a game needs the adapter rather than ordinary `chess.js`.
+ *
+ * A chain-registered token's variant name is `token-<ticket>`, not `chess960`;
+ * its certificate still carries a Shredder-FEN whose castling field names rook
+ * files (`HAha`) rather than `KQkq`. That field is enough to select the adapter
+ * without consulting the token registry.
+ */
+export function isChess960(variant: string, fen?: string): boolean {
+  if (variant === "chess960") return true;
+  if (fen === undefined || !variant.startsWith("token-")) return false;
+  const castling = fen.trim().split(/\s+/)[2] ?? "-";
+  return /[A-Ha-h]/.test(castling);
 }
 
 interface Rights {
@@ -74,7 +84,7 @@ function rightsFromFen(chess: Chess, fen: string): Rights {
  * generation correct, while the adapter adds the real castle itself.
  */
 export function chessJsStartFen(fen: string, variant: string): string {
-  if (!isChess960(variant)) return fen;
+  if (!isChess960(variant, fen)) return fen;
   const fields = fen.trim().split(/\s+/);
   fields[2] = "-";
   return fields.slice(0, 6).join(" ");
@@ -138,10 +148,12 @@ export class VariantGame {
   readonly chess: Chess;
   readonly moves: string[] = [];
   private rights: Rights;
+  private readonly chess960: boolean;
 
   constructor(variant: string, startFen: string) {
     this.variant = variant;
     this.startFen = startFen;
+    this.chess960 = isChess960(variant, startFen);
     this.chess = new Chess(chessJsStartFen(startFen, variant));
     this.rights = rightsFromFen(this.chess, startFen);
   }
@@ -188,7 +200,7 @@ export class VariantGame {
       .moves({ square: from, verbose: true })
       .map((move) => move.to as Square);
     const king = kingSquare(this.chess, this.turn);
-    if (isChess960(this.variant) && king === from) {
+    if (this.chess960 && king === from) {
       if (this.canCastle("kingside")) targets.push(square(6, backRank(this.turn)));
       if (this.canCastle("queenside")) targets.push(square(2, backRank(this.turn)));
     }
@@ -197,7 +209,7 @@ export class VariantGame {
 
   /** The SAN a castling move would use, when the king can castle now. */
   castleSans(): string[] {
-    if (!isChess960(this.variant)) return [];
+    if (!this.chess960) return [];
     const moves: string[] = [];
     if (this.canCastle("kingside")) moves.push("O-O");
     if (this.canCastle("queenside")) moves.push("O-O-O");
@@ -210,7 +222,7 @@ export class VariantGame {
       .moves({ square: from, verbose: true })
       .find((candidate) => candidate.to === to && candidate.promotion === promotion);
     if (move !== undefined) return move.san;
-    if (isChess960(this.variant) && this.get(from)?.type === "k") {
+    if (this.chess960 && this.get(from)?.type === "k") {
       const rank = backRank(this.turn);
       if (to === square(6, rank) && this.canCastle("kingside")) return "O-O";
       if (to === square(2, rank) && this.canCastle("queenside")) return "O-O-O";
@@ -220,7 +232,7 @@ export class VariantGame {
 
   /** Apply one SAN move; returns false if it is not legal here. */
   move(san: string): boolean {
-    if (!isChess960(this.variant)) {
+    if (!this.chess960) {
       try {
         this.chess.move(san);
         this.moves.push(san);

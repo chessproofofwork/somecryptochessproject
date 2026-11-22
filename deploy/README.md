@@ -96,8 +96,8 @@ proof to settle.
 | `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 2 --no-extra-miner-churn` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; every twelve cycles it also fires an 80-transfer burst over five waves, and it keeps the two extra role miners seated (`synthetic-miner-1` slow, `synthetic-miner-2` GNU Chess) |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645 --witness-key /stack/keys/witness-1.key` | opens round 0, pairs within each variant, runs the 10+0 clock, opens a new round every 60 s and follows the chain's epoch |
 | `miner-1`, `miner-2` | `sccp miner run --variant standard --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce --submit-timeout-claims` | standard-chess pair: join, play, co-sign, announce win proofs, submit bonded timeout claims and their finalising proofs, and commit/reveal their own availability |
-| `miner-3`, `miner-4` | `sccp miner run --variant chess960 --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce --submit-timeout-claims` | Chess960 pair: replay the beacon-selected start position, play with `UCI_Chess960`, settle C960 proofs, and submit timeout claims on a flag |
-| `witness-2`, `witness-3` | `sccp witness run --relay http://relay:8646 --key /stack/keys/witness-N.key` | independent clock witnesses: poll the relay, verify its receipts, co-sign each receipt and the flag checkpoint, and serve their own bundle at `/v1/matches/{id}/receipts` |
+| `miner-3`, `miner-4` | `sccp miner run --variant token-0960 --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce --submit-timeout-claims` | Chess960 pair: replay the beacon-selected start position, play with `UCI_Chess960`, settle C960 proofs, and submit timeout claims on a flag |
+| `witness-2`, `witness-3` | `sccp witness run --relay http://relay:8646 --node http://node:8645 --key /stack/keys/witness-N.key` | independent clock witnesses: poll the relay, verify its receipts, learn custom-token clocks from the node, co-sign each receipt and the flag checkpoint, and serve their own bundle at `/v1/matches/{id}/receipts` |
 
 The bootstrap is deliberately separate from mining. It builds each block with
 the same `BlockBuilder` a miner uses and submits it through the node's public
@@ -237,12 +237,13 @@ the assertions run in the host process, so the test covers the artefact the
 deploy workflow ships rather than the Python packages in place.
 
 C960 is minted when a Chess960 proof settles, plus the fixed genesis allocation
-on testnet and mainnet. The devnet genesis used by this smoke test has no C960
-allocation, so the DEX case uses a dedicated devnet node whose fixture credits
-the published traffic wallets with C960 before serving; every transaction after
-that seed goes through normal admission, block building and validation. This
-smoke test does not play a Chess960 match, so C960 issuance itself remains
-covered by `test_chess960.py`, and the DEX transitions by `test_dex.py`.
+on testnet. Its token record is the ordinary custom-token record with ticket
+`0960`; the devnet genesis used by this smoke test has no C960 allocation, so the
+DEX case uses a dedicated devnet node whose fixture credits the published
+traffic wallets with C960 before serving. Every transaction after that seed goes
+through normal admission, block building and validation. This smoke test does
+not play a Chess960 match, so C960 issuance itself remains covered by
+`test_chess960.py`, and the DEX transitions by `test_dex.py`.
 
 It is opt-in and deselects itself otherwise:
 

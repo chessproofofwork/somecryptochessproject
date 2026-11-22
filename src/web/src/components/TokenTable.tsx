@@ -73,7 +73,7 @@ export function TokenTable({
           return (
             <View key={token.asset ?? token.symbol} style={tableStyles.row}>
               <Text variant="bodyMedium" style={styles.colVariant}>
-                {variantLabel(token.variant)}
+                {token.native ? variantLabel(token.variant) : token.name}
               </Text>
               <Text variant="bodyMedium" style={[styles.colTime, tableStyles.numeric]}>
                 {formatMultiPeriodTimeControl(

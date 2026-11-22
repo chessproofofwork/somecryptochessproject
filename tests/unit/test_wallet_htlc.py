@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from sccp.chain.state import HtlcRecord, State
+from sccp.chain.state import HtlcRecord, State, TokenRecord
 from sccp.chain.tx import apply_transaction, validate_transaction
-from sccp.config import CHESS960_ASSET_ID, DEVNET
+from sccp.config import C960, C960_ASSET_ID, C960_VARIANT, DEVNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import WalletServiceError
@@ -26,11 +26,17 @@ HASHLOCK = hashlib.sha256(PREIMAGE).hexdigest()
 
 def _state(accounts: Mapping[str, Any]) -> State:
     state = State(params=DEVNET, height=HEIGHT - 1, timestamps=[START])
+    state.tokens[C960_VARIANT] = TokenRecord(
+        name=C960_VARIANT,
+        variant=C960,
+        owner=next(iter(accounts.values())).address,
+        registered_at_height=0,
+    )
     for account in accounts.values():
         entry = state.ensure(account.address)
         entry.public_key = account.keypair.public_key_hex
         entry.balance = 1_000 * COINS
-        entry.assets[CHESS960_ASSET_ID] = 100 * COINS
+        entry.assets[C960_ASSET_ID] = 100 * COINS
     return state
 
 
@@ -82,7 +88,7 @@ def test_htlc_lock_builds_native_and_token_locks(protocol_accounts: Mapping[str,
         amount=COINS,
         asset="C960",
     )
-    assert token.payload["asset"] == CHESS960_ASSET_ID
+    assert token.payload["asset"] == C960_ASSET_ID
     validate_transaction(token, DEVNET, state, height=HEIGHT)
 
 
@@ -130,7 +136,7 @@ def test_htlc_lock_guards_cover_every_precondition(
         )
 
     stranger_address = encode_address(stranger.public_key_bytes, DEVNET)
-    state.ensure(stranger_address).assets[CHESS960_ASSET_ID] = 1
+    state.ensure(stranger_address).assets[C960_ASSET_ID] = 1
     with pytest.raises(WalletServiceError, match="cannot pay"):
         wallet.build_htlc_lock(
             stranger,
@@ -138,7 +144,7 @@ def test_htlc_lock_guards_cover_every_precondition(
             timelock_height=HEIGHT + 10,
             beneficiary=bob.address,
             amount=1,
-            asset=CHESS960_ASSET_ID,
+            asset=C960_ASSET_ID,
         )
 
 
@@ -166,7 +172,7 @@ def test_htlc_claim_reads_local_and_node_supplied_records(
     assert state.htlcs[lock_id].preimage == PREIMAGE.hex()
 
     token_id = "cd" * 32
-    token_record = _record(token_id, alice.address, bob.address, asset=CHESS960_ASSET_ID)
+    token_record = _record(token_id, alice.address, bob.address, asset=C960_ASSET_ID)
     supplied = wallet.build_htlc_claim(
         bob.keypair,
         htlc_id=token_id,
@@ -234,7 +240,7 @@ def test_htlc_claim_guards_cover_every_precondition(
             htlc_id=lock_id,
             preimage=PREIMAGE.hex(),
         )
-    token_record = _record("cd" * 32, alice.address, bob.address, asset=CHESS960_ASSET_ID)
+    token_record = _record("cd" * 32, alice.address, bob.address, asset=C960_ASSET_ID)
     with pytest.raises(WalletServiceError, match="cannot pay"):
         wallet.build_htlc_claim(
             bob.keypair,
@@ -265,7 +271,7 @@ def test_htlc_refund_builds_from_local_and_node_supplied_records(
     validate_transaction(refund, DEVNET, state, height=HEIGHT + 10)
 
     token_id = "cd" * 32
-    token_record = _record(token_id, alice.address, bob.address, asset=CHESS960_ASSET_ID)
+    token_record = _record(token_id, alice.address, bob.address, asset=C960_ASSET_ID)
     supplied = wallet.build_htlc_refund(
         alice.keypair,
         htlc_id=token_id,
@@ -301,7 +307,7 @@ def test_htlc_refund_guards_cover_every_precondition(
     state.htlcs[lock_id] = _record(lock_id, alice.address, bob.address, amount=1)
     with pytest.raises(WalletServiceError, match="cannot cover"):
         wallet.build_htlc_refund(alice.keypair, htlc_id=lock_id)
-    token_record = _record("cd" * 32, alice.address, bob.address, asset=CHESS960_ASSET_ID)
+    token_record = _record("cd" * 32, alice.address, bob.address, asset=C960_ASSET_ID)
     with pytest.raises(WalletServiceError, match="cannot pay"):
         wallet.build_htlc_refund(
             alice.keypair,
@@ -321,9 +327,9 @@ def test_register_builder_handles_variants_and_an_unfunded_sender(
         alice.keypair,
         endpoint="tcp://alice.test",
         engine="stockfish",
-        variant="chess960",
+        variant=C960_VARIANT,
     )
-    assert tx.payload["variant"] == "chess960"
+    assert tx.payload["variant"] == C960_VARIANT
     with pytest.raises(WalletServiceError, match="unknown variant"):
         wallet.build_register(
             alice.keypair,
@@ -346,7 +352,7 @@ def test_transfer_builder_carries_a_variant_asset(
     bob = protocol_accounts["bob"]
 
     tx = wallet.build_transfer(alice.keypair, bob.address, COINS, asset="C960", nonce=0)
-    assert tx.payload["asset"] == CHESS960_ASSET_ID
+    assert tx.payload["asset"] == C960_ASSET_ID
     validate_transaction(tx, DEVNET, state, height=HEIGHT)
 
     with pytest.raises(WalletServiceError, match="unknown asset"):

@@ -580,7 +580,7 @@ def test_register_token_scales_its_cap_by_the_token_decimals(
     assert _reason(over_cap, ledger, height=HEIGHT + 1) is TxFailure.TYPE
 
 
-def test_register_token_rejects_built_in_names_and_known_rulesets(
+def test_register_token_rejects_reserved_names_and_unknown_rulesets(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:
     alice = protocol_accounts["alice"]
@@ -593,13 +593,6 @@ def test_register_token_rejects_built_in_names_and_known_rulesets(
         display_name="Dragon Chess",
         subsidy=COINS,
     )
-    duplicate = _resigned(
-        tx.model_copy(
-            update={"payload": {**tx.payload, "variant": "chess960", "ruleset": "chess960"}}
-        ),
-        alice,
-    )
-    assert _reason(duplicate, ledger) is TxFailure.TYPE
     standard = _resigned(
         tx.model_copy(update={"payload": {**tx.payload, "variant": "standard"}}), alice
     )

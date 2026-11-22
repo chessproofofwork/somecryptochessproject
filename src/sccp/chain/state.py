@@ -86,9 +86,9 @@ def reveal_deadline_tip(epoch: int, params: NetworkParams) -> int:
 class Account:
     """One account's balances, bond, nonce and registration metadata.
 
-    ``balance`` is the native ZQWX coin. ``assets`` holds non-native variant
-    tokens (Chess960 first) keyed by their derived asset id; both have a matching
-    ``immature`` counter for coinbase rewards that have not matured yet.
+    ``balance`` is the native ZQWX coin. ``assets`` holds custom token balances
+    keyed by their derived asset id; both have a matching ``immature`` counter for
+    coinbase rewards that have not matured yet.
     """
 
     balance: int = 0

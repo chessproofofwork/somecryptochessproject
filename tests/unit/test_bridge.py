@@ -14,7 +14,7 @@ from sccp.bridge.config import (
     bridge_environment,
     eth_environments,
 )
-from sccp.chain.state import HtlcRecord, HtlcStatus, State
+from sccp.chain.state import HtlcRecord, HtlcStatus, State, TokenRecord
 from sccp.chain.tx import (
     TxFailure,
     apply_transaction,
@@ -22,7 +22,7 @@ from sccp.chain.tx import (
     sign_transaction,
     validate_transaction,
 )
-from sccp.config import CHESS960_ASSET_ID, DEVNET, TESTNET
+from sccp.config import C960, C960_ASSET_ID, C960_VARIANT, DEVNET, TESTNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import ConfigError, TxValidationError
@@ -40,11 +40,17 @@ CONTRACT = "0x" + "ab" * 20
 
 def _state(accounts: Mapping[str, Any], *, bob_balance: int = 1_000 * COINS) -> State:
     state = State(params=DEVNET, height=10, timestamps=[START])
+    state.tokens[C960_VARIANT] = TokenRecord(
+        name=C960_VARIANT,
+        variant=C960,
+        owner=next(iter(accounts.values())).address,
+        registered_at_height=0,
+    )
     for name, account in accounts.items():
         entry = state.ensure(account.address)
         entry.public_key = account.keypair.public_key_hex
         entry.balance = bob_balance if name == "bob" else 1_000 * COINS
-        entry.assets[CHESS960_ASSET_ID] = 100 * COINS
+        entry.assets[C960_ASSET_ID] = 100 * COINS
     return state
 
 
@@ -207,15 +213,15 @@ def test_a_variant_token_can_be_escrowed_too(protocol_accounts: Mapping[str, Any
     state = _state(protocol_accounts)
     alice = protocol_accounts["alice"]
     bob = protocol_accounts["bob"]
-    before = state.account(alice.address).assets[CHESS960_ASSET_ID]
+    before = state.account(alice.address).assets[C960_ASSET_ID]
     _apply(
         state,
-        _lock(alice.keypair, bob.address, asset=CHESS960_ASSET_ID, amount=7 * COINS),
+        _lock(alice.keypair, bob.address, asset=C960_ASSET_ID, amount=7 * COINS),
         height=10,
     )
     lock_id = htlc_id(alice.address, 0)
-    assert state.htlcs[lock_id].asset == CHESS960_ASSET_ID
-    assert state.account(alice.address).assets[CHESS960_ASSET_ID] == before - 7 * COINS
+    assert state.htlcs[lock_id].asset == C960_ASSET_ID
+    assert state.account(alice.address).assets[C960_ASSET_ID] == before - 7 * COINS
     claim = _tx(
         bob.keypair,
         TxType.HTLC_CLAIM,
@@ -223,7 +229,7 @@ def test_a_variant_token_can_be_escrowed_too(protocol_accounts: Mapping[str, Any
         {"htlc_id": lock_id, "preimage": PREIMAGE.hex()},
     )
     _apply(state, claim)
-    assert state.account(bob.address).assets[CHESS960_ASSET_ID] == 100 * COINS + 7 * COINS
+    assert state.account(bob.address).assets[C960_ASSET_ID] == 100 * COINS + 7 * COINS
 
 
 def test_lock_rejects_a_stale_timelock_and_an_unfunded_amount(

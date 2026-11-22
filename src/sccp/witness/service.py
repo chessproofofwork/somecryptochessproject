@@ -31,10 +31,10 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException
 
-from sccp.config import CLOCK_EVIDENCE_PLIES, NetworkParams
+from sccp.config import CLOCK_EVIDENCE_PLIES, NetworkParams, VariantParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair
-from sccp.errors import NotFoundError, SccpError
+from sccp.errors import ConfigError, NotFoundError, SccpError
 from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
     build_clock_evidence,
@@ -132,6 +132,7 @@ class WitnessService:
         *,
         relay_url: str,
         relay_keys: Mapping[str, str] | None = None,
+        variants: Mapping[str, VariantParams] | None = None,
         client: httpx.Client | None = None,
         timeout: float = 10.0,
         clock: Callable[[], float] = time.monotonic,
@@ -140,6 +141,13 @@ class WitnessService:
         self.keypair = keypair
         self.relay_url = relay_url.rstrip("/")
         self.relay_keys = dict(relay_keys or {})
+        self.variants = dict(variants or {})
+        """Chain-registered tokens this witness can audit, keyed by variant name.
+
+        A witness that only knows ``NetworkParams`` can verify standard chess but
+        cannot recompute a custom token's time control. Deployments that follow a
+        node pass its ``/v1/tokens`` registry here, exactly as miners do.
+        """
         self._http = client if client is not None else httpx.Client(timeout=timeout)
         self._owns_client = client is None
         self._clock = clock
@@ -352,6 +360,15 @@ class WitnessService:
         certificate = state.view.certificate
         result, winner = _result_for(evidence.final.seat, certificate.white, certificate.black)
         try:
+            variant_params = self.variants.get(certificate.variant)
+            if variant_params is None:
+                try:
+                    variant_params = self.params.variant(certificate.variant)
+                except ConfigError:
+                    raise WitnessError(
+                        f"no parameters for variant {certificate.variant!r}; "
+                        "pass the node's token registry to the witness"
+                    ) from None
             verify_clock_evidence(
                 evidence,
                 certificate=certificate,
@@ -365,7 +382,7 @@ class WitnessService:
                 # the miner's assembly job, not a single witness's.
                 quorum=1,
                 max_plies=self.params.max_plies,
-                expected_time_control=time_control_for(self.params.variant(certificate.variant)),
+                expected_time_control=time_control_for(variant_params),
             )
         except SccpError as exc:
             self._refuse(f"{certificate.match_id}: evidence does not verify: {exc}")

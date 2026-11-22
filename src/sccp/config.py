@@ -43,21 +43,6 @@ DEFAULT_TIME_CONTROL_INCREMENT_MS: Final = 0
 DEFAULT_TIME_CONTROL_DELAY_MS: Final = 0
 """Default per-move delay for a network that does not override it: no delay."""
 
-CHESS960_ASSET_ID: Final = domain_hex(
-    Domain.ASSET,
-    {
-        "symbol": "C960",
-        "name": "Chess960",
-        "decimals": 8,
-        "variant": CHESS960_VARIANT,
-    },
-)
-"""The immutable asset id of the Chess960 token (PROTOCOL.md section 5.4).
-
-The id is derived from the asset's parameters rather than assigned by an issuer,
-so two nodes cannot disagree about which asset a C960 transfer names.
-"""
-
 MAX_PLIES_LIMIT: Final = 1000
 """Hard upper bound for ``max_plies``; longer games are never consensus-valid."""
 
@@ -163,6 +148,26 @@ def derive_token_asset_id(ticket: str, decimals: int, ruleset: str) -> str:
     )
 
 
+C960_TICKET: Final = "0960"
+"""The conventional ticket of the shipped Chess960 token.
+
+The protocol does not reserve this serial or privilege the token in any way:
+C960 is an ordinary chain-registered token whose genesis record happens to use
+this ticket. The value is exported so the shipped genesis documents, deployment
+scripts and tests derive the same asset id without duplicating the recipe.
+"""
+
+C960_VARIANT: Final = token_variant_name(C960_TICKET)
+"""The internal variant name of the shipped Chess960 token (``token-0960``)."""
+
+C960_ASSET_ID: Final = derive_token_asset_id(C960_TICKET, 8, "chess960")
+"""The asset id of the shipped Chess960 token.
+
+Unlike the former built-in constant this commits to a registration ticket, so
+C960 has exactly the same identity model as every other custom token.
+"""
+
+
 class TimeControlPeriod(BaseModel):
     """One later stage of a multi-period (sudden-death) time control.
 
@@ -188,8 +193,9 @@ class VariantParams(BaseModel):
     """One chess variant and the asset its settled proofs mint.
 
     Standard chess is the network's native asset: ``asset`` is ``None`` and the
-    reward is ZQWX. Every other variant names a derived asset id (see
-    :data:`CHESS960_ASSET_ID`) and mints only that asset.
+    reward is ZQWX. Every other variant names a derived asset id and mints only
+    that asset. A chain-registered token, C960 included, is stored as a
+    ``TokenRecord`` in ledger state rather than in :class:`NetworkParams`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -209,9 +215,9 @@ class VariantParams(BaseModel):
     """Registered ruleset that decides how games of this variant are played.
 
     ``None`` means the variant is its own ruleset, which is how the built-in
-    ``standard`` and ``chess960`` variants are defined. A chain-registered token
-    names an existing ruleset (for example ``standard``) so validation never has
-    to execute code supplied by a transaction.
+    ``standard`` variant is defined. A chain-registered token names an existing
+    ruleset (for example ``chess960``) so validation never has to execute code
+    supplied by a transaction.
     """
     asset: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     symbol: str = Field(min_length=1, max_length=16)
@@ -368,20 +374,45 @@ class VariantParams(BaseModel):
         return self
 
 
-CHESS960: Final = VariantParams(
-    name=CHESS960_VARIANT,
-    rules="chess960",
-    asset=CHESS960_ASSET_ID,
-    symbol="C960",
-    display_name="Chess960",
-    subsidy=coins_to_units(50),
-    halving_interval=210_000,
-    max_supply=21_000_000,
-    min_plies=20,
-    max_games_per_block=1,
-    opening_book="none",
-)
-"""Fischer Random with the same issuance schedule as ZQWX, in its own asset."""
+def c960_token(*, min_plies: int = 20) -> VariantParams:
+    """The shipped Chess960 token definition, as an ordinary custom token.
+
+    Unlike the former built-in variant this has a ticket and its internal name is
+    ``token-0960``. The shipped genesis documents register it in
+    ``State.tokens``; no consensus path treats it as part of ``NetworkParams``.
+    The devnet genesis lowers ``min_plies`` to the one-ply schedule the test
+    fixture applies to the rest of that chain.
+    """
+    return VariantParams(
+        name=C960_VARIANT,
+        ticket=C960_TICKET,
+        rules="chess960",
+        ruleset="chess960",
+        asset=C960_ASSET_ID,
+        symbol="C960",
+        display_name="Chess960",
+        subsidy=coins_to_units(50),
+        halving_interval=210_000,
+        max_supply=21_000_000,
+        min_plies=min_plies,
+        max_games_per_block=1,
+        opening_book="none",
+    )
+
+
+C960: Final = c960_token()
+"""The shipped Chess960 token definition, for genesis and deployment helpers."""
+
+CHESS960: Final = C960
+"""Deprecated alias for :data:`C960`.
+
+Kept so code written against the former built-in variant keeps working while it
+migrates to the token name. It is no longer part of any shipped network's
+``variants`` tuple.
+"""
+
+CHESS960_ASSET_ID: Final = C960_ASSET_ID
+"""Deprecated alias for :data:`C960_ASSET_ID`."""
 
 
 class NetworkParams(BaseModel):
@@ -436,7 +467,10 @@ class NetworkParams(BaseModel):
     book_version: str = Field(min_length=1)
 
     # Variants and their assets. The validator always prepends standard chess,
-    # so an empty tuple means "native standard chess only".
+    # so an empty tuple means "native standard chess only". Shipping networks use
+    # that empty tuple: every non-native asset, including C960, is a
+    # chain-registered token in State.tokens. The field remains for legacy
+    # networks and for tests of the built-in path.
     variants: tuple[VariantParams, ...] = ()
 
     # Beacon
@@ -603,12 +637,11 @@ TESTNET: Final = NetworkParams(
     max_plies=300,
     nodes_per_move=50_000,
     book_version="dev-1",
-    variants=(CHESS960,),
     beacon_grace_blocks=4,
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
     max_tx_bytes=131_072,
-    genesis_hash="df754cb036e2f5488ed7d3a3b81a9e09f940a4c50feeddbbab6e6912243eedc7",
+    genesis_hash="68f4671eb55aa1571e0e6861d946d7d6d523a06e2772851d34f3ca6540f60543",
 )
 
 MAINNET: Final = NetworkParams(
@@ -642,7 +675,6 @@ MAINNET: Final = NetworkParams(
     max_plies=400,
     nodes_per_move=250_000,
     book_version="v1",
-    variants=(CHESS960,),
     beacon_grace_blocks=6,
     drand_chain="quicknet",
     drand_period_seconds=3,
@@ -650,7 +682,7 @@ MAINNET: Final = NetworkParams(
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
     max_tx_bytes=131_072,
-    genesis_hash="8032b9c30796495c91a18c9db3bd1600e0dcbd8452e15948109eaa818a0a4ec2",
+    genesis_hash="e7949a3123a042ffcd683bfa6cd8beab0507b51f99b882a4dc7fe0646bf5d628",
 )
 
 DEVNET: Final = NetworkParams.model_validate(
@@ -675,7 +707,7 @@ DEVNET: Final = NetworkParams.model_validate(
         "timeout_dispute_window": 2,
         "beacon_grace_blocks": 2,
         "genesis_timestamp": 1_700_000_000,
-        "genesis_hash": "5e3465524fbf12874f77384baae18eec299068d96aa85ef8a34a3932b0b5f8a4",
+        "genesis_hash": "e10f1b50e67163e25b9ab1afcae03c90731117f693c4a71c9c7aaef59758a496",
     }
 )
 """In-process network for tests and CI: mock engines, zero seal difficulty."""

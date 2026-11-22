@@ -13,7 +13,7 @@ from deploy.bootstrap_testnet_stack import BootstrapMiner
 from sccp.chain import dex
 from sccp.chain.genesis import testnet_bridge_preimage as bridge_preimage
 from sccp.chain.state import HtlcStatus
-from sccp.config import CHESS960_ASSET_ID, TESTNET, coins_to_units
+from sccp.config import C960_ASSET_ID, C960_VARIANT, TESTNET, coins_to_units
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import ConfigError, RateLimitError
@@ -137,7 +137,7 @@ def _miner(index: int = 2) -> BootstrapMiner:
     keypair = hybrid_keypair_from_seed(bytes([0xA0 + index]) * 32)
     return BootstrapMiner(
         name=f"miner-{index + 1}",
-        variant="chess960",
+        variant=C960_VARIANT,
         address=encode_address(keypair.public_key_bytes, TESTNET),
         keypair=keypair,
         nonce_secret=f"{index + 1:02x}" * 32,
@@ -157,7 +157,7 @@ def _seed_account(
         account = state.ensure(address)
         account.balance = coins_to_units(native_coins)
         if c960_coins:
-            account.assets[CHESS960_ASSET_ID] = coins_to_units(c960_coins)
+            account.assets[C960_ASSET_ID] = coins_to_units(c960_coins)
         if public_key is not None:
             account.public_key = public_key
 
@@ -194,15 +194,15 @@ def test_a_fresh_deploy_already_has_the_genesis_bridge_and_pool(
     assert report.dex.endswith("already exists")
 
     liquidity = seed.demo_wallet(0)
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
     pool = node.mempool.projection.pools[pool_id]
-    assert (pool.asset_a, pool.asset_b) == (dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    assert (pool.asset_a, pool.asset_b) == (dex.NATIVE_ASSET, C960_ASSET_ID)
     assert pool.reserve_a == pool.reserve_b == coins_to_units(seed.DEX_COINS)
     assert pool.total_shares == dex.initial_shares(pool.reserve_a, pool.reserve_b)
     assert pool.shares == {liquidity.address: pool.total_shares}
 
     miner_account = node.mempool.projection.account(miner.address)
-    assert miner_account.assets[CHESS960_ASSET_ID] == coins_to_units(50)
+    assert miner_account.assets[C960_ASSET_ID] == coins_to_units(50)
 
     htlcs = list(node.mempool.projection.htlcs.values())
     assert len(htlcs) == 1

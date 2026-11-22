@@ -166,10 +166,10 @@ def test_register_token_builds_a_signed_variant_registration(live_chain: Any) ->
             time_control_delay_ms=2_000,
         )
 
-    with pytest.raises(WalletServiceError, match="already known"):
+    with pytest.raises(WalletServiceError, match="ticket 0960 is already registered"):
         wallet.build_register_token(
             alice.keypair,
-            name="chess960",
+            ticket="0960",
             ruleset="chess960",
             symbol="C960",
             display_name="Chess960",

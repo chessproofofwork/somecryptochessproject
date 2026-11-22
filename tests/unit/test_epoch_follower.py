@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
-from sccp.config import VariantParams, derive_variant_asset_id
+from sccp.config import NetworkParams, VariantParams, derive_variant_asset_id
 from sccp.errors import RelayError
 from sccp.miner.epoch_follower import EpochAdvance, EpochFollower
 from sccp.miner.matchmaker import Matchmaker
@@ -186,9 +187,22 @@ def test_a_poll_teaches_the_relay_the_chain_s_registered_tokens(signed_match) ->
 
 def test_a_poll_cannot_redefine_a_built_in_variant(signed_match) -> None:
     """A node cannot use ``/v1/tokens`` to shadow the network's own parameters."""
+    built_in = VariantParams(
+        name="dragonchess",
+        rules="chess",
+        ruleset="standard",
+        asset=derive_variant_asset_id("dragonchess", "DRG", 8, "standard"),
+        symbol="DRG",
+        display_name="Dragon Chess",
+        subsidy=1,
+        min_plies=1,
+    )
+    params = NetworkParams.model_validate(
+        {**signed_match.params.model_dump(), "variants": [built_in.model_dump()]}
+    )
+    signed_match = replace(signed_match, params=params)
     node = _StubNode(height=0)
-    built_in = signed_match.params.variant("chess960")
-    shadow = built_in.model_copy(update={"display_name": "Not really chess960"})
+    shadow = built_in.model_copy(update={"display_name": "Not really dragonchess"})
     node.tokens = lambda: {"tokens": [shadow.model_dump(mode="json")]}  # type: ignore[method-assign]
     follower, _ = _follower(signed_match, node)
     with pytest.raises(RelayError, match="cannot redefine built-in variant"):

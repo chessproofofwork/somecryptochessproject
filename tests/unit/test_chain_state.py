@@ -13,7 +13,7 @@ from sccp.chain.state import (
     epoch_start_height,
     first_matchable_epoch,
 )
-from sccp.config import DEVNET, MAINNET, VariantParams, derive_variant_asset_id
+from sccp.config import DEVNET, MAINNET, NetworkParams, VariantParams, derive_variant_asset_id
 from sccp.errors import StateError
 from sccp.protocol.models import RosterMember
 
@@ -244,29 +244,33 @@ def test_snapshot_without_tokens_restores_an_empty_registry() -> None:
 
 
 def test_snapshot_rejects_a_token_that_shadows_a_built_in() -> None:
-    state = _state()
-    document = state.snapshot()
+    """The built-in variant path still exists for legacy networks and tests."""
     variant = VariantParams(
-        name="chess960",
-        rules="chess960",
-        ruleset="chess960",
-        asset=derive_variant_asset_id("chess960", "FAKE", 8, "chess960"),
+        name="dragonchess",
+        rules="chess",
+        ruleset="standard",
+        asset=derive_variant_asset_id("dragonchess", "FAKE", 8, "standard"),
         symbol="FAKE",
-        display_name="Fake 960",
+        display_name="Fake Dragon",
         subsidy=1,
         min_plies=1,
         opening_book="none",
     )
+    params = NetworkParams.model_validate(
+        {**DEVNET.model_dump(), "variants": [variant.model_dump()]}
+    )
+    state = State(params=params)
+    document = state.snapshot()
     document["tokens"] = {
-        "chess960": TokenRecord(
-            name="chess960",
+        "dragonchess": TokenRecord(
+            name="dragonchess",
             variant=variant,
             owner=ALICE,
             registered_at_height=1,
         ).as_dict()
     }
     with pytest.raises(StateError, match="cannot redefine built-in variant"):
-        State.from_snapshot(DEVNET, document)
+        State.from_snapshot(params, document)
 
 
 def test_snapshot_rejects_two_tokens_with_the_same_asset_id() -> None:

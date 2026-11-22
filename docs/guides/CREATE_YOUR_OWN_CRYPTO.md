@@ -3,10 +3,9 @@
 On SCCP a new **crypto is a chain-registered variant token**, not a new
 blockchain and not a deployed contract. One signed transaction names a ruleset
 the network already verifies, fixes the token's supply schedule, and derives its
-asset id. After that transaction is in a block, the token behaves like the
-built-in Chess960 asset: it has balances, can be transferred, can be paired in a
-constant-product pool, and is minted when the chain settles games of its
-variant.
+asset id. After that transaction is in a block, the token behaves exactly like
+C960: it has balances, can be transferred, can be paired in a constant-product
+pool, and is minted when the chain settles games of its variant.
 
 The registration is permissionless but **immutable**. There is no owner key, no
 mint function, no metadata edit and no way to change the ticket, display name,
@@ -87,9 +86,10 @@ identifies the asset, so two tokens can share both a name and a ticker and still
 be different assets. The node resolves a name or ticker only when exactly one
 token uses it; a shared one is ambiguous and a lookup must use the ticket or id.
 
-A ticket is claimed permanently by the first registration mined. Built-in
-`standard` and `chess960` do not consume a ticket; their variant names are
-already reserved. Check the current list before choosing a number:
+A ticket is claimed permanently by the first registration mined. Only the native
+`standard` variant is built in; C960 and every other token consume a ticket
+(C960 uses `0960` in the shipped genesis). Check the current list before choosing
+a number:
 
 ```bash
 sccp dex tokens --node "$NODE"
@@ -184,8 +184,8 @@ more. The chain replays each line from the named ruleset's start and
 canonicalises it to SAN, so every move must be legal there. The epoch beacon
 selects one line per match. When any custom line is present, the default book
 version becomes `token-<ticket>`, which is the internal variant recorded with
-those lines. Chess960 is the exception: the beacon selects its start position
-and it allows no book moves, so it cannot take custom lines.
+those lines. A token whose ruleset is Chess960 cannot take custom lines: the
+beacon selects its start position and the ruleset allows no book moves.
 
 `--opening-book` is an advanced override for the version name recorded with the
 registration. The relay must be able to load the version you name; do not set it
@@ -195,21 +195,21 @@ unless you operate that book.
 
 ## 2. Check that the ticket is free
 
-The built-in variants are not returned by `dex tokens`. The command lists only
-tokens created by `register_token`:
+Only native `standard` is built in, so it is not returned by `dex tokens`. The
+command lists every chain-registered token, including the genesis C960 record:
 
 ```bash
 sccp dex tokens --node "$NODE"
 ```
 
-A fresh chain says:
+The shipped networks already carry C960 as an ordinary token:
 
 ```text
-no registered tokens on this chain
+Chess960 [token-0960] (C960) ticket 0960 chess960 asset <64-hex-asset-id> cap 21000000 coins
 ```
 
-`standard` and `chess960` are still reserved even when the list is empty. If the
-node already has a token for ticket `0042`, its line appears here:
+`standard` is reserved and ticket `0960` is already C960. If the node also has a
+token for ticket `0042`, its line appears here:
 
 ```text
 Gold Coin [token-0042] (GOLD) ticket 0042 standard asset <64-hex-asset-id> cap 21000000 coins
@@ -548,8 +548,8 @@ sccp dex remove-liquidity \
 Registration creates the asset and its initial supply. It does not create blocks
 or play games. The token is minted by the normal proof-of-work loop:
 
-1. Miners register for the token's **variant** (`token-0042`), not for
-   `standard` or `chess960`.
+1. Miners register for the token's **variant** (`token-0042`), not for the
+   `standard` variant or for the ruleset name.
 2. The relay pairs those miners and certifies games under the token's ruleset,
    minimum plies, clock and opening book.
 3. A block that settles a token proof mints that token's subsidy **once for that
@@ -603,7 +603,7 @@ ticket and a new asset id.
 
 | Symptom | What it means |
 | --- | --- |
-| `unknown asset 'token-0042'` from `dex quote`, `dex swap` or `dex create-pool` | Registered tokens are named by their **64-character asset id** on the DEX commands; built-in variants can still use their name or symbol. Get the id from `dex tokens --json` or the registration output. |
+| `unknown asset 'token-0042'` from `dex quote`, `dex swap` or `dex create-pool` | Registered tokens, C960 included, are named by their **64-character asset id** on the DEX commands; only native ZQWX can still use a name. Get the id from `dex tokens --json` or the registration output. |
 | `transaction ... already has a pending transaction with nonce N` | The previous transaction from that address is still in the mempool. Wait for it to be included. |
 | `the node serves 'devnet', not 'testnet'` | `--node` and the keyfile disagree. Point at the right node or pass the matching `--network`. |
 | `no chain database at ...` | The command could not read the node and fell back to `--data-dir`. Pass the URL of the node that serves the chain. |

@@ -11,7 +11,7 @@ that case it:
 1. funds two deterministic demo wallets from the published testnet faucet;
 2. locks one ZQWX in an HTLC and claims it, leaving a completed bridge leg in
    ``GET /v1/htlcs``;
-3. waits for the first mature C960 coinbase on one of the stack's Chess960
+3. waits for the first mature C960 coinbase on one of the stack's `token-0960`
    miners, transfers enough C960 to the demo liquidity wallet, and creates the
    ZQWX/C960 pool with equal sides.
 
@@ -55,7 +55,8 @@ from sccp.chain.genesis import (
 )
 from sccp.chain.tx import htlc_id, sign_transaction
 from sccp.config import (
-    CHESS960_ASSET_ID,
+    C960_ASSET_ID,
+    C960_VARIANT,
     TESTNET,
     NetworkParams,
     coins_to_units,
@@ -357,7 +358,7 @@ def _chess960_balance(view: Mapping[str, object]) -> int:
     assets = view.get("assets")
     if not isinstance(assets, Mapping):
         return 0
-    value = assets.get(CHESS960_ASSET_ID, 0)
+    value = assets.get(C960_ASSET_ID, 0)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise SeedError(f"an account reported invalid C960: {value!r}")
     return value
@@ -376,7 +377,7 @@ def _wait_for_chess960(
     while True:
         waiting: list[str] = []
         for miner in miners:
-            if miner.variant != "chess960":
+            if miner.variant != C960_VARIANT:
                 continue
             view = _account(client, miner.address)
             available = _chess960_balance(view)
@@ -385,7 +386,7 @@ def _wait_for_chess960(
             immature = view.get("immature_assets")
             pending = 0
             if isinstance(immature, Mapping):
-                value = immature.get(CHESS960_ASSET_ID, 0)
+                value = immature.get(C960_ASSET_ID, 0)
                 if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                     pending = value
             waiting.append(
@@ -409,7 +410,7 @@ def seed_dex(
     params: NetworkParams = TESTNET,
 ) -> str:
     """Create the ZQWX/C960 pool, funding it from the first mature C960 coinbase."""
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
     if _pool_exists(client, pool_id):
         return f"dex: ZQWX/C960 pool {pool_id[:12]} already exists"
 
@@ -430,7 +431,7 @@ def seed_dex(
             lambda nonce: variant_transfer_transaction(
                 traffic.Wallet(index=-1, keypair=miner.keypair, address=miner.address),
                 to=liquidity.address,
-                asset=CHESS960_ASSET_ID,
+                asset=C960_ASSET_ID,
                 amount=amount,
                 nonce=nonce,
                 params=params,
@@ -458,7 +459,7 @@ def seed_dex(
         client,
         lambda nonce: traffic.create_pool_transaction(
             liquidity,
-            asset=CHESS960_ASSET_ID,
+            asset=C960_ASSET_ID,
             amount=amount,
             nonce=nonce,
             params=params,
@@ -482,7 +483,7 @@ def seed_once(
     options = SeedOptions() if options is None else options
     liquidity = demo_wallet(0, params)
     beneficiary = demo_wallet(1, params)
-    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, C960_ASSET_ID)
     if _has_bridge_lock(client, liquidity.address) and _pool_exists(client, pool_id):
         return SeedReport(
             bridge="bridge: demo leg already on chain",

@@ -333,6 +333,10 @@ function Table({
   const variant = registeredVariant ?? selectedVariant ?? tokens[0]?.variant ?? "standard";
   const prizeToken = tokenForVariant(tokens, variant);
   const minPlies = prizeToken?.minPlies ?? params?.min_plies ?? 1;
+  const variantTitle =
+    prizeToken !== undefined && !prizeToken.native
+      ? prizeToken.name
+      : variantLabel(variant);
 
   const reloadStatus = status.reload;
   const act = useCallback(
@@ -577,12 +581,12 @@ function Table({
         rounds_per_epoch: params.rounds_per_epoch,
         min_plies: minPlies,
         time_controls: Object.fromEntries(
-          params.variants.map((variant) => [
-            variant.name,
+          tokens.map((token) => [
+            token.variant,
             {
-              initial_ms: variant.time_control_initial_ms,
-              increment_ms: variant.time_control_increment_ms,
-              delay_ms: variant.time_control_delay_ms ?? 0,
+              initial_ms: token.timeControlInitialMs,
+              increment_ms: token.timeControlIncrementMs,
+              delay_ms: token.timeControlDelayMs,
             },
           ]),
         ),
@@ -725,7 +729,7 @@ function Table({
           <Mono copy>{address}</Mono>
         </KeyValue>
         <KeyValue label="Variant">
-          {`${variantLabel(variant)} · ${variant}`}
+          {`${variantTitle} · ${variant}`}
           {registeredVariant !== null ? " (locked by registration)" : ""}
         </KeyValue>
         {registeredVariant === null && tokens.length > 1 && (
@@ -765,14 +769,14 @@ function Table({
 
       <Section title="Registration" subtitle="signed transactions, then two epochs of patience">
         <Text variant="bodyMedium" style={styles.muted}>
-          {`Register for ${variantLabel(variant)} with a bond, commit availability for epoch ${nextTarget} during this epoch, reveal the nonce in epoch ${nextTarget - 1}. The chain then opens epoch ${nextTarget}'s roster with this address on it, and the relay pairs that roster from the epoch's beacon.`}
+          {`Register for ${variantTitle} with a bond, commit availability for epoch ${nextTarget} during this epoch, reveal the nonce in epoch ${nextTarget - 1}. The chain then opens epoch ${nextTarget}'s roster with this address on it, and the relay pairs that roster from the epoch's beacon.`}
         </Text>
         <HelperText type="info" visible>
           {prizeToken === undefined
             ? "This network has no token metadata loaded yet."
             : prizeToken.native
               ? "Winning standard proofs mint native ZQWX; the bond and every fee are ZQWX too."
-              : `Winning ${variantLabel(variant)} proofs mint ${prizeToken.symbol}; the bond and every fee are still paid in ZQWX.`}
+              : `Winning ${variantTitle} proofs mint ${prizeToken.symbol}; the bond and every fee are still paid in ZQWX.`}
         </HelperText>
         <View style={styles.actions}>
           <Button

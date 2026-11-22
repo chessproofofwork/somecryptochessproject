@@ -639,8 +639,9 @@ TimeControl, Rules
 `chess960` for a Chess960 game, whose PGN also carries `SetUp "1"`, a
 Shredder-FEN `FEN` and `Variant "Chess960"`. `TimeControl` is
 `<initial>+<increment>` in seconds for a Fischer clock, `<initial>+<delay>d` for
-a delay clock, or `<initial>+0` for sudden death. The built-in variants use
-`10+0`, and a registered token fixes its own clock at registration. `MatchID`,
+a delay clock, or `<initial>+0` for sudden death. A token that omits a clock
+defaults to `10+0`, and every registration fixes its own clock at registration.
+C960 uses the default. `MatchID`,
 epoch, round, seats, engines, opening id, opening hash and time control are
 checked against the match certificate, so a proof cannot silently describe a
 different game. Variations are rejected when a certificate is supplied.
@@ -1317,19 +1318,20 @@ semantics are "all or nothing". A node never persists a partially applied block.
 
 ### 13.6 Variant assets
 
-A variant is a chess ruleset whose settled proofs mint a different asset inside
-the same block that carries them, not a second chain and not a second roster:
+Only one variant is native: standard chess. Every other variant is a custom
+token whose settled proofs mint a different asset inside the same block that
+carries them, not a second chain and not a second roster:
 
 | Variant | Rules | Asset | Symbol | Issue schedule |
 | --- | --- | --- | --- | --- |
 | `standard` | `chess` | native ZQWX (`asset` is `None`) | `ZQWX` | the network's own subsidy, halving and cap |
-| `chess960` | `chess960` | a derived asset id | `C960` | 50 per block, halving every 210,000 blocks, 21,000,000 cap |
+| `token-0960` | `chess960` | a derived asset id | `C960` | 50 per block, halving every 210,000 blocks, 21,000,000 cap |
 
-The asset id is not assigned by an issuer. For a built-in it is
-`H("sccp/v1/asset", {symbol, name, decimals, variant})`, so two nodes that agree
-on those parameters cannot disagree about which asset a transfer names, and
-nobody can mint a second C960 under a different id. It is pinned in `config.py`
-as `CHESS960_ASSET_ID` and published by `GET /v1/params`.
+The asset id is not assigned by an issuer. For a custom token it is
+`H("sccp/v1/asset", {kind, ticket, decimals, ruleset})`, so two nodes that agree
+on the registration cannot disagree about which asset a transfer names, and
+nobody can mint a second token under a different id. C960's record uses ticket
+`0960`; `GET /v1/tokens` publishes it and every other registration.
 
 A miner registers for one variant (the `variant` field on `register`) and that
 choice travels with its roster seat. Pairing happens *within* a variant, so a
@@ -1341,7 +1343,7 @@ only when the block carries at least one standard proof, and every variant the
 block represents mints its own schedule at most once per block
 (`variant_subsidy`, `minted_variant_rewards`). A block holding one standard win
 and one Chess960 win pays both; a block that settles only Chess960 games pays no
-ZQWX at all. Variant balances live in a per-asset map on the account (`assets`,
+ZQWX at all. Token balances live in a per-asset map on the account (`assets`,
 `immature_assets`), mature on the same `coinbase_maturity` clock as native
 coinbase, and move with `transfer` plus an `asset` field — a native transfer that
 names an asset is rejected rather than quietly downgraded.
@@ -1351,19 +1353,18 @@ variant, so its book is `none` and a proof's PGN starts there instead of from a
 book line. Fees are always paid in ZQWX, which is why a miner that earns only
 C960 still needs a little native coin to spend it.
 
-Registration is not limited to the two built-ins. Any account may pay a fee and
-submit `register_token`, which adds one variant to the chain's registry and
-mints an asset under the same rules as Chess960. A registration claims a unique
-four-digit `ticket` and an existing ruleset — `standard`, `chess960`, or one of
-the python-chess variants `antichess`, `atomic`, `crazyhouse`, `giveaway`,
-`horde`, `kingofthehill`, `racingkings`, `suicide` and `threecheck` — and
-chooses a display name and printable ticker. The ticket derives the internal
-variant name `token-<ticket>` and salts the asset id; the name and ticker are
-display metadata, so two tokens may share them and only the token id identifies
-which one a balance or pool means. The token's games settle as proofs of that
-variant, and a block pays its `subsidy` (halved on its own `halving_interval`,
-capped by `max_supply * 10^decimals` base units) at most once per block. The
-payload fixes `ruleset`, `decimals`, `initial_supply`, `min_plies`,
+Every non-native asset is registered the same way. Any account may pay a fee and
+submit `register_token`, which adds one variant to the chain's registry. A
+registration claims a unique four-digit `ticket` and an existing ruleset —
+`standard`, `chess960`, or one of the python-chess variants `antichess`, `atomic`,
+`crazyhouse`, `giveaway`, `horde`, `kingofthehill`, `racingkings`, `suicide` and
+`threecheck` — and chooses a display name and printable ticker. The ticket
+derives the internal variant name `token-<ticket>` and salts the asset id; the
+name and ticker are display metadata, so two tokens may share them and only the
+token id identifies which one a balance or pool means. The token's games settle
+as proofs of that variant, and a block pays its `subsidy` (halved on its own
+`halving_interval`, capped by `max_supply * 10^decimals` base units) at most once
+per block. The payload fixes `ruleset`, `decimals`, `initial_supply`, `min_plies`,
 `max_games_per_block`, `opening_book`, its optional SAN `openings`, the
 initial/increment/delay clock and any later `time_control_periods`; an omitted
 `opening_book` is `token-<ticket>` when the token declares its own lines and
@@ -1635,10 +1636,11 @@ root. It is loaded from a pinned document; its hash must equal
 but production callers are expected to pin it.
 
 The genesis state contains the initial allocations. Mainnet allocates 2 basis
-points of the ZQWX cap — 4,200 ZQWX — as a bootstrap grant and no variant supply;
-its public address is in `genesis/mainnet-premine.json`. The launch plan is
-standard-chess mining first, and the grant is sized for the initial k=3 roster;
-C960 remains mined-only. Testnet and devnet include a faucet allocation under a
+points of the ZQWX cap — 4,200 ZQWX — as a bootstrap grant and no custom-token
+supply; its public address is in `genesis/mainnet-premine.json`. The launch plan
+is standard-chess mining first, and the grant is sized for the initial k=3 roster;
+C960 is a genesis-registered custom token but remains mined-only. Testnet and
+devnet include a faucet allocation under a
 published deterministic key, and testnet also seeds a ZQWX/C960 pool
 and a completed ZQWX bridge HTLC. Mainnet has no faucet. Every later block must
 descend from the genesis block; a document with a different genesis hash is a
@@ -1841,7 +1843,7 @@ A block's cost has three parts:
 The reward is the block subsidy plus fees. On mainnet the subsidy starts at 50
 coins and halves every 210,000 blocks, with a 21,000,000-coin cap. Genesis
 allocates 2 basis points of that cap (4,200 ZQWX) as a bootstrap grant and no
-variant supply, so every C960 in existence is mined. The grant covers the initial
+custom-token supply, so every C960 in existence is mined. The grant covers the initial
 standard-chess k=3 roster (2,150 ZQWX) and leaves 2,050 for fees, top-ups and
 additional miners; it is not sized for full target throughput, so the roster is
 expected to grow from mined subsidies. The private key is not in the repository
@@ -2191,7 +2193,8 @@ that fails verification.
 An independent witness runs beside the relay:
 
 ```bash
-sccp witness run --key w1.key --relay http://127.0.0.1:8646 --port 8647 \
+sccp witness run --key w1.key --relay http://127.0.0.1:8646 \
+    --node http://127.0.0.1:8645 --port 8647 \
     --relay-witness-key <relay witness public key hex>
 ```
 
@@ -2321,7 +2324,7 @@ the engine-marked tests.
 
 | Term | Meaning |
 | --- | --- |
-| **Asset id** | A domain hash of a token's immutable identity: `H("sccp/v1/asset", {symbol, name, decimals, variant})` for a built-in variant, `{kind, ticket, decimals, ruleset}` for a registered token; derived rather than issued, and display names and tickers are not part of a registered token's identity |
+| **Asset id** | A domain hash of a token's immutable identity: `H("sccp/v1/asset", {kind, ticket, decimals, ruleset})` for every custom token, including C960; derived rather than issued, and display names and tickers are not part of a token's identity |
 | **Availability** | A bonded commitment to be matchable in a future epoch |
 | **Beacon** | Public epoch randomness derived from reveals (and optionally drand) |
 | **Block** | Header plus coinbase, transactions and win proofs |

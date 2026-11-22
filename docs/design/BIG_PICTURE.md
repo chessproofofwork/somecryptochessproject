@@ -83,12 +83,12 @@ What this document set out to add, and where it landed:
   210,000 blocks, 8 decimals (`UNITS_PER_COIN = 100_000_000`). None of this
   changes; standard chess is not one variant among many but the chain's own
   unit of account.
-- **A variant asset is minted by the coinbase of that variant's proofs.** The
-  one exception is a fixed genesis allocation: 5% of each variant's cap, public
-  and auditable, for liquidity and ecosystem incentives. There is no sale and no
-  administrative mint after genesis. If nobody settles variant games, no variant
-  token is mined -- C960 today, plus any token registered on chain. Registration
-  can name only an existing ruleset (`standard`, `chess960`, or one of the
+- **A custom-token asset is minted by the coinbase of that token's proofs.**
+  Genesis registers C960 but allocates no supply, so every C960 is mined; testnet
+  additionally seeds demo liquidity. There is no sale and no administrative mint
+  after genesis. If nobody settles that token's games, no token is mined. C960 is
+  one registration among any others the chain accepts. Registration can name only
+  an existing ruleset (`standard`, `chess960`, or one of the
   python-chess variants: `antichess`, `atomic`, `crazyhouse`, `giveaway`,
   `horde`, `kingofthehill`, `racingkings`, `suicide`, `threecheck`; §5.4), so it
   adds a token without adding executable code.
@@ -99,15 +99,10 @@ What this document set out to add, and where it landed:
 
 ### 3.2 Asset identity
 
-An asset id is the domain hash of its immutable identity. A built-in variant
-(`config.py: CHESS960_ASSET_ID`) commits to its display parameters:
-
-```text
-asset_id = H("sccp/v1/asset", {variant, symbol, decimals, name})
-```
-
-A chain-registered token commits to its unique registration serial and ruleset
-instead:
+An asset id is the domain hash of its immutable identity. Only standard chess is
+a built-in network asset (`asset` is `None`, so proofs mint native ZQWX). Every
+other asset, C960 included, is a chain-registered token and commits to its
+unique registration serial and ruleset:
 
 ```text
 asset_id = H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, ruleset})
@@ -115,37 +110,37 @@ asset_id = H("sccp/v1/asset", {kind: "registered-token", ticket, decimals, rules
 
 The id commits to the registration that created the token and to its
 consensus-relevant rules; `max_supply`, `halving_interval` and the subsidy
-schedule live in `VariantParams`, fixed per built-in variant or, for a token,
-fixed by the registration transaction. The id is derived, so two nodes cannot
-disagree about which asset a transfer touches, and the name and ticker are
-display only: consensus never compares them. Two tokens may therefore share a
-display name and ticker and still have different ids. Built-in symbols come from
-`GET /v1/params`; chain-registered tokens are published by `GET /v1/tokens`, and
-an asset id neither endpoint names is rendered as `asset` with its id beside it,
-never mapped to a guessed symbol.
+schedule live in `VariantParams` and are fixed by the registration transaction.
+The id is derived, so two nodes cannot disagree about which asset a transfer
+touches, and the name and ticker are display only: consensus never compares
+them. Two tokens may therefore share a display name and ticker and still have
+different ids. `GET /v1/params` names native ZQWX; chain-registered tokens,
+C960 among them, are published by `GET /v1/tokens`, and an asset id neither
+endpoint names is rendered as `asset` with its id beside it, never mapped to a
+guessed symbol.
 
 Shipped and proposed parameters (decisions 1 and 3 in section 12):
 
 | Asset | Symbol | Minted by | `max_supply` | Decimals | Status |
 | --- | --- | --- | --- | --- | --- |
 | ZQWX | ZQWX | standard-chess proofs | 21,000,000 | 8 | shipped |
-| Chess960 | C960 | chess960 proofs | 21,000,000 | 8 | shipped (0.24.0) |
+| Chess960 | C960 | chess960 proofs | 21,000,000 | 8 | shipped as custom token (ticket `0960`) |
 | Crazyhouse | CZH | crazyhouse proofs | 21,000,000 | 8 | **not built** |
 
-Each variant carries its own cap so ZQWX's schedule is untouched. Giving every
-built-in variant the same cap and halving interval makes "one variant is one
-chain's worth of scarcity" legible at launch; for registered tokens those values
-are chosen by the registration and committed with the token record. A built-in
-variant still needs a protocol release plus its own genesis tranche, not a config
-edit; any account can add a token without one (section 5.4).
+Each token carries its own cap so ZQWX's schedule is untouched. Giving C960 the
+same cap and halving interval makes "one token is one chain's worth of scarcity"
+legible at launch; every other registration chooses its own values. C960 is a
+genesis-registered custom token, not a `NetworkParams` entry: its record is the
+same `TokenRecord` a `register_token` transaction creates, and its internal
+variant is `token-0960`.
 
 Mainnet genesis pre-allocates 2 basis points of the ZQWX cap (4,200 ZQWX) as a
-bootstrap grant and no variant supply: C960 is mined, and only testnet seeds
-demo liquidity. The launch plan is standard-chess mining first; the grant funds
-the initial k=3 miner and clock-witness bonds (2,150 ZQWX) and leaves 2,050 for
-fees, top-ups and additional miners. C960 mining follows once bootstrap blocks
-produce spendable ZQWX, and C960 operators still need ZQWX for fees and timeout
-bonds. The grant is public in `genesis/mainnet-premine.json`; see
+bootstrap grant and no token supply: C960 is mined, and only testnet seeds demo
+liquidity. The launch plan is standard-chess mining first; the grant funds the
+initial k=3 miner and clock-witness bonds (2,150 ZQWX) and leaves 2,050 for fees,
+top-ups and additional miners. C960 mining follows once bootstrap blocks produce
+spendable ZQWX, and C960 operators still need ZQWX for fees and timeout bonds.
+The grant is public in `genesis/mainnet-premine.json`; see
 [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 
 ### 3.3 The token is the games
@@ -407,13 +402,16 @@ collision-resistant identity the closed set had.
 
 ### 5.4 Variants in consensus
 
-`NetworkParams` gained `variants: tuple[VariantParams, ...]`, with standard chess
-first and unchanged. As shipped (`config.py`), a variant is:
+`NetworkParams` retains `variants: tuple[VariantParams, ...]` for the built-in
+standard entry and legacy chains, but the shipped networks leave it empty: only
+standard chess is native. Every other variant, C960 included, is a
+`TokenRecord` in `State.tokens`. As shipped (`config.py`), a variant is:
 
 ```python
 @dataclass(frozen=True)
 class VariantParams:
-    name: str                 # "standard", "chess960", "token-0042"
+    name: str                 # "standard" or a token's "token-0042"
+    ticket: str | None        # four-digit registration serial; None for standard
     rules: str                # PGN Rules tag; validated against the ruleset
     ruleset: str | None       # registered ruleset; None means the variant's own
     asset: str | None         # asset id hex; None for standard, which mints ZQWX
@@ -429,9 +427,10 @@ class VariantParams:
     openings: tuple[tuple[str, ...], ...]  # token SAN lines; empty uses the book when it fits
 ```
 
-Chain-registered tokens reuse this record but live in `State.tokens`, keyed by
-their internal variant name `token-<ticket>`; a block resolves a proof against
-the built-ins plus that registry, while balances and pools use the token id.
+A chain-registered token lives in `State.tokens`, keyed by its internal variant
+name `token-<ticket>`; a block resolves a proof against the standard entry plus
+that registry, while balances and pools use the token id. C960 is installed by
+the genesis document as `token-0960`, exactly like any other custom token.
 
 Rules that follow from it:
 

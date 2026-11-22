@@ -583,20 +583,49 @@ def _wallet_for(ctx: typer.Context, key: Path, network: str | None) -> Wallet:
     return _run(lambda: load_wallet(key, passphrase))
 
 
-def _asset_symbol(params: NetworkParams, asset: str) -> str:
+def _asset_symbol(
+    params: NetworkParams, asset: str, symbols: Mapping[str, str] | None = None
+) -> str:
     """The printable symbol for an asset id, or a shortened id when unknown."""
+    if symbols is not None and asset in symbols:
+        return symbols[asset]
     for variant in params.variants:
         if variant.asset == asset:
             return variant.symbol
     return f"{asset[:8]}…"
 
 
+def _node_token_symbols(url: str) -> dict[str, str]:
+    """``asset id -> ticker`` from a node's token registry, or empty on failure.
+
+    The registry is what names custom tokens, C960 included. A balance command
+    should still print the shortened id when an older node does not serve it.
+    """
+    try:
+        response = httpx.get(f"{url.rstrip('/')}/v1/tokens", timeout=10.0)
+        response.raise_for_status()
+        document = response.json()
+    except (httpx.HTTPError, ValueError):
+        return {}
+    rows = document.get("tokens") if isinstance(document, Mapping) else None
+    if not isinstance(rows, list):
+        return {}
+    symbols: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        asset = row.get("asset")
+        symbol = row.get("symbol")
+        if isinstance(asset, str) and isinstance(symbol, str) and symbol:
+            symbols[asset] = symbol
+    return symbols
+
+
 def _asset_id(params: NetworkParams, asset: str | None) -> str:
     """Resolve a CLI asset name to an id; native ZQWX is the empty string.
 
-    Built-in variants may be named by name or symbol. A chain-registered token
-    is not in ``NetworkParams`` because it was created after genesis, so its
-    derived 64-character asset id is accepted verbatim -- the id printed by
+    Only native ZQWX is in ``NetworkParams``. A chain-registered token, C960
+    included, is named by its derived 64-character asset id -- the id printed by
     ``dex register-token`` and listed by ``dex tokens``.
     """
     if asset is None or asset.strip() == "" or asset.upper() == "ZQWX":
@@ -963,6 +992,15 @@ def wallet_balance(
         immature_assets = {
             asset: units for asset, units in account.immature_assets.items() if units > 0
         }
+        symbols = (
+            _node_token_symbols(accounts.origin)
+            if accounts.origin.startswith("http")
+            else {
+                variant.asset: variant.symbol
+                for variant in accounts.service.state.variant_params().values()
+                if variant.asset is not None
+            }
+        )
         empty_chain = accounts.chain_height == 0 and balance.total == 0 and not assets
     if empty_chain:
         _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
@@ -987,7 +1025,8 @@ def wallet_balance(
     )
     for asset in sorted(set(assets) | set(immature_assets)):
         typer.echo(
-            f"  {_asset_symbol(params, asset)} spendable {_coins(assets.get(asset, 0))}, "
+            f"  {_asset_symbol(params, asset, symbols)} spendable "
+            f"{_coins(assets.get(asset, 0))}, "
             f"immature {_coins(immature_assets.get(asset, 0))}"
         )
 
@@ -1588,6 +1627,13 @@ def witness_run(
         str,
         typer.Option("--relay", help="Matchmaking relay to observe."),
     ] = "http://127.0.0.1:8646",
+    node: Annotated[
+        str | None,
+        typer.Option(
+            "--node",
+            help="Node base URL; its /v1/tokens registry teaches the witness custom tokens.",
+        ),
+    ] = None,
     host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 8647,
     network: Annotated[
@@ -1633,7 +1679,14 @@ def witness_run(
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
     trusted = dict(_witness_keys(params, relay_witness_key or [], relay_witness_key_file or []))
-    service = WitnessService(params, wallet.signer, relay_url=relay, relay_keys=trusted)
+    variants = _node_variants(node, params) if node is not None else None
+    service = WitnessService(
+        params,
+        wallet.signer,
+        relay_url=relay,
+        relay_keys=trusted,
+        variants=variants,
+    )
     state = service.status()
     typer.echo(
         f"witness {state['address']} on {params.network_id} watching {relay} "
@@ -1739,7 +1792,10 @@ def miner_run(
         str,
         typer.Option(
             "--variant",
-            help="Chess variant this miner plays: standard or chess960.",
+            help=(
+                "Variant this miner plays: standard or a registered token's "
+                "internal name (token-<ticket>)."
+            ),
         ),
     ] = "standard",
     engine_profile: Annotated[
@@ -1854,11 +1910,13 @@ def miner_run(
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
+    selected = variants.get(variant) if variants is not None else None
+    ruleset = selected.ruleset if selected is not None and selected.ruleset is not None else variant
     engine = _run(
         lambda: open_engine(
             engine_profile,
             binary=engine_path,
-            chess960=is_chess960(variant),
+            chess960=is_chess960(ruleset),
         )
     )
     witness_keys = _witness_keys(params, relay_witness_key or [], relay_witness_key_file or [])
@@ -1972,7 +2030,10 @@ def miner_register(
         str,
         typer.Option(
             "--variant",
-            help="Chess variant this registration plays: standard or chess960.",
+            help=(
+                "Variant this registration plays: standard or a registered token's "
+                "internal name (token-<ticket>)."
+            ),
         ),
     ] = "standard",
     node: Annotated[
