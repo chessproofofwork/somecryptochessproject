@@ -38,6 +38,7 @@ import type {
   TakeAccepted,
   TakeView,
   TokenList,
+  TokenOverview,
   TokenView,
   TransactionRecord,
   Transcript,
@@ -216,6 +217,19 @@ export function fetchTokens(signal?: AbortSignal): Promise<TokenList> {
 /** `GET /v1/tokens/{reference}`: one token by ticket, token id, name or ticker. */
 export function fetchToken(reference: string, signal?: AbortSignal): Promise<TokenView> {
   return request<TokenView>(`/v1/tokens/${encodeURIComponent(reference)}`, { signal });
+}
+
+/** `GET /v1/tokens/{reference}/overview`: issuance, holders, transactions, miners. */
+export function fetchTokenOverview(
+  reference: string,
+  options: { transactionLimit?: number; signal?: AbortSignal } = {},
+): Promise<TokenOverview> {
+  const { transactionLimit, signal } = options;
+  const suffix =
+    transactionLimit === undefined ? "" : `?transaction_limit=${encodeURIComponent(String(transactionLimit))}`;
+  return request<TokenOverview>(`/v1/tokens/${encodeURIComponent(reference)}/overview${suffix}`, {
+    signal,
+  });
 }
 
 /** `GET /v1/pools`: every DEX pool and its LP share ledger. */

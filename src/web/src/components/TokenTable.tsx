@@ -21,7 +21,9 @@ import {
   type Token,
 } from "../lib/assets";
 import { formatMultiPeriodTimeControl, formatTokenAmount } from "../lib/format";
+import { tokenHash } from "../router";
 import type { BlockSummary, NodeStatus } from "../types";
+import { Link } from "./Chrome";
 import { tableStyles } from "./tableStyles";
 
 export function TokenTable({
@@ -72,9 +74,13 @@ export function TokenTable({
           const reward = currentBlockReward(token, status.height, againstCap);
           return (
             <View key={token.asset ?? token.symbol} style={tableStyles.row}>
-              <Text variant="bodyMedium" style={styles.colVariant}>
-                {token.native ? variantLabel(token.variant) : token.name}
-              </Text>
+              <View style={styles.colVariant}>
+                {token.native ? (
+                  <Text variant="bodyMedium">{variantLabel(token.variant)}</Text>
+                ) : (
+                  <Link href={tokenHash(token.variant)}>{token.name}</Link>
+                )}
+              </View>
               <Text variant="bodyMedium" style={[styles.colTime, tableStyles.numeric]}>
                 {formatMultiPeriodTimeControl(
                   token.timeControlInitialMs,

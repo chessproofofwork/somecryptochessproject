@@ -7,6 +7,15 @@ not itemised here.
 
 ## [0.39.0] - 2026-11-22
 
+### Added
+
+- **The explorer has a token page.** `#/tokens/<reference>` shows a token's
+  name, ticker, ticket, token id, variant, genesis/premine mint, current supply,
+  top holders, token-touching transactions, the miners that settled its proofs,
+  and an explorer-maintained description that is explicitly outside chain state.
+  The overview token list, game pages and miner pages link to it. The page reads
+  one new chain-derived route, `GET /v1/tokens/{reference}/overview`.
+
 ### Fixed
 
 - **A winning miner can build a proof for a chain-registered token.** The normal

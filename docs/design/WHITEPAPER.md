@@ -1710,6 +1710,7 @@ contract (snapshotted in `tests/fixtures/openapi.json`):
 | `GET /v1/pools/{pool_id}` | One DEX pool |
 | `GET /v1/tokens` | Every registered variant token and its minted supply |
 | `GET /v1/tokens/{reference}` | One token by ticket, token id, internal variant name, display name or ticker |
+| `GET /v1/tokens/{reference}/overview` | One token's top holders, token transactions and proof miners |
 | `GET /v1/bridge` | The Ethereum deployment facts for this network |
 | `GET /v1/htlcs` | SCCP hash locks, filtered by address or hashlock |
 | `GET /v1/htlcs/{htlc_id}` | One lock, its status and the preimage once claimed |

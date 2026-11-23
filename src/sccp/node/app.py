@@ -59,6 +59,7 @@ from sccp.node.models import (
     RatingsView,
     TakeAccepted,
     TokenList,
+    TokenOverview,
     TokenView,
     TransactionRecord,
     TxAccepted,
@@ -401,6 +402,23 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
         uses it; an unknown or ambiguous reference is a ``404``.
         """
         return service.token(reference)
+
+    @app.get("/v1/tokens/{reference}/overview", response_model=TokenOverview, tags=["defi"])
+    def token_overview(
+        reference: str,
+        transaction_limit: int = Query(default=50, ge=1, le=200),
+    ) -> TokenOverview:
+        """Return one token's chain overview.
+
+        The response carries the immutable token record, its top ten holders by
+        current balance (including immature coinbase value), the newest
+        transactions that created, moved, traded or locked the token, and the
+        miners whose blocks carried the most proofs for its variant. Bodies are
+        read from the adopted branch; a node that no longer holds an old block
+        cannot list that block's transactions, so ``transaction_total`` is what
+        this node can still prove.
+        """
+        return service.token_overview(reference, transaction_limit=transaction_limit)
 
     @app.get("/v1/epochs/{epoch}", response_model=EpochView, tags=["chain"])
     def epoch(epoch: int) -> EpochView:

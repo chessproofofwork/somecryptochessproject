@@ -30,6 +30,7 @@ import { Games } from "./views/Games";
 import { MinerRating } from "./views/MinerRating";
 import { NotFound } from "./views/NotFound";
 import { Ratings } from "./views/Ratings";
+import { TokenPage } from "./views/TokenPage";
 import { TransactionDetail } from "./views/TransactionDetail";
 
 /**
@@ -288,6 +289,8 @@ function routeKey(route: Route): string {
       return `game:${route.gameHash}`;
     case "miner":
       return `miner:${route.address}`;
+    case "token":
+      return `token:${route.reference}`;
     case "account":
       return `account:${route.address}`;
     case "notFound":
@@ -344,6 +347,8 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <Ratings />;
     case "miner":
       return <MinerRating address={route.address} />;
+    case "token":
+      return <TokenPage reference={route.reference} />;
     case "account":
       return <AccountView address={route.address} />;
     case "wallet":

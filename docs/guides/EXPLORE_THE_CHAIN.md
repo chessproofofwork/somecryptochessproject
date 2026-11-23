@@ -85,6 +85,11 @@ deploy that does exactly this is
   chart of one point per epoch. Each point carries its rating and deviation as a
   hover tooltip; the chart is an SVG the page draws from the node's replay, with
   no charting dependency and no server-side history.
+- **A token** — its chain record (ticker, ticket, token id, variant, issuance,
+  cap and clock), an explorer-maintained off-chain description, the largest
+  holders, the transactions that created or moved it, and the miners whose
+  blocks carried its proofs. The overview token list, game pages and miner pages
+  link here.
 - **An account** — spendable, immature and bonded balances, the next nonce, miner
   registration and the games this node lists with that seat.
 

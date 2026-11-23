@@ -476,9 +476,10 @@ Rules that follow from it:
   how the hosted testnet runs two standard and two Chess960 miners from one
   compose file (`docker-compose.yml`).
 - The explorer names the variant on every games row, on the game detail page and
-  in the account view, and `GET /v1/games`, `/v1/blocks` and `/v1/params` all
-  carry it, which is what `sccp chain account`, `sccp chain status` and the web
-  client read.
+  in the account view; each game and miner page links to `#/tokens/<reference>`,
+  which shows the token's issuance, top holders, token transactions and proof
+  miners. `GET /v1/games`, `/v1/blocks`, `/v1/params` and
+  `/v1/tokens/{reference}/overview` carry what the client reads.
 - `scripts/play_miner.py` and `scripts/export_block_games.py` were **not**
   extended: neither takes a variant, so a locally played or exported game is
   standard chess. Both are developer conveniences, and the gap is noted in
