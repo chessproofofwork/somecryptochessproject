@@ -14,9 +14,8 @@ merge-to-deploy workflow and its monthly cost are in
 
 A second, `e2-micro` VM can host a public read-only mirror of the chain; that
 deployment lives in [`edge/`](edge/README.md) and is a separate Compose project on
-purpose. `.github/workflows/deploy-edge.yml` redeploys it after the primary's
-deploy, from the same image tag, when `EDGE_DEPLOY_HOST` is configured; without
-that variable there is no mirror and nothing waits for one.
+purpose. It is deployed by hand in the same image tag as the primary; there is no
+GitHub Actions workflow for it.
 
 This page is about building the stack. When it is already running and something is
 wrong with it, [`docs/operations/`](../docs/operations/README.md) is the triage

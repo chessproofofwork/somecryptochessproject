@@ -89,9 +89,7 @@ state root, not a kill:
 BlockValidationError header state root is <a>, the block applies to <b>
 ```
 
-`deploy-edge.yml` handles this: it waits for health, prints that tail, wipes the
-store and starts once more, leaving a `::warning::` in the run. By hand it is the
-same three steps — the container is the only writer, so stop it first:
+The fix is three steps — the container is the only writer, so stop it first:
 
 ```bash
 ssh sccp@136.119.76.215 'cd /srv/sccp-edge \
@@ -155,25 +153,13 @@ Caddy keeps serving the same name and the data underneath is simply the new chai
 There is nothing to preserve: no keys, no faucet, no history that the primary does
 not also have.
 
-## Rebuilding through the workflow instead
+## Rebuilding after a primary reset
 
-`deploy-edge.yml` is not only a deploy. It waits for the new image's node to
-become healthy and, when it cannot replay the store it inherited, wipes
-`node-data` and starts it once; it also compares the mirror's block 1 with the
-primary's and, when they disagree, deletes the mirror's `node-data` itself before
-restarting — the case above, automated. So after the primary has been reset, or
-after a release that changed a consensus parameter, the cheapest path is often to
-let the next successful stack deploy run the mirror job:
-
-```bash
-gh run list --workflow=deploy-edge.yml --limit 5
-gh run view <run-id> --log-failed
-```
-
-The workflow is skipped entirely when `vars.EDGE_DEPLOY_HOST` is unset, and its
-run is green in that case ([`DEPLOY_FAILURES.md`](DEPLOY_FAILURES.md)). A mirror
-that exists but never redeploys after stack deploys is that variable, not the
-mirror.
+The mirror has no automated deploy. After the primary resets its chain, the
+mirror keeps serving blocks nobody follows until it is rebuilt by hand. Compare
+block 1 on both hosts; when they differ, follow case 3 above: stop the node,
+remove `node-data` and start once more. The certificate and the domain are
+untouched, and one poll rebuilds the chain.
 
 ## What the mirror is allowed to be
 
@@ -208,13 +194,12 @@ sends `Cache-Control: no-store`, so the browser is the suspect.
 
 ## Prevention
 
-1. Leave `deploy-edge.yml` wired to run after every successful stack deploy. It is
-   the only thing that repairs the primary-reset case without a human.
+1. Redeploy the mirror by hand after every successful stack deploy, with the same
+   image tag. It is the only thing that repairs the primary-reset case; without a
+   human it stays on the old chain.
 2. Alert on the mirror's `height` falling more than 10 blocks behind the primary's
    for 15 minutes — not on the mirror being unreachable, which is SEV4 noise.
-3. Rotate the image tag on the mirror with every stack deploy so the two run the
-   same commit; a mirror one commit behind is a slow-motion divergence.
-4. Do not let the mirror accumulate responsibilities. Every "while we are here, it
+3. Do not let the mirror accumulate responsibilities. Every "while we are here, it
    could also serve writes/keep a faucet key/mine" is a second primary with none of
    the primary's protections.
 

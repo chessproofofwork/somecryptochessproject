@@ -2,16 +2,15 @@
 
 | | |
 | --- | --- |
-| Severity | SEV2 if the stack is down or half-deployed; SEV3 for the web and mirror deploys |
+| Severity | SEV2 if the stack is down or half-deployed; SEV3 for the web deploy and SEV4 for the mirror |
 | Blast radius | the primary deploy resets the chain by design — a failed one can leave it empty |
 | First move | `gh run view <id>` and read *which step* failed, not the badge |
 
-Three workflows deploy: `deploy-testnet-miners.yml` (build + push the image, then
-reset and start the stack over SSH), `deploy-explorer.yml` (upload two release
-trees, switch two symlinks), and `deploy-edge.yml` (redeploy the mirror after a
-successful stack deploy). They fail in different places and the difference matters,
-because one of them can leave the network with no chain while the other can only
-leave a page stale.
+Two workflows deploy: `deploy-testnet-miners.yml` (build + push the image, then
+reset and start the stack over SSH) and `deploy-explorer.yml` (upload two release
+trees, switch two symlinks). They fail in different places and the difference
+matters, because one of them can leave the network with no chain while the other
+can only leave a page stale. The read-only mirror has no automated deploy.
 
 ## A green run is not a deploy
 
@@ -24,20 +23,15 @@ gh run view <run-id>          # the step list, with skips marked
 ```
 
 Every deploy workflow is gated on repository configuration: `vars.TESTNET_DEPLOY_HOST`
-and `secrets.TESTNET_SSH_KEY` for the stack, `vars.EDGE_DEPLOY_HOST` for the mirror,
-and the explorer's own variables. With a gate unset the job is *skipped*, and a run
-whose only executed step is "Read the configuration" is green, correct, and has
-deployed nothing. That is the failure mode to check first when someone says "the
-deploy worked but the site is old", and the run summary now says so in as many
-words.
+and `secrets.TESTNET_SSH_KEY` for the stack, and the explorer's own variables.
+With a gate unset the job is *skipped*, and a run whose only executed step is
+"Read the configuration" is green, correct, and has deployed nothing. That is the
+failure mode to check first when someone says "the deploy worked but the site is
+old", and the run summary now says so in as many words.
 
 ```bash
 gh variable list; gh secret list
 ```
-
-A missing variable is not the same as an empty one: `vars.EDGE_DEPLOY_HOST=""`
-still counts as present in some contexts, and a workflow that treats it as
-configured will try to SSH to nothing.
 
 ## Where the stack deploy fails, in order
 
@@ -136,7 +130,7 @@ ssh sccp@136.119.76.215 'cd /srv/sccp-edge \
 
 `<sha>` is the full commit sha of the build you want; `gh run list` and the
 publish step's log both carry it. Do not pin the mirror ahead of the primary: the
-replica must run a tag the primary is not, or the two disagree about the chain
+replica must run the tag the primary runs, or the two disagree about the chain
 rules.
 
 
@@ -165,51 +159,17 @@ ssh sccp@proofofchess.com 'cd /opt/sccp-testnet \
 | Workflow | Fails like | First check |
 | --- | --- | --- |
 | `deploy-explorer.yml` | upload or symlink switch failed; the site serves the previous release and the run is red | `readlink -f /opt/sccp-explorer/www/app/current`, then the job's upload step |
-| `deploy-edge.yml` | the mirror does not answer, or answers with the old chain | `ssh` to the edge host, `docker compose ps`, then the step that failed |
-| `deploy-edge.yml` with no `EDGE_DEPLOY_HOST` | green, mirror untouched | `gh variable list` |
 
-A red run whose *first* red step is `Configure SSH` is configuration, not chain.
-The mirror has no public SSH and a GitHub runner has no route into the VPC, so the
-job reads the mirror's host key by jumping through `TESTNET_DEPLOY_HOST`, and
-`EDGE_DEPLOY_HOST` must be the mirror's **internal** address for the hop to mean
-anything (a public address is filtered by design):
-
-```bash
-gcloud compute instances describe sccp-edge --zone=us-central1-a \
-    --format='value(networkInterfaces[0].networkIP)'   # the address to use
-gh variable set EDGE_DEPLOY_HOST --env testnet --body 'deploy@10.128.0.2'
-```
-
-The jump also needs the `sccp-edge-ssh-from-primary` rule (primary tag ->
-mirror tag, tcp:22), `secrets.TESTNET_SSH_KEY` authorized on the primary, and
-`secrets.EDGE_SSH_KEY` authorized on the mirror's `ssh-keys` metadata. When the
-jump finds no key the step falls back to a direct scan, so `vars.EDGE_SSH_PROXY_JUMP`
-is only needed to force one route (`1` jump, `0` direct). The step's `::error::`
-line names whichever is missing: `vars.EDGE_DEPLOY_HOST` must be `user@host` (not
-a bare host, not `host:port`), a hop that finds no key says so and prints the
-`gcloud` command, a key that reaches the mirror but is refused says that instead
-of failing on the `scp` two steps later, and a mirror that accepts TCP on port 22
-but never answers is called out as a host problem. That step used to end on an
-unguarded `ssh-keyscan`, so the same class of failure printed nothing but "exit
-code 1" after five seconds.
-
-The edge deploy is deliberately allowed to fail without failing the primary: a
-red mirror job with a green stack job means the chain is fine and the read-only
-copy is not. Treat it as SEV4 and finish the primary work first.
-
-One failure looks like a bad image and is not: the mirror replays its SQLite
-chain at startup, so a release that changes a consensus parameter cannot apply
-blocks written by the previous build and the node exits. The restart step waits
-for health, prints the node's log tail, wipes `node-data` and retries once, so
-that case leaves a `::warning::` in a green run rather than a red one. A run that
-is still red after the retry is the image, not the volume —
-[`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md) case 1 has the manual rebuild.
+The mirror is deployed by hand from `deploy/edge/README.md`, so a stale mirror is
+not a failed workflow. Its runbook is [`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md); the
+primary's stack deploy neither waits for it nor repairs it.
 
 ## Verifying a deploy that claims to be done
 
 The workflow's own gate is the smoke test, so a green run with a real deploy is
 strong evidence. Confirm the two things it does not check: that the chain
-*advances*, and that the mirror follows.
+*advances*, and that the mirror follows. The mirror has no automated deploy, so a
+stale one is checked and repaired by hand.
 
 ```bash
 curl -fsS https://app.proofofchess.com/v1/status | jq '{height, tip_hash}'

@@ -19,6 +19,12 @@ not itemised here.
   it. The page reads one new chain-derived route,
   `GET /v1/tokens/{reference}/overview`.
 
+### Removed
+
+- **The `deploy-edge` GitHub Actions workflow was removed.** The read-only mirror
+  in `deploy/edge/` is still part of the testnet design, but it is now deployed
+  and repaired by hand. The stack and explorer deploy workflows are unchanged.
+
 ## [0.39.0] - 2026-11-22
 
 ### Fixed

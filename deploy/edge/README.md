@@ -43,7 +43,6 @@ export NETWORK="sccp-testnet"          # the VPC the primary VM and these rules 
 export REGION="us-central1"
 export ZONE="us-central1-a"
 export SUBNET="sccp-testnet-${REGION}" # custom-mode VPC: one subnet per region
-export PRIMARY_TAG="sccp-node"         # the primary VM's network tag
 export EDGE="sccp-edge"
 export EDGE_TAG="sccp-edge"
 export EDGE_IP="sccp-edge-ip"
@@ -91,64 +90,6 @@ gcloud compute firewall-rules create sccp-edge-iap-ssh \
 gcloud compute ssh "$EDGE" --zone="$ZONE" --project="$PROJECT_ID" --tunnel-through-iap
 ```
 
-### Let the deploy workflow in (optional)
-
-`deploy-edge.yml` runs on GitHub-hosted runners. It can reach this VM over an
-IAP tunnel only with a GCP service account, so the repository takes the cheaper
-route: it jumps through the primary deployment host, which already has SSH from
-CI. That needs one rule and one key, and no public port on the mirror:
-
-```bash
-# The primary's tag -> the mirror's tag, tcp:22, inside the VPC only.
-gcloud compute firewall-rules create sccp-edge-ssh-from-primary \
-    --project="$PROJECT_ID" \
-    --network="$NETWORK" \
-    --direction=INGRESS \
-    --action=ALLOW \
-    --rules=tcp:22 \
-    --source-tags="$PRIMARY_TAG" \
-    --target-tags="$EDGE_TAG"
-```
-
-`$PRIMARY_TAG` is the primary VM's network tag. The deploy key that
-`TESTNET_SSH_KEY` already holds also has to be authorized on this VM, and the
-user in `EDGE_DEPLOY_HOST` has to be the one that key names. GCP rewrites
-`authorized_keys` from instance metadata, so add it there rather than by hand:
-
-```bash
-# deploy.pub holds one `user:ssh-ed25519 AAAA... comment` line, the same key
-# pair TESTNET_SSH_KEY holds. The user must be one that exists on a stock
-# Debian image (for example the operator account created by OS Login).
-gcloud compute instances add-metadata "$EDGE" \
-    --zone="$ZONE" --project="$PROJECT_ID" \
-    --metadata-from-file ssh-keys=deploy.pub
-```
-
-Then set `vars.EDGE_DEPLOY_HOST=<user>@<internal IP>`. The workflow reaches the
-mirror by jumping through `vars.TESTNET_DEPLOY_HOST` and only falls back to a
-direct connection when the jump finds no host key, so on a GitHub-hosted runner
-the mirror's address only has to mean something from inside the VPC — a public
-address there is filtered by design and the direct attempt simply fails. Pin the
-route with `vars.EDGE_SSH_PROXY_JUMP` if you want to prove one works: `1` forces
-the jump, `0` forbids it. The step logs the route it used (`jumped through …` or
-`direct from this runner`) and, if neither works, names both attempts: a jump that
-cannot see the mirror reports that `EDGE_DEPLOY_HOST` must be the internal
-address, the rule must allow the primary's tag and the key must be authorized on
-the mirror; a mirror that accepts TCP on port 22 but never answers is called out
-as a host problem rather than a key problem.
-
-The two hops use different keys, because they are different hosts: the jump
-authenticates to the primary with `secrets.TESTNET_SSH_KEY` (the key the primary
-already authorizes), and the mirror with `secrets.EDGE_SSH_KEY` (falling back to
-`TESTNET_SSH_KEY`). The mirror's key is the one that has to be in its `ssh-keys`
-metadata.
-
-```bash
-# the mirror's internal address: what EDGE_DEPLOY_HOST points at when jumping
-gcloud compute instances describe "$EDGE" --zone="$ZONE" --project="$PROJECT_ID" \
-    --format='value(networkInterfaces[0].networkIP)'
-```
-
 Point an `A` record for the mirror's name at `EDGE_IP` before starting the stack:
 Caddy cannot finish the HTTP-01 challenge until the name resolves to this VM.
 
@@ -158,11 +99,10 @@ The stack fits in an `e2-micro`, but not with room to spare: the node, Caddy,
 Docker and the guest agent sit at roughly 930 MB of the 969 MB the kernel sees,
 and the image ships no swap. A host that runs out does not exit — it stops
 scheduling userland, so the kernel still completes TCP handshakes from the accept
-queue while sshd never sends a banner. That is what a failing
-`deploy-edge.yml` looks like when the cause is the VM: `Configure SSH` reports no
-host key from an address that answers `nc`, `https://<domain>/v1/status` times
-out, the instance is still `RUNNING`, and the serial console is full of failed
-container health checks. Create the swap file once:
+queue while sshd never sends a banner. That is what a wedged mirror
+looks like: `https://<domain>/v1/status` times out, the instance is still
+`RUNNING`, and the serial console is full of failed container health checks.
+Create the swap file once:
 
 ```bash
 sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile
@@ -184,58 +124,20 @@ The VM needs Docker Engine and the Compose plugin (the primary's
 stack itself is two files — `docker-compose.yml` and `Caddyfile` — plus a `.env`
 that names the image, the mirror's domain and the primary URL.
 
-### Automatically, after every primary deploy
+### On the VM
 
-`.github/workflows/deploy-edge.yml` waits for `deploy-testnet-miners` to finish,
-then ships this directory, writes `.env`, pulls the tag that deployment built and
-proves the replica advanced. Configure it as repository variables and secrets next
-to the primary's, or on the `testnet` environment — the workflow reads them inside
-a step, so either scope is seen (a job-level `if` would not be, and the job would
-skip with nothing in the log):
-
-| Kind | Name | Value |
-| --- | --- | --- |
-| var | `EDGE_DEPLOY_HOST` | `user@host` of the mirror; unset disables the deploy |
-| var | `EDGE_DOMAIN` | the mirror's public name, e.g. `mirror.proofofchess.com` |
-| var | `EDGE_PRIMARY_URL` | optional; defaults to `https://app.proofofchess.com` |
-| var | `EDGE_DEPLOY_DIR` | optional; defaults to `/srv/sccp-edge` |
-| var | `EDGE_SSH_PROXY_JUMP` | optional; `1` forces the jump through `TESTNET_DEPLOY_HOST`, `0` forbids it. Unset tries the jump and falls back to a direct connection |
-| secret | `EDGE_SSH_KEY` | optional; falls back to `TESTNET_SSH_KEY` |
-| secret | `EDGE_KNOWN_HOSTS` | optional; falls back to `TESTNET_KNOWN_HOSTS` |
-
-A pinned `EDGE_KNOWN_HOSTS` covers the *primary* — the fallback is the primary's
-own pin — so the mirror's host key is scanned through the jump on every run. If
-you would rather pin it, put both keys in `EDGE_KNOWN_HOSTS`: that entry is found
-with `ssh-keygen -F` and the probe is skipped, which is the only way the step
-works when the runner has no route to the mirror at all.
-
-The job is idempotent, and it only destroys the replica on purpose. Both resets
-are scoped to `node-data`; `caddy_data` is never touched, because losing it
-re-issues the certificate:
-
-* **the node never turns healthy.** The mirror replays its SQLite chain at
-  startup, under the *new* build's consensus parameters. A release that moves one
-  — the 30 s cadence doubled the maturity, registration, dispute and beacon
-  windows — cannot replay blocks written by the old build, so the node exits and
-  `tls` never starts behind its `service_healthy` dependency. The restart step
-  waits for health, prints the node's last log lines, throws the store away and
-  starts once more. A second failure is the image, and the run goes red.
-* **block 1 differs from the primary's.** The primary resets its chain on every
-  stack deploy, so a mirror that kept the old one is serving blocks nobody
-  follows. The workflow compares block 1 with the primary's and deletes the
-  node's data when they disagree.
-
-To move the mirror to a different tag by hand, run the workflow with
-`image_tag=<sha>`.
-
-### Manually, on the VM
+Copy this directory's `docker-compose.yml`, `Caddyfile` and `.env.example` to
+`/srv/sccp-edge` on the VM; `gcloud compute scp --tunnel-through-iap` works
+because SSH is IAP-only. The repository checkout is not needed after those three
+files are in place. Set `SCCP_IMAGE` in `.env` to the tag the primary deploy
+pushed (`:testnet` or the commit sha).
 
 ```bash
 # on the edge VM, as the deploy user, in /srv/sccp-edge
 cp .env.example .env && $EDITOR .env   # image, domain, primary URL
 set -a && . ./.env && set +a           # the same values, for the checks below
-# If the registry package is private, log in first; the workflow uses its job
-# token for exactly this:
+# If the registry package is private, log in first with a token that can read
+# packages:
 #   printf '%s' "$TOKEN" | docker login ghcr.io -u <user> --password-stdin
 docker compose pull node
 docker compose up -d --no-build
@@ -255,9 +157,10 @@ that talks to the registry, and `--no-build` keeps Compose from trying to build 
 Keeping the volume is only right while the new build can read it. The node
 replays its stored chain at startup, so an image that changes a consensus
 parameter cannot apply blocks written by the previous one and exits instead of
-serving. That is the deploy's job, not yours: it waits for health, wipes
-`node-data` and starts once more. If you are doing it by hand, see case 1 of
-[`docs/operations/MIRROR_OUTAGE.md`](../../docs/operations/MIRROR_OUTAGE.md).
+serving. After changing `SCCP_IMAGE`, wait for health; if the node cannot replay
+the store, stop it, delete `/data/*` and start once more. Case 1 of
+[`docs/operations/MIRROR_OUTAGE.md`](../../docs/operations/MIRROR_OUTAGE.md) has
+the exact commands.
 
 ### What to watch
 

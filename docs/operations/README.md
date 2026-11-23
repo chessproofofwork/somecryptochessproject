@@ -116,11 +116,12 @@ stalled chain.
 
 ## Detection
 
-There is no pager today. What exists is three checks that run only when something
-deploys: the stack smoke test in `deploy-testnet-miners.yml`, the mirror check in
-`deploy-edge.yml`, and the operator pages in `README.md`. Everything else is a
-person noticing, which is fine for a testnet and is not fine for the network this
-folder is written for.
+There is no pager today. What exists is the stack smoke test in
+`deploy-testnet-miners.yml` and the operator pages in `README.md`. Neither covers
+the mirror, which is deployed by hand; the checks in
+[`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md) are how a stale one is found. Everything
+else is a person noticing, which is fine for a testnet and is not fine for the
+network this folder is written for.
 
 Before mainnet, add the two cheap ones: an external uptime check on
 `https://app.proofofchess.com/v1/status` that asserts `height` **increased**

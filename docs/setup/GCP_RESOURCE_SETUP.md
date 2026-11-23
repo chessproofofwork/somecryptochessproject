@@ -231,18 +231,6 @@ gcloud compute firewall-rules create sccp-edge-iap-ssh \
     --source-ranges=35.235.240.0/20 \
     --target-tags="$EDGE_TAG" \
     --project="$PROJECT_ID"
-
-# Optional, and only if deploy-edge.yml runs on a GitHub-hosted runner: the
-# mirror has no public 22, so the workflow jumps through the primary VM. This
-# rule is what lets that hop reach the mirror.
-gcloud compute firewall-rules create sccp-edge-ssh-from-primary \
-    --network="$NETWORK" \
-    --direction=INGRESS \
-    --action=ALLOW \
-    --rules=tcp:22 \
-    --source-tags="$NODE_TAG" \
-    --target-tags="$EDGE_TAG" \
-    --project="$PROJECT_ID"
 ```
 
 Create the instance **in `$NETWORK`**: the rules above are scoped to it, and an
@@ -251,14 +239,13 @@ is silently unexposed, with a node that is healthy on loopback and unreachable
 from the internet.
 
 Do not add a `8645` rule for `$EDGE_TAG`: the node binds loopback and only the
-proxy on that host reaches it. The instance, address record, Compose file,
-workflow variables and smoke checks are in
-[`deploy/edge/README.md`](../../deploy/edge/README.md).
+proxy on that host reaches it. The instance, address record, Compose file and
+smoke checks are in [`deploy/edge/README.md`](../../deploy/edge/README.md).
 
 One host-level setting belongs with those steps: an `e2-micro` has 1 GB and no
 swap, and the stack leaves almost nothing free. Without a swap file the VM can
 stop scheduling userland while still completing TCP handshakes, which reads as a
-dead mirror and a failing `deploy-edge.yml` with no error on the host.
+dead mirror with no error on the host.
 [`deploy/edge/README.md`](../../deploy/edge/README.md) has the four commands, and
 [`MIRROR_OUTAGE.md`](../operations/MIRROR_OUTAGE.md) case 1 recognises the
 symptom.
