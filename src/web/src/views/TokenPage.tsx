@@ -69,7 +69,7 @@ export function TokenPage({ reference }: { reference: string }): ReactNode {
         <View style={styles.titleActions}>
           <StatusPill label={token.symbol} tone="info" />
           <StatusPill label={variantLabel(token.ruleset ?? token.rules)} tone="neutral" />
-          {!token.approved && <StatusPill label="not approved" tone="warn" />}
+          {!token.approved && <StatusPill label="not preapproved" tone="warn" />}
         </View>
       </View>
 

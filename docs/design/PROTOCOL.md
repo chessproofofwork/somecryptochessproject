@@ -1424,7 +1424,7 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/pools/{pool_id}` | `PoolView`: one DEX pool (404 when the chain has not created it) |
 | GET | `/v1/tokens` | `TokenList`: every registered variant token with its ticket, user-chosen name and ticker, network-assigned `token_id`, approval flag, immutable parameters and minted supply |
 | GET | `/v1/tokens/{reference}` | `TokenView`: one token by ticket, token id, internal variant name, display name or ticker (404 when unknown or ambiguous because a name or ticker is shared). An unapproved token is still returned with `approved: false`. |
-| GET | `/v1/tokens/{reference}/overview` | `TokenOverview`: the token record, its top ten holders by current and immature balance, the newest token-touching transactions (`?transaction_limit=`, default 50, max 200) with the adopted-chain total, and the miners whose blocks carried the most proofs for its variant |
+| GET | `/v1/tokens/{reference}/overview` | `TokenOverview`: the token record, its top ten holders by current and immature balance, the newest token-touching transactions (`?transaction_limit=`, default 50, max 200) with the adopted-chain total, and the miners whose blocks carried the most proofs for its variant. An unapproved token is still returned with `approved: false`. |
 | GET | `/v1/bridge` | `BridgeView`: the Ethereum chain id/name, HTLC contract, confirmation depth and SCCP margin for this network |
 | GET | `/v1/htlcs` | `HtlcList`: SCCP hash locks filtered by `?address=` or `?hashlock=` |
 | GET | `/v1/htlcs/{htlc_id}` | `HtlcView`: one lock, its status and the preimage once claimed |

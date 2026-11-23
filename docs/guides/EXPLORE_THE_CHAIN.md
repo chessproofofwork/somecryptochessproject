@@ -89,7 +89,9 @@ deploy that does exactly this is
   cap and clock), an explorer-maintained off-chain description, the largest
   holders, the transactions that created or moved it, and the miners whose
   blocks carried its proofs. The overview token list, game pages and miner pages
-  link here.
+  link here. A token the node has not approved still has this page; its
+  description is a generic warning that the explorer has not preapproved it and
+  that its creator-supplied name and ticker are not endorsed.
 - **An account** — spendable, immature and bonded balances, the next nonce, miner
   registration and the games this node lists with that seat.
 

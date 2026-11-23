@@ -271,6 +271,7 @@ def test_token_lookup_uses_the_ticket_or_token_id_not_the_display_name() -> None
         by_ticket = client.get("/v1/tokens/0042")
         by_token_id = client.get(f"/v1/tokens/{approved.token_id}")
         hidden_lookup = client.get("/v1/tokens/0043")
+        hidden_overview = client.get("/v1/tokens/0043/overview")
         by_name = client.get("/v1/tokens/Gold Coin")
         by_ticker = client.get("/v1/tokens/GOLD")
     service.close()
@@ -297,6 +298,11 @@ def test_token_lookup_uses_the_ticket_or_token_id_not_the_display_name() -> None
     # decides whether to keep it in its own registry.
     assert hidden_lookup.status_code == 200
     assert hidden_lookup.json()["approved"] is False
+    # The explorer page is available even when the node has not approved the
+    # token; the page itself supplies a generic preapproval warning.
+    assert hidden_overview.status_code == 200
+    assert hidden_overview.json()["token"]["approved"] is False
+    assert hidden_overview.json()["token"]["ticket"] == "0043"
 
 
 def test_token_views_accept_a_16_hex_registration_ticket() -> None:

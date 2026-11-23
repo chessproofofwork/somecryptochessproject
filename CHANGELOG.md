@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
-## [0.39.0] - 2026-11-22
+## [0.40.0] - 2026-11-22
 
 ### Added
 
@@ -13,8 +13,13 @@ not itemised here.
   name, ticker, ticket, token id, variant, genesis/premine mint, current supply,
   top holders, token-touching transactions, the miners that settled its proofs,
   and an explorer-maintained description that is explicitly outside chain state.
-  The overview token list, game pages and miner pages link to it. The page reads
-  one new chain-derived route, `GET /v1/tokens/{reference}/overview`.
+  Unapproved tokens get the same chain-derived page with a generic warning that
+  the explorer has not preapproved them; their creator-supplied name and ticker
+  are not endorsed. The overview token list, game pages and miner pages link to
+  it. The page reads one new chain-derived route,
+  `GET /v1/tokens/{reference}/overview`.
+
+## [0.39.0] - 2026-11-22
 
 ### Fixed
 
