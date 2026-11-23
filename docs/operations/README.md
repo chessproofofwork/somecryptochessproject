@@ -17,14 +17,12 @@ helped is not a runbook.
 | --- | --- | --- |
 | the chain: node, relay, witnesses, four miners, bootstrap, traffic | one GCP VM, `docker-compose.yml`, project `sccp-testnet`, `/opt/sccp-testnet` | no new blocks, no settlement, no faucet |
 | the web origins: nginx on `8080`/`8081` behind Caddy on `80`/`443` | same VM, `deploy/explorer/`, project `sccp-explorer` | the pages 404 or the certificate errors; the API is unaffected |
-| the read-only mirror | its own `e2-micro`, `deploy/edge/`, project `sccp-edge`, `/srv/sccp-edge` | reads keep working from the primary; nothing else notices |
 | the images | `ghcr.io/chessproofofwork/somecryptochessproject:testnet` | nothing today, until the next deploy needs to pull |
 
-Two of these are cheap to lose and one is not. The mirror is disposable — one
-sync rebuilds it. The web origins hold no state but a certificate. The primary
-holds the chain **and the `stack` volume**, which is the only copy of the miner,
-relay, witness and faucet keys and the passphrase they are wrapped with. A run
-that wipes volumes has destroyed identities, not just data; see
+The web origins hold no state but a certificate. The primary holds the chain
+**and the `stack` volume**, which is the only copy of the miner, relay, witness
+and faucet keys and the passphrase they are wrapped with. A run that wipes
+volumes has destroyed identities, not just data; see
 [`DATA_LOSS.md`](DATA_LOSS.md).
 
 ## Which page
@@ -36,7 +34,6 @@ that wipes volumes has destroyed identities, not just data; see
 | a container is gone, a volume is empty, the node refuses to open its database | [`DATA_LOSS.md`](DATA_LOSS.md) |
 | certificate expired, TLS handshake fails, `curl` exit 35, ACME errors | [`TLS_AND_DNS.md`](TLS_AND_DNS.md) |
 | a deploy went red, or went green and changed nothing | [`DEPLOY_FAILURES.md`](DEPLOY_FAILURES.md) |
-| the mirror is stale or down, the primary is fine | [`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md) |
 | the faucet is empty, a key is missing, a key may have leaked | [`FAUCET_AND_KEYS.md`](FAUCET_AND_KEYS.md) |
 | unexpected traffic, an open port, a compromised host or credential | [`SECURITY_INCIDENT.md`](SECURITY_INCIDENT.md) |
 | "how do I check the stack", restart, faucet and reorg mechanics | [`RUNBOOK.md`](RUNBOOK.md) |
@@ -55,7 +52,7 @@ stop and help.
 | SEV1 | consensus is wrong: two tips, a chain that cannot continue, value at risk, or a key known to be compromised | all other work stops; one person on the fix, one on evidence and comms; change freeze |
 | SEV2 | the primary cannot serve or cannot advance, but data is intact | fix now, single operator, keep every command in the incident log |
 | SEV3 | a single public surface is down or wrong: TLS, the web origins, the faucet | fix within the day; the chain does not wait |
-| SEV4 | cosmetic or redundant: the mirror, a stale page, a dashboard | fix when convenient; say so in the log |
+| SEV4 | cosmetic: a stale page, a dashboard | fix when convenient; say so in the log |
 
 A green-looking network is not evidence of SEV4: the first move is always to
 establish whether the *chain* is advancing, not whether pages render.
@@ -64,27 +61,19 @@ establish whether the *chain* is advancing, not whether pages render.
 
 ```bash
 curl -fsS https://app.proofofchess.com/v1/status | jq '{height, tip_hash, peers}'
-curl -fsS https://mirror.proofofchess.com/v1/status | jq '{height, tip_hash, peers}'
 ssh sccp@proofofchess.com 'cd /opt/sccp-testnet && docker compose ps -a'
 ssh sccp@proofofchess.com 'df -h / && df -i / && free -m'
 ssh sccp@proofofchess.com 'cd /opt/sccp-testnet && docker compose logs --tail=50 --no-color node relay'
 ```
 
-Four answers split the whole problem space:
+Three answers split the whole problem space:
 
 1. **Does the API answer?** No → [`PRIMARY_DOWN.md`](PRIMARY_DOWN.md).
 2. **Is `height` moving?** Compare two calls a minute apart. Flat →
    [`CHAIN_STALLED.md`](CHAIN_STALLED.md).
-3. **Do the primary and the mirror agree on the genesis hash?** They must, always.
-   They disagree → the mirror joined another chain and is lying to readers; stop
-   serving it ([`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md)).
-4. **Do they agree on block 1 but not on the tip?** The mirror is just behind;
-   harmless, and expected for up to a poll interval.
-
-Disk and memory belong in the first five minutes because both look like
-everything else: a full disk makes SQLite fail in ways that read like corruption,
-and a 2 vCPU host under memory pressure kills a miner, which reads like a
-stalled chain.
+3. **Is the host healthy?** A full disk makes SQLite fail in ways that read like
+   corruption, and a 2 vCPU host under memory pressure kills a miner, which reads
+   like a stalled chain. `df -h`, `df -i` and `free -m` decide which it is.
 
 ## What you may always do
 
@@ -92,8 +81,6 @@ stalled chain.
   (`docker compose up -d`) — a restart replays `chain.sqlite` and reconnects
   every seat;
 - roll the web release symlink back ([`DEPLOY_FAILURES.md`](DEPLOY_FAILURES.md));
-- delete the mirror's `node-data` volume and resync it;
-- stop the mirror, or block it in DNS, while you work;
 - re-run a failed workflow, once you know which step failed.
 
 ## What you may never do during an incident
@@ -117,17 +104,14 @@ stalled chain.
 ## Detection
 
 There is no pager today. What exists is the stack smoke test in
-`deploy-testnet-miners.yml` and the operator pages in `README.md`. Neither covers
-the mirror, which is deployed by hand; the checks in
-[`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md) are how a stale one is found. Everything
+`deploy-testnet-miners.yml` and the operator pages in `README.md`. Everything
 else is a person noticing, which is fine for a testnet and is not fine for the
 network this folder is written for.
 
-Before mainnet, add the two cheap ones: an external uptime check on
+Before mainnet, add the cheap one: an external uptime check on
 `https://app.proofofchess.com/v1/status` that asserts `height` **increased**
-(not that the page loaded), and the same on the mirror with a genesis-hash
-comparison. They catch the two failures a status page cannot: a frozen node and a
-mirror serving a different chain.
+(not that the page loaded). It catches the failure a status page cannot: a
+frozen node.
 
 ## Reading order for a new operator
 

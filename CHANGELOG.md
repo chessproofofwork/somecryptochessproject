@@ -19,11 +19,17 @@ not itemised here.
   it. The page reads one new chain-derived route,
   `GET /v1/tokens/{reference}/overview`.
 
+### Changed
+
+- **The inactive-wallet strip no longer mentions the hidden Play page.** It now
+  reads `unlock the wallet to use DEX or Bridge`.
+
 ### Removed
 
-- **The `deploy-edge` GitHub Actions workflow was removed.** The read-only mirror
-  in `deploy/edge/` is still part of the testnet design, but it is now deployed
-  and repaired by hand. The stack and explorer deploy workflows are unchanged.
+- **The read-only mirror and its automation were removed.** The `deploy-edge`
+  workflow, the `deploy/edge/` Compose stack, the mirror runbook and the
+  remaining mirror references are gone. The testnet now runs only the primary
+  node; the stack and explorer deploy workflows are unchanged.
 
 ## [0.39.0] - 2026-11-22
 

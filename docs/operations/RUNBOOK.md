@@ -470,36 +470,6 @@ docker compose logs --tail=50 miner-1 miner-2 | grep -i timeout
 curl -fsS http://127.0.0.1:8645/v1/status | jq '.mempool'
 ```
 
-## The read-only mirror
-
-A second VM (`deploy/edge/`) runs a node that pull-syncs this chain and serves it
-over HTTPS with GET-only access. It is a separate Compose project:
-
-```bash
-curl -fsS "https://mirror.example.com/v1/status" | jq '{height, tip_hash, peers}'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://mirror.example.com/v1/tx" -d '{}'
-```
-
-`405` is correct: the edge refuses every write by design. A mirror whose `height`
-stops advancing is failing to reach `SCCP_PRIMARY_URL`; its node log names the
-peer and the reason. The mirror is disposable — delete `node-data` and let one
-sync rebuild it.
-
-The mirror has no automated deploy. After a successful `deploy-testnet-miners`
-run, redeploy it by hand from `deploy/edge/README.md` with the same image tag.
-After the primary's destructive redeploy resets its chain, compare block 1 and,
-when the mirror is holding the old chain, delete its `node-data` (never the
-certificate) and let one sync rebuild it. CI still does not create the VM, its
-static address, its firewall rules or its `A` record — those are the `gcloud`
-block in [`deploy/edge/README.md`](../../deploy/edge/README.md) — so a missing
-mirror VM is expected on a stack whose owner never ran it. When a manual deploy
-is done, check that the genesis hash matches the primary's and that the height has
-reached it; a mirror that matches then and is stale later is up but not polling,
-which is the log's story.
-
-The two extra miner seats are children of the `traffic` container on the primary
-host; the mirror holds no miners and no relay.
-
 ## Engine crashes
 
 The miners use `/usr/games/stockfish` from the image. A crash normally appears as

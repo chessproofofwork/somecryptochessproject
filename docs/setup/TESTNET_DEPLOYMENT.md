@@ -129,22 +129,15 @@ runs them at 0.5 s polling with 5 000 nodes per move; the witnesses are cheap
 tens of megabytes each. A 4 vCPU / 8 GB VM leaves more headroom, and is only
 worth paying for if 0.1 s miner responsiveness is a product requirement.
 
-A second, `e2-micro` VM hosts the optional public read-only mirror
-([`deploy/edge/`](../../deploy/edge/README.md)): one node replicating the primary
-over HTTPS, no miner, no relay, no faucet. It costs the line below only when it
-exists; deploy it by hand from that directory, because the mirror has no GitHub
-Actions workflow.
-
 | Line item | Assumption | Monthly estimate |
 | --- | --- | ---: |
 | Compute | 2 vCPU / 8 GB, always on, about $0.066/hour | $48 |
-| Mirror VM | 1 shared vCPU / 1 GB (`e2-micro`), always on | $7 |
-| Block storage | 20 GB SSD each (primary + mirror) | $3 |
+| Block storage | 20 GB SSD (primary) | $3 |
 | Egress | 100 GB (status polling, faucet use, proof traffic) | $1 |
 | Snapshots/backups | 20 GB | $2 |
 | GHCR image storage | under 1 GB, one retained testnet tag | $0 (free tier) |
 | GitHub Actions | build + deploy, roughly 10 minutes per merge | $0 (free tier) |
-| **Total** | excluding domain/TLS | **about $61/month** |
+| **Total** | excluding domain/TLS | **about $54/month** |
 
 That is the mainstream-cloud estimate. A budget VPS with equivalent resources
 (Hetzner, OVH, a small provider) is commonly **$10–$20/month**, and a

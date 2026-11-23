@@ -26,8 +26,7 @@ client_grants          5         grants a client gets in the window
 ```
 
 
-`404` with `the faucet is disabled` means the node was started with `--no-faucet`
-— the mirror is supposed to be in that state, and the primary is not.
+`404` with `the faucet is disabled` means the node was started with `--no-faucet`.
 
 ## Is it empty, or is it limited?
 

@@ -141,18 +141,18 @@ ssh sccp@proofofchess.com 'cd /opt/sccp-testnet && docker compose exec -T node \
 curl -fsS https://app.proofofchess.com/v1/status | jq '{height, tip_hash}'
 ```
 
-Cross-check the genesis hash against the mirror and against the value in
+Cross-check the genesis hash against the value in
 `docs/design/PROTOCOL.md`'s network table. A restore onto the wrong network is
 refused by the store, which is the good outcome; a restore onto the right network
 at an older height is a reorg waiting to reason about — be explicit in the
 incident log about the height you restored to and why.
 
-## Rebuilding when there is no copy
+## Rebuilding from a peer
 
-The chain does not have to come from a backup: it comes from a peer. Every node
-verifies the genesis hash before adopting a block, so a peer cannot fork you onto
-another chain, and the mirror holds a complete copy precisely so that it can serve
-when the primary is gone — including this read.
+The chain does not have to come from a backup: it can come from a peer. Every
+node verifies the genesis hash before adopting a block, so a peer cannot fork you
+onto another chain. This only works while a second node exists; without a backup
+and without a peer, the chain is gone.
 
 ```bash
 ssh sccp@proofofchess.com 'cd /opt/sccp-testnet \
@@ -161,12 +161,14 @@ ssh sccp@proofofchess.com 'cd /opt/sccp-testnet \
   && docker run --rm -v sccp-testnet_node-data:/data \
        ghcr.io/chessproofofwork/somecryptochessproject:testnet \
        --data-dir /data node run --network testnet --no-faucet \
-       --peer https://mirror.proofofchess.com --peer-poll-seconds 5 \
+       --peer https://peer.example --peer-poll-seconds 5 \
        --host 127.0.0.1 --port 18645'
 ```
 
-Let it reach the mirror's height (watch `curl 127.0.0.1:18645/v1/status` from a
-second session, or the container's log), then `Ctrl-C` and `docker compose up -d`.
+Replace `https://peer.example` with the peer's base URL. Let it reach the peer's
+height (watch `curl 127.0.0.1:18645/v1/status` from a second session, or the
+container's log), then `Ctrl-C` and `docker compose up -d`.
+
 The empty volume is fine here: it *is* the loss you are recovering from, and the
 blocks are exactly what the peer supplies. This is also the supported way to move a
 node's chain to a new instance without a backup.
@@ -209,11 +211,8 @@ that from the outside.
 
 1. Back up `stack` on a schedule, off the host. It is small, static, and the only
    unrecoverable thing on the VM.
-2. Keep the mirror. It is not a backup — it lags by a poll and it is read-only —
-   but it is the peer in the recovery above, and a second failure domain for the
-   exact page you are reading.
-3. Alert on `df -h` above 80%. Every corruption story on a single-disk VM starts
+2. Alert on `df -h` above 80%. Every corruption story on a single-disk VM starts
    with a full disk.
-4. Never copy a live SQLite file. Stop the node, or use the backup API.
+3. Never copy a live SQLite file. Stop the node, or use the backup API.
 
 

@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | SEV2 — no blocks, no settlement, no faucet; reads survive on the mirror |
+| Severity | SEV2 — no blocks, no settlement, no faucet |
 | Blast radius | `app.proofofchess.com` and `:8645`, every write, the web origins on the same VM |
 | First move | is the VM up, is SSH up, is Docker up, is the container restarting — in that order |
 

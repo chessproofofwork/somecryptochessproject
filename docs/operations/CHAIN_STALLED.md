@@ -115,32 +115,34 @@ so the odd interval is explained later.
 
 ## Two tips: is it a fork or two chains?
 
-A stall is sometimes reported as "the mirror disagrees with the primary", and the
-answer is decided by one comparison, in this order:
+A stall is sometimes reported as "the other node disagrees with the primary", and
+the answer is decided by one comparison, in this order. Set `NODE` to the primary
+and `OTHER` to the other node's base URL:
 
 ```bash
-curl -fsS https://app.proofofchess.com/v1/blocks/0 | jq -r '.hash'
-curl -fsS https://mirror.proofofchess.com/v1/blocks/0 | jq -r '.hash'
-curl -fsS https://app.proofofchess.com/v1/blocks/1 | jq -r '.hash'
-curl -fsS https://mirror.proofofchess.com/v1/blocks/1 | jq -r '.hash'
+NODE=https://app.proofofchess.com
+OTHER=https://other-node.example
+curl -fsS "$NODE/v1/blocks/0" | jq -r '.hash'
+curl -fsS "$OTHER/v1/blocks/0" | jq -r '.hash'
+curl -fsS "$NODE/v1/blocks/1" | jq -r '.hash'
+curl -fsS "$OTHER/v1/blocks/1" | jq -r '.hash'
 ```
 
-- **Genesis differs** → the mirror is on another chain. It is not a fork; a node
-  verifies the genesis before adopting a peer's blocks, so this means the mirror
-  was pointed at a different primary or kept data across a primary reset that
-  changed the genesis. Stop serving it, rebuild it:
-  [`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md).
+- **Genesis differs** → `OTHER` is on another chain. It is not a fork; a node
+  verifies the genesis before adopting a peer's blocks, so this means it was
+  pointed at a different primary or kept data across a primary reset that changed
+  the genesis. Stop using it and rebuild it from the primary.
 - **Genesis equal, block 1 differs** → the primary was reset (the deploy workflow
-  bootstraps a fresh chain) and the mirror still holds the old one. The mirror is
-  stale, not forkable; same page.
-- **Genesis and block 1 equal, tips differ** → the mirror is simply behind by up to
-  one poll (30 s). Nothing to do. A divergence *above* block 1 with the same
-  genesis is a real fork, and on a single-miner network it means two nodes were
-  both mining: find the second `--mine` process before anything else.
+  bootstraps a fresh chain) and `OTHER` still holds the old one. It is stale, not
+  forkable; rebuild it from the primary.
+- **Genesis and block 1 equal, tips differ** → `OTHER` is simply behind by up to
+  one poll. Nothing to do. A divergence *above* block 1 with the same genesis is a
+  real fork, and on a single-miner network it means two nodes were both mining:
+  find the second `--mine` process before anything else.
 
 ```bash
-curl -fsS https://app.proofofchess.com/v1/status | jq -r .tip_hash
-curl -fsS https://mirror.proofofchess.com/v1/status | jq -r .tip_hash
+curl -fsS "$NODE/v1/status" | jq -r .tip_hash
+curl -fsS "$OTHER/v1/status" | jq -r .tip_hash
 ```
 
 ## Prove the store is not the problem
@@ -173,10 +175,8 @@ EPOCH=$(curl -fsS $NODE/v1/blocks | jq -r '.blocks[0].epoch')
 curl -fsS "$NODE/v1/epochs/$EPOCH" | jq
 ```
 
-
-The mirror should follow within a poll interval; the web app's blocks page is the
-same data through nginx, so a page that still shows the old height with a moving
-API is a proxy cache, not a chain.
+The web app's blocks page is the same data through nginx, so a page that still
+shows the old height with a moving API is a proxy cache, not a chain.
 
 ## What makes it worse
 

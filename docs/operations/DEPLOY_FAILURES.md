@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | SEV2 if the stack is down or half-deployed; SEV3 for the web deploy and SEV4 for the mirror |
+| Severity | SEV2 if the stack is down or half-deployed; SEV3 for the web deploy |
 | Blast radius | the primary deploy resets the chain by design — a failed one can leave it empty |
 | First move | `gh run view <id>` and read *which step* failed, not the badge |
 
@@ -10,7 +10,7 @@ Two workflows deploy: `deploy-testnet-miners.yml` (build + push the image, then
 reset and start the stack over SSH) and `deploy-explorer.yml` (upload two release
 trees, switch two symlinks). They fail in different places and the difference
 matters, because one of them can leave the network with no chain while the other
-can only leave a page stale. The read-only mirror has no automated deploy.
+can only leave a page stale.
 
 ## A green run is not a deploy
 
@@ -99,7 +99,7 @@ stack that reaches height 19 and stops is the roster, not the deploy.
 
 ## Rolling back
 
-There are three rollbacks in this repository and only two of them are safe.
+There are two rollbacks in this repository and only one of them is safe.
 
 **The web bundle — always safe.** The last five releases of each origin stay on
 disk and the deploy is a symlink rename, so the rollback is the same rename
@@ -118,22 +118,6 @@ site keeps serving the old bundle. Rolling back the bundle does not roll back th
 chain, so an old bundle talking to a new API fails in the browser — the fix there
 is forward, not back.
 
-**The mirror — safe.** The mirror holds no unique data; a rollback is an image pin
-and a restart, and the worst case is a resync:
-
-```bash
-ssh sccp@136.119.76.215 'cd /srv/sccp-edge && cat .env'
-ssh sccp@136.119.76.215 'cd /srv/sccp-edge \
-  && SCCP_IMAGE=ghcr.io/chessproofofwork/somecryptochessproject:<sha> \
-     docker compose pull node && docker compose up -d --no-build'
-```
-
-`<sha>` is the full commit sha of the build you want; `gh run list` and the
-publish step's log both carry it. Do not pin the mirror ahead of the primary: the
-replica must run the tag the primary runs, or the two disagree about the chain
-rules.
-
-
 **The stack — only the image, never the chain.** The workflow pushes two tags,
 `:testnet` and `:$GITHUB_SHA`, so a specific build can be pinned by its commit
 sha. What cannot be rolled back is the chain: the deploy starts from `down -v`, so
@@ -144,7 +128,6 @@ options are to fix forward with a hotfix merge, or to accept the reset and say s
 publicly. Closing that gap — pin the image by digest, snapshot before the swap,
 stop wiping volumes when the chain has value — is a mainnet prerequisite, not an
 operator tip.
-
 
 If you do need the previous image on the VM, keep it before the deploy pulls the
 new one:
@@ -160,21 +143,14 @@ ssh sccp@proofofchess.com 'cd /opt/sccp-testnet \
 | --- | --- | --- |
 | `deploy-explorer.yml` | upload or symlink switch failed; the site serves the previous release and the run is red | `readlink -f /opt/sccp-explorer/www/app/current`, then the job's upload step |
 
-The mirror is deployed by hand from `deploy/edge/README.md`, so a stale mirror is
-not a failed workflow. Its runbook is [`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md); the
-primary's stack deploy neither waits for it nor repairs it.
-
 ## Verifying a deploy that claims to be done
 
 The workflow's own gate is the smoke test, so a green run with a real deploy is
-strong evidence. Confirm the two things it does not check: that the chain
-*advances*, and that the mirror follows. The mirror has no automated deploy, so a
-stale one is checked and repaired by hand.
+strong evidence. Confirm the thing it does not check: that the chain *advances*.
 
 ```bash
 curl -fsS https://app.proofofchess.com/v1/status | jq '{height, tip_hash}'
 sleep 65; curl -fsS https://app.proofofchess.com/v1/status | jq '{height, tip_hash}'
-curl -fsS https://mirror.proofofchess.com/v1/status | jq '{height, tip_hash}'
 ```
 
 Two calls, sixty-five seconds apart, is the whole difference between "the deploy

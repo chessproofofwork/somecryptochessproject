@@ -208,7 +208,7 @@ unlocked keypair (memory-only) stays in the tab. Play is intentionally route-onl
 Each view is a direct, bookmarkable URL (`lib/site.ts` maps the views to their
 hashes).
 
-Play, DEX and Bridge are gated by the shared wallet session. The strip under the
+DEX and Bridge are gated by the shared wallet session. The strip under the
 header says `Wallet active` with the shortened address and a Lock button, or
 `Wallet inactive` with a link to open the wallet. Locking there clears the key for
 the whole tab.
