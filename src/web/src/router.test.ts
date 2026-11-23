@@ -34,6 +34,26 @@ describe("ratings routes", () => {
   });
 });
 
+describe("token routes", () => {
+  it("round-trips a ticket, name or token id", () => {
+    const route = parseRoute("#/tokens/token-0960");
+    expect(route).toEqual({ name: "token", reference: "token-0960" });
+    expect(routeHash(route)).toBe("#/tokens/token-0960");
+    expect(parseRoute("#/tokens/0960")).toEqual({ name: "token", reference: "0960" });
+    expect(routeHash({ name: "token", reference: "Gold Coin" })).toBe(
+      "#/tokens/Gold%20Coin",
+    );
+  });
+
+  it("keeps a bare tokens path out of the router", () => {
+    expect(parseRoute("#/tokens")).toEqual({ name: "notFound", path: "/tokens" });
+  });
+
+  it("lights up the Overview tab", () => {
+    expect(activeSection({ name: "token", reference: "token-0960" })).toBe("dashboard");
+  });
+});
+
 describe("retired routes", () => {
   it("keeps the old live page out of the router", () => {
     // The in-progress page is gone; an old bookmark lands on the 404 view

@@ -524,6 +524,70 @@ class TokenView(ProtocolModel):
     minted: int = Field(ge=0)
 
 
+class TokenHolderView(ProtocolModel):
+    """One wallet on a token's holder list.
+
+    ``balance`` is spendable token value and ``immature`` is coinbase value that
+    has not reached ``coinbase_maturity`` yet. ``total`` is what the wallet holds
+    right now; sorting by it keeps a freshly paid miner visible before its reward
+    matures.
+    """
+
+    address: AddressText
+    balance: int = Field(ge=0)
+    immature: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+
+class TokenTransactionView(ProtocolModel):
+    """One confirmed transaction that touches a token.
+
+    The body is included so the explorer can describe what the transaction did
+    without a second request per row. ``sender`` serializes as ``from``, the same
+    wire spelling the transaction envelope uses.
+    """
+
+    txid: str
+    height: int = Field(ge=0)
+    block_hash: str
+    type: TxType
+    sender: AddressText = Field(validation_alias="from", serialization_alias="from")
+    fee: int = Field(ge=0)
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class TokenMinerView(ProtocolModel):
+    """One miner that has settled proofs for a token.
+
+    ``proofs`` counts blocks this address sealed that carried the token's
+    variant; ``wins`` counts games this address won. They differ when a miner
+    seals another seat's winning proof.
+    """
+
+    address: AddressText
+    proofs: int = Field(ge=0)
+    wins: int = Field(ge=0)
+
+
+class TokenOverview(ProtocolModel):
+    """``GET /v1/tokens/{reference}/overview``: a token and its chain activity.
+
+    ``initial_supply`` on ``token`` is the genesis/registration mint, while
+    ``token.minted`` is everything created since. ``holders`` and ``miners`` are
+    the top ten by amount and settled proofs, with ``holder_count`` reporting the
+    full holder set. ``transactions`` is the newest page of token-touching
+    transactions and ``transaction_total`` is the number the adopted chain holds.
+    """
+
+    network: str = Field(min_length=1)
+    token: TokenView
+    holders: tuple[TokenHolderView, ...] = ()
+    holder_count: int = Field(ge=0)
+    transactions: tuple[TokenTransactionView, ...] = ()
+    transaction_total: int = Field(ge=0)
+    miners: tuple[TokenMinerView, ...] = ()
+
+
 class TokenList(ProtocolModel):
     """``GET /v1/tokens``: every token registered on the adopted branch."""
 
@@ -570,7 +634,11 @@ __all__ = [
     "SyncReport",
     "TakeAccepted",
     "TakeView",
+    "TokenHolderView",
     "TokenList",
+    "TokenMinerView",
+    "TokenOverview",
+    "TokenTransactionView",
     "TokenView",
     "TransactionRecord",
     "TxAccepted",

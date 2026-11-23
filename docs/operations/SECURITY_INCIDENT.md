@@ -23,21 +23,17 @@ is the question every investigation starts with.
 | `:8646` relay | primary | `sccp-testnet-relay` currently admits `0.0.0.0/0`, though [`../setup/GCP_RESOURCE_SETUP.md`](../setup/GCP_RESOURCE_SETUP.md) says to leave it closed unless external miners connect; the browser reaches it through `/relay` on the app origin, not directly |
 | `:80`/`:443` | primary | public, Caddy → nginx → `/srv`, plus `/v1` and `/relay` proxies |
 | `:22` | primary | reachable from `0.0.0.0/0` via `sccp-testnet-ssh`; authentication is key-only |
-| `:80`/`:443` | mirror | public; GET only, everything else `405` |
-| `:8645` | mirror | loopback only, **no firewall rule**, and there must never be one |
-| `:22` | mirror | IAP (`35.235.240.0/20`), the primary's tag, and `sccp-edge-ssh-github` from `0.0.0.0/0`; plus the untagged `default-allow-ssh`, which no rule named `sccp-*` can close |
 
 ```bash
 gcloud compute firewall-rules list --project=chessproofofwork \
   --format='table(name,sourceRanges,allowed[].map().firewall_rule().list(),targetTags.list())'
 ssh sccp@proofofchess.com 'sudo ss -ltnp'
-ssh sccp@136.119.76.215 'sudo ss -ltnp'
 ```
 
 Do not filter that list by `name~sccp`: `default-allow-ssh` is untagged, so it
 applies to **every** instance in the network, and it does not match the filter.
 Deleting a rule named `sccp-*` and re-running a filtered list is how you convince
-yourself a port is closed while it is still answering on both VMs.
+yourself a port is closed while it is still answering on the host.
 
 Reachability and authentication are different questions, and this table is about
 the first one. Anyone can open a TCP connection to `:22` and read the banner;
@@ -53,8 +49,7 @@ the answer to those is patching, not keys; a world-open rule lets a stolen key b
 used from anywhere instead of only from a known range; and the scan traffic that
 fills `auth.log` is the noise that hides the one `Accepted` line you are hunting.
 
-
-Compare those three outputs against the table. Anything listening that is not in
+Compare those outputs against the table. Anything listening that is not in
 the table, and anything allowed that the table does not justify, is the start of
 the investigation — not the end of it.
 
@@ -92,7 +87,7 @@ docker ps --format '{{.Names}}\t{{.Ports}}' --filter 'publish=8645'
 ```
 
 **An unexpected process or container.** Compare against the compose files, which
-are the only legitimate source of services on either host:
+are the only legitimate source of services on the host:
 
 ```bash
 ssh sccp@proofofchess.com 'docker ps -a; docker images --format "{{.Repository}}:{{.Tag}} {{.CreatedAt}}" | head'
@@ -136,9 +131,9 @@ appeared, which is the fact that turns a suspicion into a timeline.
 The surfaces are small and the host is two vCPUs, so a flood does not need to be
 clever. In order, cheapest first:
 
-1. **Narrow the firewall** to the readers you know. A mirror and an app origin do
-   not need the whole internet for the API; the browser needs `/v1` through Caddy,
-   not `:8645` directly.
+1. **Narrow the firewall** to the readers you know. An app origin does not need
+   the whole internet for the API; the browser needs `/v1` through Caddy, not
+   `:8645` directly.
 2. **Turn the faucet off** on a node under load: restart it with `--no-faucet`
    (the flag lives in the compose command, so this is a compose edit and a
    restart). The faucet is the one endpoint that does work on request — the rest
@@ -177,8 +172,8 @@ height you checked at; it is the boundary of the investigation.
    [`FAUCET_AND_KEYS.md`](FAUCET_AND_KEYS.md).
 3. Restore the surfaces from the table at the top of this page, and nothing more.
    The temptation to keep the debugging rule is how this page gets used twice.
-4. Confirm the certificates still issue, the mirror still syncs, and the chain
-   still advances — the three checks that any restored host must pass.
+4. Confirm the certificates still issue and the chain still advances — the
+   checks any restored host must pass.
 
 ## Prevention
 
@@ -189,15 +184,13 @@ height you checked at; it is the boundary of the investigation.
    disposition: delete it, tighten it to the IAP range, or accept it on the record,
    knowing it exposes `:22` on every instance in the network.
 
-2. **Keep `:8645` on the mirror unpublished.** The mirror's whole design is "one
-   HTTP name, GET only"; a rule for its API undoes it.
-3. **No long-lived credentials.** The deploy uses the job's `GITHUB_TOKEN`; humans
+2. **No long-lived credentials.** The deploy uses the job's `GITHUB_TOKEN`; humans
    use IAP. Every personal token that exists is a key that cannot be rotated
    quickly, because nobody knows where it is used.
-4. **Turn on GCP audit logs you would want at 2 a.m.**: firewall changes, metadata
+3. **Turn on GCP audit logs you would want at 2 a.m.**: firewall changes, metadata
    changes, and instance stop/start. Without them the timeline starts when you
    noticed, not when it happened.
-5. **Say the testnet's security posture out loud.** Coins have no value, keys are
+4. **Say the testnet's security posture out loud.** Coins have no value, keys are
    published, and the passphrase is in the compose file. That is safe only as long
    as nobody points the faucet at something real — and it is the reason this whole
    folder exists before mainnet rather than after it.

@@ -470,38 +470,6 @@ docker compose logs --tail=50 miner-1 miner-2 | grep -i timeout
 curl -fsS http://127.0.0.1:8645/v1/status | jq '.mempool'
 ```
 
-## The read-only mirror
-
-A second VM (`deploy/edge/`) runs a node that pull-syncs this chain and serves it
-over HTTPS with GET-only access. It is a separate Compose project:
-
-```bash
-curl -fsS "https://mirror.example.com/v1/status" | jq '{height, tip_hash, peers}'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://mirror.example.com/v1/tx" -d '{}'
-```
-
-`405` is correct: the edge refuses every write by design. A mirror whose `height`
-stops advancing is failing to reach `SCCP_PRIMARY_URL`; its node log names the
-peer and the reason. The mirror is disposable — delete `node-data` and let one
-sync rebuild it.
-
-`.github/workflows/deploy-edge.yml` redeploys the mirror after every successful
-`deploy-testnet-miners` run, but only when `vars.EDGE_DEPLOY_HOST` is set: with
-no variable the mirror is simply absent, and the primary's deploy gate never
-waits on it. That workflow also repairs the case this stack exists for: the
-primary's redeploy resets its chain, so the workflow compares block 1 and, when
-the mirror is holding the old chain, deletes the node's data (never the
-certificate) and lets one sync rebuild it. CI still does not create the VM, its
-static address, its firewall rules or its `A` record — those are the `gcloud`
-block in [`deploy/edge/README.md`](../../deploy/edge/README.md) — so a missing
-mirror VM is expected on a stack whose owner never ran it. When the workflow is
-green it has already checked the mirror's genesis hash against the primary's and
-waited for its height to reach the primary's; a mirror that is green there and
-stale later is up but not polling, which is the log's story.
-
-The two extra miner seats are children of the `traffic` container on the primary
-host; the mirror holds no miners and no relay.
-
 ## Engine crashes
 
 The miners use `/usr/games/stockfish` from the image. A crash normally appears as

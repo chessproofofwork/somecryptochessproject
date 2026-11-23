@@ -41,9 +41,9 @@ proposal against impact instead of curiosity.
 ## The order of operations
 
 1. **Stop the bleeding.** Whatever makes the site lie or makes the chain
-   unreachable goes first: take the mirror out of DNS, roll the bundle back,
-   restart the node. Mitigation is allowed to be crude, and it is allowed to lose
-   data that a redeploy can rebuild — but never the `stack` volume.
+   unreachable goes first: roll the bundle back, restart the node. Mitigation is
+   allowed to be crude, and it is allowed to lose data that a redeploy can
+   rebuild — but never the `stack` volume.
 2. **Preserve evidence before you fix the cause.** Copy the logs, the container
    states, the tip hash and the disk report somewhere that survives the restart:
    `docker compose logs --no-color > /tmp/incident-$(date +%s).log`, `docker
@@ -72,8 +72,8 @@ approval as one. Until there is a chain-preserving path, the honest options at a
 bad deploy are fix-forward or accept the reset.
 
 **Reset or restore?** A reset is minutes and destroys history. A restore is an
-hour and depends on a copy existing — which, today, means the mirror or a manual
-backup. On a network anybody uses, history is the product; see
+hour and depends on a copy existing — which, today, means a manual backup. On a
+network anybody uses, history is the product; see
 [`DATA_LOSS.md`](DATA_LOSS.md) before reaching for `-v`.
 
 **Restore to an older tip?** Then the network will reorganise away the newer
@@ -95,8 +95,8 @@ Nobody outside the box needs a cause. They need: what is affected, what still
 works, and when the next update is.
 
 ```text
-14:05 UTC — investigating: the public API is not answering. The mirror is still
-serving reads as of height 4021. Next update 14:35 or sooner.
+14:05 UTC — investigating: the public API is not answering; chain height is
+unknown. Next update 14:35 or sooner.
 14:31 UTC — mitigated: the API is back and the chain is advancing. Reads that
 failed between 13:58 and 14:29 may have been lost; we are checking. Next update
 after verification.

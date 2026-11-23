@@ -2,7 +2,7 @@
  * The wallet's state, visible on every page.
  *
  * It is deliberately a strip under the header rather than a chip in the crowded
- * top-right: active/inactive is the thing a person needs before opening Play,
+ * top-right: active/inactive is the thing a person needs before opening the
  * DEX or Bridge, and an address plus a Lock button has to stay readable on a
  * phone. Locking here clears the in-memory key for the whole tab.
  */
@@ -38,7 +38,7 @@ export function WalletStatusBar(): ReactNode {
           <Text variant="bodySmall" style={{ color: colour }} numberOfLines={1}>
             {active && session !== null
               ? `${shortAddress(session.record.address)} · ${session.record.network}`
-              : "unlock the wallet to use Play, DEX or Bridge"}
+              : "unlock the wallet to use DEX or Bridge"}
           </Text>
         </View>
         {active ? (
@@ -58,7 +58,7 @@ export function WalletStatusBar(): ReactNode {
 const styles = StyleSheet.create({
   bar: {
     // Full width of the header: the tint is what tells a reader, at a glance,
-    // whether Play/DEX/Bridge will work, so it spans the whole strip instead of
+    // whether the DEX or bridge will work, so it spans the whole strip instead of
     // sitting in the page-width column and stopping short of the edges. The
     // content keeps the page's 1080px rhythm inside it.
     marginTop: 4,

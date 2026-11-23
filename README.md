@@ -782,11 +782,9 @@ The app documents itself: `/openapi.json` is the generated schema, `/docs` is
 Swagger UI grouped into node, chain, ledger, chess and DeFi, and `/redoc` is the
 same schema as a single scrollable reference. On the testnet the two pages are
 <http://app.proofofchess.com:8645/docs> and
-<http://app.proofofchess.com:8645/redoc>; the read-only mirror serves them over
-TLS at <https://mirror.proofofchess.com/docs> and
-<https://mirror.proofofchess.com/redoc>.
+<http://app.proofofchess.com:8645/redoc>.
 `https://app.proofofchess.com/docs` is the explorer, because nginx proxies only
-`/v1/` to the node. All three pages load their assets from a CDN, so a browser
+`/v1/` to the node. Both pages load their assets from a CDN, so a browser
 without internet access sees a blank page; the JSON needs nothing.
 
 `sccp.miner.engine_miner.EngineMiner` is the unattended half: one `run_once()`

@@ -2816,6 +2816,36 @@
         ],
         "type": "object"
       },
+      "TokenHolderView": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "balance": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "immature": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address",
+          "balance",
+          "immature",
+          "total"
+        ],
+        "type": "object"
+      },
       "TokenList": {
         "additionalProperties": false,
         "properties": {
@@ -2833,6 +2863,120 @@
         },
         "required": [
           "network"
+        ],
+        "type": "object"
+      },
+      "TokenMinerView": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "proofs": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "wins": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address",
+          "proofs",
+          "wins"
+        ],
+        "type": "object"
+      },
+      "TokenOverview": {
+        "additionalProperties": false,
+        "properties": {
+          "holder_count": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "holders": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TokenHolderView"
+            },
+            "type": "array"
+          },
+          "miners": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TokenMinerView"
+            },
+            "type": "array"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "token": {
+            "$ref": "#/components/schemas/TokenView"
+          },
+          "transaction_total": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "transactions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TokenTransactionView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "network",
+          "token",
+          "holder_count",
+          "transaction_total"
+        ],
+        "type": "object"
+      },
+      "TokenTransactionView": {
+        "additionalProperties": false,
+        "properties": {
+          "block_hash": {
+            "type": "string"
+          },
+          "fee": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "from": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "txid": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TxType"
+          }
+        },
+        "required": [
+          "txid",
+          "height",
+          "block_hash",
+          "type",
+          "from",
+          "fee"
         ],
         "type": "object"
       },
@@ -4447,6 +4591,51 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TokenView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tokens/{reference}/overview": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "transaction_limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenOverview"
                 }
               }
             }

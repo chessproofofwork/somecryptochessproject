@@ -100,6 +100,52 @@ export interface TokenList {
   tokens: TokenView[];
 }
 
+/** One wallet on a token's holder list (`GET /v1/tokens/{reference}/overview`). */
+export interface TokenHolderView {
+  address: string;
+  /** Spendable base units. */
+  balance: number;
+  /** Coinbase value that has not matured yet, in base units. */
+  immature: number;
+  /** `balance + immature`. */
+  total: number;
+}
+
+/** One confirmed transaction that created, moved, traded or locked a token. */
+export interface TokenTransactionView {
+  txid: string;
+  height: number;
+  block_hash: string;
+  type: string;
+  /** Wire spelling of the transaction sender. */
+  from: string;
+  fee: number;
+  payload: Record<string, unknown>;
+}
+
+/** One miner whose blocks carried a token's proofs. */
+export interface TokenMinerView {
+  address: string;
+  /** Blocks this miner sealed that carried the token's variant. */
+  proofs: number;
+  /** Games this address won in the token's variant. */
+  wins: number;
+}
+
+/**
+ * `GET /v1/tokens/{reference}/overview`: a token plus the chain activity the
+ * explorer's token page shows. Holders and miners are the node's top ten.
+ */
+export interface TokenOverview {
+  network: string;
+  token: TokenView;
+  holders: TokenHolderView[];
+  holder_count: number;
+  transactions: TokenTransactionView[];
+  transaction_total: number;
+  miners: TokenMinerView[];
+}
+
 export interface MempoolStatus {
   transactions: number;
   proofs: number;

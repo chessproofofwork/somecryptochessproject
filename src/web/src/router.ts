@@ -15,6 +15,7 @@ export type Route =
   | { name: "game"; gameHash: string }
   | { name: "ratings" }
   | { name: "miner"; address: string }
+  | { name: "token"; reference: string }
   | { name: "account"; address: string }
   | { name: "wallet" }
   | { name: "play" }
@@ -52,6 +53,10 @@ export function parseRoute(hash: string): Route {
       return { name: "ratings" };
     case "miners":
       return second === undefined ? { name: "notFound", path } : { name: "miner", address: decode(second) };
+    case "tokens":
+      return second === undefined
+        ? { name: "notFound", path }
+        : { name: "token", reference: decode(second) };
     // The table has its own page now. The old wallet tab URL is an alias, so a
     // bookmark or an old link does not break.
     case "play":
@@ -133,6 +138,8 @@ export function routeHash(route: Route): string {
       return "#/ratings";
     case "miner":
       return `#/miners/${encodeURIComponent(route.address)}`;
+    case "token":
+      return tokenHash(route.reference);
     case "account":
       return `#/accounts/${encodeURIComponent(route.address)}`;
     case "wallet":
@@ -164,6 +171,11 @@ export function routeHash(route: Route): string {
     case "notFound":
       return `#/${route.path}`;
   }
+}
+
+/** The hash for a token page, by any reference `/v1/tokens/{reference}` accepts. */
+export function tokenHash(reference: string): string {
+  return `#/tokens/${encodeURIComponent(reference)}`;
 }
 
 /** Navigate to `hash`, pushing a history entry the back button can undo. */
@@ -221,6 +233,8 @@ export function activeSection(route: Route): Section {
     case "ratings":
     case "miner":
       return "ratings";
+    case "token":
+      return "dashboard";
     case "account":
       return "account";
     case "wallet":

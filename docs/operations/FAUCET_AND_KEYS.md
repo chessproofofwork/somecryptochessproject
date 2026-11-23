@@ -26,8 +26,7 @@ client_grants          5         grants a client gets in the window
 ```
 
 
-`404` with `the faucet is disabled` means the node was started with `--no-faucet`
-— the mirror is supposed to be in that state, and the primary is not.
+`404` with `the faucet is disabled` means the node was started with `--no-faucet`.
 
 ## Is it empty, or is it limited?
 
@@ -155,9 +154,9 @@ old credential once and watch it fail, then run the workflow and watch it pass.
 
 ## Prevention
 
-1. Keep SSH rules scoped: `sccp-edge-ssh-from-primary`, IAP for humans, and one
-   GitHub rule as narrow as the runner's egress allows. Audit the list monthly —
-   it is one command, and it must not be filtered to `name~sccp`, because
+1. Keep SSH rules scoped: IAP for operators, and one GitHub rule as narrow as the
+   runner's egress allows for the primary deploy. Audit the list monthly — it is
+   one command, and it must not be filtered to `name~sccp`, because
    `default-allow-ssh` is untagged and matches nothing with that name.
 
 2. Watch the faucet balance and the grant rate. A drop with no new recipient

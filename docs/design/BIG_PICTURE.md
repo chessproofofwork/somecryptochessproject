@@ -1,6 +1,6 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status (tree at 0.39.0).** Implemented except for the optional `wETH`
+> **Status (tree at 0.40.0).** Implemented except for the optional `wETH`
 > federation and the items marked **not built**. The browser wallet (section 4),
 > variant assets (section 5), the native DEX (section 6) and the trustless
 > ETH<->SCCP HTLC bridge (section 7) are in the tree; the bridge contract is
@@ -41,7 +41,7 @@ That gives four deliverables, in dependency order:
 | Native DEX | pools, LP positions and swaps between on-chain assets | new transaction types, `pools` in state | 0.24.0, shipped |
 | ETH<->ZQWX bridge | HTLC atomic swaps; no custodian, no wrapped peg | new transaction types, `htlcs` in state, one Ethereum contract | 0.24.0, shipped |
 
-All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.39.0. The
+All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.40.0. The
 `sccp/v2` fork this document assumed did not happen: `PROTOCOL_VERSION` is still
 1, the domains stayed `sccp/v1/...`, and `PROTOCOL.md` documents the new
 transaction types as part of v1 (section 5.1).
@@ -476,9 +476,10 @@ Rules that follow from it:
   how the hosted testnet runs two standard and two Chess960 miners from one
   compose file (`docker-compose.yml`).
 - The explorer names the variant on every games row, on the game detail page and
-  in the account view, and `GET /v1/games`, `/v1/blocks` and `/v1/params` all
-  carry it, which is what `sccp chain account`, `sccp chain status` and the web
-  client read.
+  in the account view; each game and miner page links to `#/tokens/<reference>`,
+  which shows the token's issuance, top holders, token transactions and proof
+  miners. `GET /v1/games`, `/v1/blocks`, `/v1/params` and
+  `/v1/tokens/{reference}/overview` carry what the client reads.
 - `scripts/play_miner.py` and `scripts/export_block_games.py` were **not**
   extended: neither takes a variant, so a locally played or exported game is
   standard chess. Both are developer conveniences, and the gap is noted in

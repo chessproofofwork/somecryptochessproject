@@ -77,7 +77,6 @@ what to do now, what to do afterwards, and how to prove the fix.
 | [`DATA_LOSS.md`](operations/DATA_LOSS.md) | a volume, a database, a key, or the disk |
 | [`TLS_AND_DNS.md`](operations/TLS_AND_DNS.md) | certificates, ACME, records, port 80 |
 | [`DEPLOY_FAILURES.md`](operations/DEPLOY_FAILURES.md) | a red deploy, or a green one that changed nothing |
-| [`MIRROR_OUTAGE.md`](operations/MIRROR_OUTAGE.md) | the read-only mirror is stale or down |
 | [`FAUCET_AND_KEYS.md`](operations/FAUCET_AND_KEYS.md) | the faucet is dry, a key is missing or leaked |
 | [`SECURITY_INCIDENT.md`](operations/SECURITY_INCIDENT.md) | an exposed port, abuse, a compromised host or credential |
 

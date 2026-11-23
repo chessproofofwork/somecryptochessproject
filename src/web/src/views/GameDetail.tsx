@@ -26,11 +26,14 @@ import {
   StatusPill,
 } from "../components/Chrome";
 import { formatInteger, formatTimeControl, shortAddress } from "../lib/format";
-import { variantLabel } from "../lib/assets";
+import { tokenForVariant, variantLabel } from "../lib/assets";
+import { tokenHash } from "../router";
 import { useResource } from "../useResource";
+import { useTokenRegistry } from "../useTokenRegistry";
 import type { GameView } from "../types";
 
 export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
+  const registry = useTokenRegistry();
   const game = useResource((signal) => fetchGame(gameHash, signal), [gameHash], { pollMs: 10000 });
   const matchId = game.data?.match_id ?? undefined;
   const transcript = useResource(
@@ -73,6 +76,7 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
   const certificate = seen?.certificate;
   const result = seen?.result;
   const pgn = seen?.pgn ?? proofPgn.data?.pgn;
+  const token = tokenForVariant(registry.tokens, view.variant);
 
   return (
     <>
@@ -90,6 +94,19 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
       <Section title="Settlement" subtitle="where the proof stands on this node">
         <KeyValue label="Variant" mono>
           {`${variantLabel(view.variant)} · ${view.variant}`}
+        </KeyValue>
+        <KeyValue label="Token">
+          {token !== undefined && !token.native ? (
+            <Link href={tokenHash(token.variant)}>
+              {token.symbol} · {token.name}
+            </Link>
+          ) : view.variant === "standard" ? (
+            "native ZQWX"
+          ) : (
+            <Link href={tokenHash(view.variant)} mono>
+              {view.variant}
+            </Link>
+          )}
         </KeyValue>
         <KeyValue label="Winner">
           {view.winner === null ? (

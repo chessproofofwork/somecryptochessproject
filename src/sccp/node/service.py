@@ -29,7 +29,7 @@ from sccp.chain.block import block_hash
 from sccp.chain.chain import Chain, StoredBlock
 from sccp.chain.genesis import load_genesis
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import HtlcRecord, ProofRecord, TokenRecord
+from sccp.chain.state import HtlcRecord, ProofRecord, State, TokenRecord
 from sccp.chain.storage import Storage, restore_chain
 from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
@@ -85,7 +85,11 @@ from sccp.node.models import (
     SyncReport,
     TakeAccepted,
     TakeView,
+    TokenHolderView,
     TokenList,
+    TokenMinerView,
+    TokenOverview,
+    TokenTransactionView,
     TokenView,
     TransactionRecord,
     TxAccepted,
@@ -103,7 +107,7 @@ from sccp.node.p2p import (
     plan_sync,
     verify_envelope,
 )
-from sccp.protocol.models import Beacon, Block, Transaction, Transcript, WinProof
+from sccp.protocol.models import Beacon, Block, Transaction, Transcript, TxType, WinProof
 from sccp.ratings import (
     DEFAULT_DEVIATION,
     DEFAULT_RATING,
@@ -264,6 +268,40 @@ def _settled_summary(record: ProofRecord, proof: WinProof | None) -> GameSummary
         height=record.height,
         low_ply=proof.low_ply,
     )
+
+
+def _trade_asset(payload: Mapping[str, object], key: str) -> str:
+    """Read one DEX pool side, where an omitted key means native ZQWX."""
+    value = payload.get(key)
+    return value if isinstance(value, str) else ""
+
+
+def _token_transaction_matches(tx: Transaction, token: TokenRecord, state: State) -> bool:
+    """Whether ``tx`` creates, moves, trades or locks the token's asset.
+
+    Registration is matched by ticket (or legacy variant name), never by display
+    name or ticker: those are shared metadata. Liquidity and swap rows carry only
+    a pool id, so the pool's immutable pair decides which tokens they touched.
+    """
+    asset = token.token_id
+    payload = tx.payload
+    if tx.type == TxType.REGISTER_TOKEN:
+        if token.ticket is not None:
+            return payload.get("ticket") == token.ticket
+        return payload.get("variant") == token.name
+    if tx.type in (TxType.TRANSFER, TxType.HTLC_LOCK):
+        return payload.get("asset") == asset
+    if tx.type == TxType.CREATE_POOL:
+        return asset in (_trade_asset(payload, "asset_a"), _trade_asset(payload, "asset_b"))
+    if tx.type in (TxType.ADD_LIQUIDITY, TxType.REMOVE_LIQUIDITY, TxType.SWAP):
+        pool_id = payload.get("pool_id")
+        pool = state.pools.get(pool_id) if isinstance(pool_id, str) else None
+        return pool is not None and asset in (pool.asset_a, pool.asset_b)
+    if tx.type in (TxType.HTLC_CLAIM, TxType.HTLC_REFUND):
+        htlc_id = payload.get("htlc_id")
+        record = state.htlcs.get(htlc_id) if isinstance(htlc_id, str) else None
+        return record is not None and record.asset == asset
+    return False
 
 
 @dataclass(slots=True)
@@ -723,8 +761,8 @@ class NodeService:
             tokens=tuple(self._token_view(name) for name in sorted(self.chain.state.tokens)),
         )
 
-    def token(self, reference: str) -> TokenView:
-        """One token by ticket, token id, internal variant name, name or ticker.
+    def _token_record(self, reference: str) -> TokenRecord:
+        """Resolve a token reference to its consensus record.
 
         The registration ticket and the network-assigned token id are unique by
         construction, which is what makes the manual lookup in a wallet
@@ -735,26 +773,108 @@ class NodeService:
         """
         registry = self.chain.state.tokens
         if reference in registry:
-            return self._token_view(reference)
+            return registry[reference]
         record = self.chain.state.token_by_ticket(reference)
         if record is not None:
-            return self._token_view(record.name)
+            return record
         record = self.chain.state.token_by_id(reference)
         if record is not None:
-            return self._token_view(record.name)
+            return record
         matches = [
-            name
-            for name, token in registry.items()
+            token
+            for token in registry.values()
             if token.variant.symbol == reference or token.variant.display_name == reference
         ]
         if len(matches) == 1:
-            return self._token_view(matches[0])
+            return matches[0]
         if len(matches) > 1:
             raise NotFoundError(
                 f"token reference {reference!r} is ambiguous; "
                 "use a ticket, token id or the internal variant name"
             )
         raise NotFoundError(f"unknown token {reference!r}")
+
+    def token(self, reference: str) -> TokenView:
+        """One token by ticket, token id, internal variant name, name or ticker."""
+        return self._token_view(self._token_record(reference).name)
+
+    def token_overview(self, reference: str, *, transaction_limit: int = 50) -> TokenOverview:
+        """One token, its largest holders, newest transactions and top miners.
+
+        Holders are read from the adopted state, including immature coinbase
+        value because it is already owned. Transactions are scanned from block
+        bodies on the adopted branch; a node that has snapshotted bodies away
+        reports the chain it still holds. Miners are ranked by the number of
+        that token's proofs their blocks carried, then by games they won.
+        """
+        record = self._token_record(reference)
+        view = self._token_view(record.name)
+        asset = view.asset
+        state = self.chain.state
+
+        all_holders: list[TokenHolderView] = []
+        for address, account in state.accounts.items():
+            balance = account.assets.get(asset, 0)
+            immature = account.immature_assets.get(asset, 0)
+            total = balance + immature
+            if total > 0:
+                all_holders.append(
+                    TokenHolderView(
+                        address=address,
+                        balance=balance,
+                        immature=immature,
+                        total=total,
+                    )
+                )
+        all_holders.sort(key=lambda holder: (-holder.total, holder.address))
+
+        touches: list[TokenTransactionView] = []
+        for stored in reversed(self.chain.main_chain()):
+            for tx in reversed(stored.block.transactions):
+                if not _token_transaction_matches(tx, record, state):
+                    continue
+                touches.append(
+                    TokenTransactionView.model_validate(
+                        {
+                            "txid": txid(tx),
+                            "height": stored.height,
+                            "block_hash": stored.block_hash,
+                            "type": tx.type,
+                            "from": tx.sender,
+                            "fee": tx.fee,
+                            "payload": dict(tx.payload),
+                        }
+                    )
+                )
+        transaction_total = len(touches)
+
+        proof_counts: dict[str, int] = {}
+        win_counts: dict[str, int] = {}
+        for proof in state.proofs.values():
+            if proof.variant != record.name:
+                continue
+            miner = proof.miner or proof.winner
+            proof_counts[miner] = proof_counts.get(miner, 0) + 1
+            win_counts[proof.winner] = win_counts.get(proof.winner, 0) + 1
+        miners = [
+            TokenMinerView(
+                address=address,
+                proofs=proof_counts.get(address, 0),
+                wins=win_counts.get(address, 0),
+            )
+            for address in set(proof_counts) | set(win_counts)
+        ]
+        miners.sort(key=lambda miner: (-miner.proofs, -miner.wins, miner.address))
+
+        return TokenOverview(
+            network=self.params.network_id,
+            token=view,
+            holders=tuple(all_holders[:10]),
+            holder_count=len(all_holders),
+            transactions=tuple(touches[:transaction_limit]),
+            transaction_total=transaction_total,
+            miners=tuple(miners[:10]),
+        )
 
     def epoch(self, epoch: int) -> EpochView:
         """The beacon, roster and reveals the chain recorded for ``epoch``.

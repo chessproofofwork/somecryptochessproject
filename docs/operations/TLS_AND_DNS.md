@@ -3,15 +3,11 @@
 | | |
 | --- | --- |
 | Severity | SEV3 — the chain is fine, nobody can reach it in a browser |
-| Blast radius | one name per instance: `app`/apex on the primary, `mirror` on the edge |
+| Blast radius | `proofofchess.com` and `app.proofofchess.com` on the primary |
 | First move | `openssl s_client` — does the certificate exist, and does its expiry tell the story |
 
-Two Caddy instances hold the certificates and neither shares a volume with the
-other: `sccp-explorer` on the primary terminates `proofofchess.com` and
-`app.proofofchess.com`, and `sccp-edge` on the mirror terminates
-`mirror.proofofchess.com`. They fail independently, which is why the first
-question is *which name* is broken — a browser complaint about the mirror is not
-an emergency, and the same complaint about the app is.
+Caddy in `sccp-explorer` terminates both names: `proofofchess.com` and
+`app.proofofchess.com`. The first question is *which name* is broken.
 
 ## How to tell
 
@@ -44,15 +40,13 @@ ssh sccp@proofofchess.com 'curl -fsS http://127.0.0.1:2019/config/ >/dev/null &&
 ```bash
 dig +short app.proofofchess.com
 dig +short proofofchess.com
-dig +short mirror.proofofchess.com
 gcloud compute addresses list --project=chessproofofwork --format='table(name,address,status)'
 ```
 
 An `A` record pointing at an old IP outlives a rebuilt VM and produces a browser
-error that has nothing to do with certificates. The reserved addresses are
-`STATIC_IP` for the primary and `sccp-edge-ip` for the mirror; if the record and
-the reserved address disagree, fix the record in Cloud DNS and wait for the TTL
-(60 s on the mirror's record, so this is cheap).
+error that has nothing to do with certificates. The reserved address is
+`STATIC_IP`; if the record and the reserved address disagree, fix the record in
+Cloud DNS and wait for the TTL.
 
 **2. DNS is right and port 80 is not reachable.** HTTP-01 is the only challenge in
 use — there is no DNS provider token in the Caddyfile — so port 80 must be open
@@ -64,10 +58,10 @@ gcloud compute firewall-rules list --project=chessproofofwork \
 nc -zv app.proofofchess.com 80
 ```
 
-A missing `tcp:80` in `sccp-testnet-explorer-web` (or `sccp-edge-web` on the
-mirror) fails silently for 60 days and then presents as an expired certificate.
-It is the most common way to break TLS without touching TLS. If the rule exists
-and the port is closed, something else owns `:80` on the host:
+A missing `tcp:80` in `sccp-testnet-explorer-web` fails silently for 60 days and
+then presents as an expired certificate. It is the most common way to break TLS
+without touching TLS. If the rule exists and the port is closed, something else
+owns `:80` on the host:
 
 ```bash
 ssh sccp@proofofchess.com 'sudo ss -ltnp | grep -E ":80|:443"'
@@ -102,9 +96,8 @@ volume (it is still there) and wait, or to move the name to a staging CA
 temporarily — not to keep hammering it.
 
 **5. The certificate volume is gone.** `sccp-explorer_caddy_data` holds the
-account key, the certificate and its private key; `sccp-edge_caddy_data` does the
-same on the mirror. A `down -v` on either Compose project deletes it, and so does
-recreating the host:
+account key, the certificate and its private key. A `down -v` on that Compose
+project deletes it, and so does recreating the host:
 
 ```bash
 ssh sccp@proofofchess.com 'docker volume ls --filter name=caddy'
@@ -115,33 +108,16 @@ the last issue, expensive if it has not. Check the log line before you conclude
 that the situation requires action; if it says `certificate obtained
 successfully`, the outage is already over and the page is stale.
 
-## The mirror is not the primary
-
-`deploy/edge/Caddyfile` allows `GET` only and answers every other method with
-`405`, so a `405` from the mirror is the design working, not a fault:
-
-```bash
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://mirror.proofofchess.com/v1/tx -d '{}'
-```
-
-That distinction matters during an incident: if the mirror's `405` arrives over a
-valid certificate, the mirror's TLS and proxy are healthy and any remaining problem
-is its *data*. If `curl` fails with `(35)` on the mirror, it is this page's
-problem on the smaller host — and because the mirror is disposable, the cheapest
-fix there is usually to stop it, rebuild it, and let it resync rather than debug
-one `e2-micro`'s ACME history. See [`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md).
-
 ## Verifying a fix
 
 ```bash
-for host in proofofchess.com app.proofofchess.com mirror.proofofchess.com; do
+for host in proofofchess.com app.proofofchess.com; do
   printf '%-28s ' "$host"
   openssl s_client -connect "$host:443" -servername "$host" </dev/null 2>/dev/null \
     | openssl x509 -noout -enddate
 done
 curl -fsSI https://app.proofofchess.com/ | head -1
 curl -fsSI https://proofofchess.com/ | head -1
-curl -fsS https://mirror.proofofchess.com/v1/status | jq -r .height
 ```
 
 A certificate more than 30 days out means renewal is now somebody else's problem
@@ -170,11 +146,8 @@ renewal is broken and whose failure is still 30 days away.
 
 1. An alert on days-to-expiry per name, at 21 days. It is one `openssl` call and it
    catches every case on this page that does not page for a different reason.
-2. Keep `tcp:80` open in `sccp-testnet-explorer-web` and `sccp-edge-web`. Write the
-   reason in the rule's description, because the rule looks like an oversight.
-3. Keep the two certificate volumes. They are the only state the web deployment
-   has; everything else in `/srv` is replaceable by a deploy.
-4. Do not share a Caddy instance between the primary and the mirror, however
-   convenient it looks: the second instance exists so that a certificate or proxy
-   fault cannot take both names down at once.
+2. Keep `tcp:80` open in `sccp-testnet-explorer-web`. Write the reason in the
+   rule's description, because the rule looks like an oversight.
+3. Keep the certificate volume. It is the only state the web deployment has;
+   everything else in `/srv` is replaceable by a deploy.
 

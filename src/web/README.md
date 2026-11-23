@@ -180,6 +180,7 @@ hash routes on `https://app.proofofchess.com`, served by the same bundle.
 | `#/games/<game_hash>` | settlement state, the match certificate, the PGN |
 | `#/ratings` | miner Elo: the top ten, their record and deviation, and the distribution |
 | `#/miners/<address>` | one miner: current rating, a line chart per epoch, its games |
+| `#/tokens/<reference>` | one token: record and off-chain description, issuance, top holders, token transactions, top miners (unapproved tokens get a generic warning) |
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
 | `#/wallet/play` | legacy alias for `#/play`; the table now has its own page |
 | `#/play` | a seat in a real match, signed with the unlocked wallet key; standard or Chess960 |
@@ -207,7 +208,7 @@ unlocked keypair (memory-only) stays in the tab. Play is intentionally route-onl
 Each view is a direct, bookmarkable URL (`lib/site.ts` maps the views to their
 hashes).
 
-Play, DEX and Bridge are gated by the shared wallet session. The strip under the
+DEX and Bridge are gated by the shared wallet session. The strip under the
 header says `Wallet active` with the shortened address and a Lock button, or
 `Wallet inactive` with a link to open the wallet. Locking there clears the key for
 the whole tab.
@@ -452,7 +453,7 @@ src/
 ├── App.tsx            # theme and node providers, header, routes, lazy-loaded Play
 ├── components/        # Chrome (layout, offline banner), block and game tables
 ├── views/             # Dashboard, Blocks, BlockDetail, Games, GameDetail,
-│                      # AccountView, Play, NotFound
+│                      # TokenPage, AccountView, Play, NotFound
 ├── lib/               # canonical JSON, hashing, bech32, keys, protocol ports,
 │                      # transactions (tx), certificates, proofs, verifier,
 │                      # relay client, formatters, generated vectors

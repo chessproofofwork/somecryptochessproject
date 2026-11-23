@@ -12,16 +12,9 @@ demo; this stack exercises the real multi-process, HTTP and SQLite path. The
 merge-to-deploy workflow and its monthly cost are in
 [`docs/setup/TESTNET_DEPLOYMENT.md`](../docs/setup/TESTNET_DEPLOYMENT.md).
 
-A second, `e2-micro` VM can host a public read-only mirror of the chain; that
-deployment lives in [`edge/`](edge/README.md) and is a separate Compose project on
-purpose. `.github/workflows/deploy-edge.yml` redeploys it after the primary's
-deploy, from the same image tag, when `EDGE_DEPLOY_HOST` is configured; without
-that variable there is no mirror and nothing waits for one.
-
 This page is about building the stack. When it is already running and something is
 wrong with it, [`docs/operations/`](../docs/operations/README.md) is the triage
 index: severity, the first five minutes, and a runbook per failure.
-
 
 The current hosted deployment is at
 `http://app.proofofchess.com:8645`; the commands below use

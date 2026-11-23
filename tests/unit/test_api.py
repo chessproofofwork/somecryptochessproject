@@ -271,6 +271,7 @@ def test_token_lookup_uses_the_ticket_or_token_id_not_the_display_name() -> None
         by_ticket = client.get("/v1/tokens/0042")
         by_token_id = client.get(f"/v1/tokens/{approved.token_id}")
         hidden_lookup = client.get("/v1/tokens/0043")
+        hidden_overview = client.get("/v1/tokens/0043/overview")
         by_name = client.get("/v1/tokens/Gold Coin")
         by_ticker = client.get("/v1/tokens/GOLD")
     service.close()
@@ -297,6 +298,11 @@ def test_token_lookup_uses_the_ticket_or_token_id_not_the_display_name() -> None
     # decides whether to keep it in its own registry.
     assert hidden_lookup.status_code == 200
     assert hidden_lookup.json()["approved"] is False
+    # The explorer page is available even when the node has not approved the
+    # token; the page itself supplies a generic preapproval warning.
+    assert hidden_overview.status_code == 200
+    assert hidden_overview.json()["token"]["approved"] is False
+    assert hidden_overview.json()["token"]["ticket"] == "0043"
 
 
 def test_token_views_accept_a_16_hex_registration_ticket() -> None:
@@ -315,6 +321,99 @@ def test_token_views_accept_a_16_hex_registration_ticket() -> None:
     assert by_ticket.status_code == 200
     assert by_ticket.json()["ticket"] == ticket
     assert by_ticket.json()["token_id"] == record.token_id
+
+
+def test_token_overview_reports_holders_transactions_and_miners(
+    devnet_chain: Any,
+    mine_block: Any,
+    protocol_accounts: dict[str, Any],
+    miner_keys: dict[str, Any],
+) -> None:
+    """The token page's one request is derived from state and adopted blocks."""
+    chain = devnet_chain
+    params = chain.params
+    faucet = faucet_keypair("devnet")
+    alice = protocol_accounts["alice"]
+    carol = protocol_accounts["carol"]
+
+    pool = Mempool(params=params, tip_state=chain.state, book=chain.book)
+    registration = WalletService(params, pool.projection).build_register_token(
+        faucet,
+        ticket="0042",
+        ruleset="standard",
+        symbol="GOLD",
+        display_name="Gold Coin",
+        subsidy=50 * 100_000_000,
+        initial_supply=1_000,
+        min_plies=1,
+    )
+    pool.add_transaction(registration)
+    mine_block(chain, miner_keys[carol.address], mempool=pool)
+    token = chain.state.tokens["token-0042"]
+    asset = token.token_id
+
+    pool = Mempool(params=params, tip_state=chain.state, book=chain.book)
+    transfer = WalletService(params, pool.projection).build_transfer(
+        faucet, alice.address, 400, asset=asset
+    )
+    pool.add_transaction(transfer)
+    mine_block(chain, miner_keys[carol.address], mempool=pool)
+
+    # Proofs are consensus state; the node projects the miner ranking from them.
+    chain.state.proofs["11" * 32] = ProofRecord(
+        proof_id="proof-1",
+        game_hash="11" * 32,
+        height=chain.height,
+        winner=alice.address,
+        miner=carol.address,
+        variant=token.name,
+    )
+    chain.state.proofs["22" * 32] = ProofRecord(
+        proof_id="proof-2",
+        game_hash="22" * 32,
+        height=chain.height,
+        winner=carol.address,
+        miner=carol.address,
+        variant=token.name,
+    )
+
+    service = NodeService(
+        params=params,
+        chain=chain,
+        mempool=Mempool(params=params, tip_state=chain.state, book=chain.book),
+    )
+    with _client(service) as client:
+        overview = client.get("/v1/tokens/0042/overview").json()
+        newest = client.get("/v1/tokens/0042/overview?transaction_limit=1").json()
+        missing = client.get("/v1/tokens/nope/overview")
+    service.close()
+
+    assert overview["network"] == "devnet"
+    assert overview["token"]["display_name"] == "Gold Coin"
+    assert overview["token"]["symbol"] == "GOLD"
+    assert overview["token"]["initial_supply"] == 1_000
+    assert overview["token"]["minted"] == 1_000
+    assert overview["holder_count"] == 2
+    faucet_address = encode_address(faucet.public_key_bytes, params)
+    assert [
+        (holder["address"], holder["balance"], holder["immature"], holder["total"])
+        for holder in overview["holders"]
+    ] == [
+        (faucet_address, 600, 0, 600),
+        (alice.address, 400, 0, 400),
+    ]
+    assert overview["transaction_total"] == 2
+    assert [row["type"] for row in overview["transactions"]] == ["transfer", "register_token"]
+    assert overview["transactions"][0]["from"] == faucet_address
+    assert overview["transactions"][0]["payload"]["asset"] == asset
+    assert overview["transactions"][0]["txid"] == txid(transfer)
+    assert len(newest["transactions"]) == 1
+    assert newest["transactions"][0]["txid"] == txid(transfer)
+    assert overview["miners"] == [
+        {"address": carol.address, "proofs": 2, "wins": 1},
+        {"address": alice.address, "proofs": 0, "wins": 1},
+    ]
+    assert missing.status_code == 404
 
 
 def test_transaction_lifecycle_through_the_api() -> None:

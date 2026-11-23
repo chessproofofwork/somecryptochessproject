@@ -24,10 +24,12 @@ import {
 } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
 import { LineChart } from "../components/LineChart";
-import { variantLabel } from "../lib/assets";
+import { tokenForVariant, variantLabel } from "../lib/assets";
 import { formatInteger, formatRating, shortAddress } from "../lib/format";
+import { tokenHash } from "../router";
 import type { RatingPoint } from "../types";
 import { useResource } from "../useResource";
+import { useTokenRegistry } from "../useTokenRegistry";
 
 /** The SVG tooltip for one history point. */
 function pointLabel(point: RatingPoint): string {
@@ -38,6 +40,7 @@ function pointLabel(point: RatingPoint): string {
 }
 
 export function MinerRating({ address }: { address: string }): ReactNode {
+  const registry = useTokenRegistry();
   const detail = useResource((signal) => fetchMinerRating(address, signal), [address], {
     pollMs: 15000,
   });
@@ -55,6 +58,7 @@ export function MinerRating({ address }: { address: string }): ReactNode {
   if (detail.data === undefined) return <Loading />;
 
   const view = detail.data;
+  const token = tokenForVariant(registry.tokens, view.variant);
   const points = view.history.map((point) => ({
     x: point.epoch,
     y: point.rating,
@@ -130,6 +134,19 @@ export function MinerRating({ address }: { address: string }): ReactNode {
         </KeyValue>
         <KeyValue label="Variant" mono>
           {`${variantLabel(view.variant)} · ${view.variant}`}
+        </KeyValue>
+        <KeyValue label="Token">
+          {token !== undefined && !token.native ? (
+            <Link href={tokenHash(token.variant)}>
+              {token.symbol} · {token.name}
+            </Link>
+          ) : view.variant === "standard" ? (
+            "native ZQWX"
+          ) : (
+            <Link href={tokenHash(view.variant)} mono>
+              {view.variant}
+            </Link>
+          )}
         </KeyValue>
         <KeyValue label="Volatility" mono>
           {formatRating(view.volatility, 5)}

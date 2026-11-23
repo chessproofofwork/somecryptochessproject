@@ -5,8 +5,7 @@ hand. `TESTNET.target_block_seconds` halved to 30 and the compose settler, every
 `--mine-interval-seconds` and every window denominated in blocks followed, while
 the prose stayed on the old number: "one block a minute" in the web README, a
 bootstrap window "19 minutes" deep in two deploy docstrings and a test, "three
-minutes on devnet" where the window is two seconds, and a mirror page that had a
-replica fetching "thousands of blocks" for an hour of chain that now holds 120.
+minutes on devnet" where the window is two seconds.
 
 Nothing re-derives prose, so this file reads the two numbers an operator acts on
 -- how much of a bootstrap window the stack dates ahead of the clock, and how far
